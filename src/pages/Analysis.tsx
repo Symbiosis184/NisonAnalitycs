@@ -173,6 +173,9 @@ export default function Analysis() {
       <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
         <CandlestickChart
           candles={report.candles}
+          patterns={report.patterns}
+          support={report.support}
+          resistance={report.resistance}
           height={500}
         />
       </div>
