@@ -118,25 +118,27 @@ export default function CandlestickChart({
       });
     });
 
-    // Добавляем маркеры паттернов
+    // Добавляем маркеры паттернов - только самый важный (топ-1 по confidence)
     if (patterns.length > 0) {
-      const markers = patterns
+      // Сортируем по confidence и берем только топ-1
+      const sortedPatterns = [...patterns]
         .filter(p => p.candleIndex >= 0 && p.candleIndex < candles.length)
-        .map(p => {
-          const candle = candles[p.candleIndex];
-          return {
-            time: (candle.time / 1000) as any,
-            position: p.type === 'bullish' ? 'belowBar' as const : 'aboveBar' as const,
-            color: p.type === 'bullish' ? '#22c55e' : p.type === 'bearish' ? '#ef4444' : '#94a3b8',
-            shape: p.type === 'bullish' ? 'arrowUp' as const : p.type === 'bearish' ? 'arrowDown' as const : 'circle' as const,
-            text: p.confirmed ? `✓ ${p.name}` : p.name,
-            size: p.confirmed ? 1.5 : 1,
-          };
-        })
-        .sort((a, b) => (a.time as number) - (b.time as number));
+        .sort((a, b) => b.confidence - a.confidence);
+      
+      const topPattern = sortedPatterns[0];
+      
+      if (topPattern) {
+        const candle = candles[topPattern.candleIndex];
+        const marker = {
+          time: (candle.time / 1000) as any,
+          position: topPattern.type === 'bullish' ? 'belowBar' as const : 'aboveBar' as const,
+          color: topPattern.type === 'bullish' ? '#22c55e' : topPattern.type === 'bearish' ? '#ef4444' : '#94a3b8',
+          shape: topPattern.type === 'bullish' ? 'arrowUp' as const : topPattern.type === 'bearish' ? 'arrowDown' as const : 'circle' as const,
+          text: topPattern.confirmed ? `✓ ${topPattern.name}` : topPattern.name,
+          size: topPattern.confirmed ? 2 : 1.5,
+        };
 
-      if (markers.length > 0) {
-        createSeriesMarkers(candlestickSeries, markers);
+        createSeriesMarkers(candlestickSeries, [marker]);
       }
     }
 
