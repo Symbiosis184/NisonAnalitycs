@@ -254,25 +254,23 @@ export default function Analysis() {
         </div>
       </div>
 
-      {/* 4. ПАТТЕРНЫ С ПОДТВЕРЖДЕНИЕМ */}
-      {report.patterns.length > 0 && (
+      {/* 4. ТОЛЬКО ПОДТВЕРЖДЁННЫЕ ПАТТЕРНЫ (по Нисону) */}
+      {confirmedPatterns.length > 0 && (
         <div className="p-6 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
           <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-            🕯️ Обнаруженные паттерны
+            🕯️ Подтверждённые паттерны
             <span className="text-xs text-gray-500 font-normal ml-2">
-              ({confirmedPatterns.length} подтверждено из {report.patterns.length})
+              ({confirmedPatterns.length} из {report.patterns.length})
             </span>
           </h3>
           <div className="space-y-3">
-            {report.patterns.map((pattern: any, i: number) => (
+            {confirmedPatterns.map((pattern: any, i: number) => (
               <div
                 key={i}
                 className={`p-4 rounded-lg border ${
-                  pattern.confirmed 
-                    ? pattern.type === 'bullish' 
-                      ? 'bg-green-500/5 border-green-500/20' 
-                      : 'bg-red-500/5 border-red-500/20'
-                    : 'bg-gray-800/30 border-gray-700/50'
+                  pattern.type === 'bullish' 
+                    ? 'bg-green-500/5 border-green-500/20' 
+                    : 'bg-red-500/5 border-red-500/20'
                 }`}
               >
                 <div className="flex items-start justify-between mb-2">
@@ -296,11 +294,9 @@ export default function Analysis() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    {pattern.confirmed && (
-                      <span className="px-2 py-1 rounded bg-green-500/10 text-green-400 text-xs border border-green-500/20">
-                        ✓ Подтверждён
-                      </span>
-                    )}
+                    <span className="px-2 py-1 rounded bg-green-500/10 text-green-400 text-xs border border-green-500/20">
+                      ✓ Подтверждён
+                    </span>
                     {pattern.hasVolume && (
                       <span className="px-2 py-1 rounded bg-blue-500/10 text-blue-400 text-xs border border-blue-500/20">
                         📊 Объём
@@ -324,16 +320,18 @@ export default function Analysis() {
         </div>
       )}
 
-      {/* 5. ТОРГОВЫЕ СИГНАЛЫ */}
-      {report.signals.length > 0 && (
+      {/* 5. ТОРГОВЫЕ СИГНАЛЫ - только подтверждённые */}
+      {report.signals.filter((s: any) => s.confirmed).length > 0 && (
         <div className="p-6 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
           <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
             <Target className="w-5 h-5 text-amber-400" />
-            Торговые сигналы
-            <span className="text-xs text-gray-500 font-normal ml-2">(R:R ≥ 2:1)</span>
+            Подтверждённые торговые сигналы
+            <span className="text-xs text-gray-500 font-normal ml-2">
+              ({report.signals.filter((s: any) => s.confirmed).length} из {report.signals.length})
+            </span>
           </h3>
           <div className="space-y-3">
-            {report.signals.map((signal: any, idx: number) => (
+            {report.signals.filter((signal: any) => signal.confirmed).map((signal: any, idx: number) => (
               <div
                 key={idx}
                 className={`p-4 rounded-lg border ${

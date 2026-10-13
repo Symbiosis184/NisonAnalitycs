@@ -94,27 +94,29 @@ export default function CandlestickChart({
 
     candlestickSeries.setData(chartData);
 
-    // Добавляем уровни поддержки (зелёные)
-    support.forEach((zone, idx) => {
+    // Добавляем только СИЛЬНЫЕ уровни поддержки (зелёные)
+    const strongSupport = support.filter(zone => zone.strong);
+    strongSupport.forEach((zone, idx) => {
       const line = candlestickSeries.createPriceLine({
         price: zone.level,
-        color: zone.strong ? '#22c55e' : 'rgba(34, 197, 94, 0.5)',
-        lineWidth: zone.strong ? 2 : 1,
-        lineStyle: zone.strong ? 0 : 2, // 0 = solid, 2 = dashed
+        color: '#22c55e',
+        lineWidth: 2,
+        lineStyle: 0, // solid
         axisLabelVisible: true,
-        title: `П${idx + 1} (${zone.votes})`,
+        title: `П${idx + 1} (${zone.votes}гол)`,
       });
     });
 
-    // Добавляем уровни сопротивления (красные)
-    resistance.forEach((zone, idx) => {
+    // Добавляем только СИЛЬНЫЕ уровни сопротивления (красные)
+    const strongResistance = resistance.filter(zone => zone.strong);
+    strongResistance.forEach((zone, idx) => {
       const line = candlestickSeries.createPriceLine({
         price: zone.level,
-        color: zone.strong ? '#ef4444' : 'rgba(239, 68, 68, 0.5)',
-        lineWidth: zone.strong ? 2 : 1,
-        lineStyle: zone.strong ? 0 : 2,
+        color: '#ef4444',
+        lineWidth: 2,
+        lineStyle: 0, // solid
         axisLabelVisible: true,
-        title: `С${idx + 1} (${zone.votes})`,
+        title: `С${idx + 1} (${zone.votes}гол)`,
       });
     });
 

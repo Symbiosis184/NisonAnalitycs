@@ -184,7 +184,7 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* Паттерны с подтверждением */}
+                {/* Только подтверждённые паттерны (по Нисону) */}
                 {confirmedPatterns.length > 0 && (
                   <div className="mb-3">
                     <div className="text-xs text-gray-500 mb-2 flex items-center gap-1">
@@ -194,12 +194,15 @@ export default function Dashboard() {
                     <div className="space-y-1">
                       {confirmedPatterns.slice(0, 2).map((pattern, idx) => (
                         <div key={idx} className="flex items-center justify-between text-xs">
-                          <span className={`font-medium ${
-                            pattern.type === 'bullish' ? 'text-green-400' :
-                            pattern.type === 'bearish' ? 'text-red-400' : 'text-gray-400'
-                          }`}>
-                            {pattern.type === 'bullish' ? '▲' : pattern.type === 'bearish' ? '▼' : '◆'} {pattern.name}
-                          </span>
+                          <div className="flex items-center gap-1">
+                            <span className={`font-medium ${
+                              pattern.type === 'bullish' ? 'text-green-400' :
+                              pattern.type === 'bearish' ? 'text-red-400' : 'text-gray-400'
+                            }`}>
+                              {pattern.type === 'bullish' ? '▲' : pattern.type === 'bearish' ? '▼' : '◆'} {pattern.name}
+                            </span>
+                            <span className="text-green-400 text-[10px]">✓</span>
+                          </div>
                           <span className="text-gray-500">{pattern.confidence}%</span>
                         </div>
                       ))}

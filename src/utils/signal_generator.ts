@@ -118,6 +118,9 @@ export class SignalGenerator {
     const risk = Math.abs(candle.close - bookStop);
     const rr = Math.abs(target - candle.close) / risk;
 
+    // Проверка подтверждения паттерна следующей свечой (по Нисону)
+    const confirmed = this.checkConfirmation(direction, lc, closedCandles[closedCandles.length - 1]);
+
     return {
       direction,
       pattern,
@@ -128,7 +131,7 @@ export class SignalGenerator {
       rr,
       quality,
       timestamp: Date.now(),
-      confirmed: false,
+      confirmed,
       story: patternStory(pattern),
       metadata: {
         patternCandlesCount: bounds.patternCandlesCount,
@@ -138,6 +141,17 @@ export class SignalGenerator {
         patternHigh: bounds.patternHigh,
       },
     };
+  }
+
+  // Проверка подтверждения паттерна следующей свечой (методология Нисона)
+  private checkConfirmation(direction: 'long' | 'short', signalCandle: Candle, confirmationCandle: Candle): boolean {
+    if (direction === 'long') {
+      // Для бычьего паттерна: следующая свеча должна быть бычьей и закрыться выше максимума сигнальной свечи
+      return confirmationCandle.isBullish && confirmationCandle.close > signalCandle.high;
+    } else {
+      // Для медвежьего паттерна: следующая свеча должна быть медвежьей и закрыться ниже минимума сигнальной свечи
+      return confirmationCandle.isBearish && confirmationCandle.close < signalCandle.low;
+    }
   }
 
   // Главный метод поиска сигнала
