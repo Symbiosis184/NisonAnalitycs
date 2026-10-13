@@ -3,6 +3,7 @@ import { Candle } from '../utils/candle';
 import { ema, rsi, macd, pivotLevels, detectTrend, generateSignal } from '../utils/indicators';
 import { detectPatterns, patternStory } from '../utils/patterns';
 import { signalGenerator } from '../utils/signal_generator';
+import { ZoneVoter } from '../utils/zone_voter';
 
 export interface AnalysisReport {
   symbol: string;
@@ -71,7 +72,8 @@ export class ApiClient {
     const trend = detectTrend(currentPrice, ema20, ema50, ema200);
     const { signal, confidence } = generateSignal(currentPrice, rsiVal, histLast, ema20, ema50);
     
-    const pivots = pivotLevels(candles);
+    // Определение зон поддержки/сопротивления по методологии Нисона
+    const zones = ZoneVoter.collect(currentPrice, candles);
     
     // Детекция паттернов по Нисону
     const detectedPatterns = detectPatterns(candles);
@@ -131,17 +133,21 @@ export class ApiClient {
       })),
       patterns: apiPatterns,
       signals: apiSignals,
-      support: pivots.support.map((level, idx) => ({
-        level,
-        votes: 3 - idx,
-        strong: idx === 0,
-        reasons: ['pivot point'],
+      support: zones.support.map((zone) => ({
+        level: zone.level,
+        votes: zone.votes,
+        strong: zone.strong,
+        reasons: zone.reasons,
+        touches: zone.touches,
+        lastTouch: zone.lastTouch,
       })),
-      resistance: pivots.resistance.map((level, idx) => ({
-        level,
-        votes: 3 - idx,
-        strong: idx === 0,
-        reasons: ['pivot point'],
+      resistance: zones.resistance.map((zone) => ({
+        level: zone.level,
+        votes: zone.votes,
+        strong: zone.strong,
+        reasons: zone.reasons,
+        touches: zone.touches,
+        lastTouch: zone.lastTouch,
       })),
       volume_profile: null,
       regime: trend === 'бычий' ? 'ВОСХОДЯЩИЙ' : trend === 'медвежий' ? 'НИСХОДЯЩИЙ' : 'БОКОВИК',

@@ -1,6 +1,7 @@
 // Signal Generator - Главный класс генерации торговых сигналов по Нисону
 import { Candle } from './candle';
-import { PatternDetector, SupportResistance, VolumeAnalyzer } from './pattern_engine';
+import { PatternDetector, VolumeAnalyzer } from './pattern_engine';
+import { ZoneVoter } from './zone_voter';
 import { getTrendContext, getTrendMacro } from './trend_detection';
 import { ema, atr } from './indicators';
 import { patternStory } from './patterns';
@@ -102,16 +103,16 @@ export class SignalGenerator {
     const bounds = PatternDetector.getFormationBounds(pattern, closedCandles, endIdx);
     const bookStop = direction === 'long' ? bounds.patternLow : bounds.patternHigh;
 
-    // Расчёт цели
-    const zones = SupportResistance.findLevels(closedCandles);
+    // Расчёт цели по зонам Нисона
+    const zones = ZoneVoter.collect(candle.close, closedCandles);
     let target: number;
     
     if (direction === 'long') {
-      const candidates = zones.resistance.filter((r: number) => r > candle.close);
-      target = candidates.length > 0 ? candidates[0] : candle.close * 1.05;
+      const candidates = zones.resistance.filter((z) => z.level > candle.close);
+      target = candidates.length > 0 ? candidates[0].level : candle.close * 1.05;
     } else {
-      const candidates = zones.support.filter((s: number) => s < candle.close);
-      target = candidates.length > 0 ? candidates[0] : candle.close * 0.95;
+      const candidates = zones.support.filter((z) => z.level < candle.close);
+      target = candidates.length > 0 ? candidates[0].level : candle.close * 0.95;
     }
 
     const risk = Math.abs(candle.close - bookStop);
@@ -295,8 +296,8 @@ export class SignalGenerator {
     
     const harami = PatternDetector.isHarami(prevClosed, lastClosed, candles.slice(0, -3));
     if (harami.found) {
-      const near = SupportResistance.isNearSupport(lastClosed.close, candles.slice(0, -3), 0.015) ||
-                   SupportResistance.isNearResistance(lastClosed.close, candles.slice(0, -3), 0.015);
+      const near = ZoneVoter.isNearSupport(lastClosed.close, candles.slice(0, -3), 0.015) ||
+                   ZoneVoter.isNearResistance(lastClosed.close, candles.slice(0, -3), 0.015);
       if (near) {
         const direction = harami.name.includes('БЫЧИЙ') ? 'long' : 'short';
         return this.makeSignal(direction, harami.name + ' (У УРОВНЯ)', lastClosed, closed, tf, 0.8);
@@ -305,8 +306,8 @@ export class SignalGenerator {
     
     const haramiCross = PatternDetector.isHaramiCross(prevClosed, lastClosed, candles.slice(0, -3));
     if (haramiCross.found) {
-      const near = SupportResistance.isNearSupport(lastClosed.close, candles.slice(0, -3), 0.015) ||
-                   SupportResistance.isNearResistance(lastClosed.close, candles.slice(0, -3), 0.015);
+      const near = ZoneVoter.isNearSupport(lastClosed.close, candles.slice(0, -3), 0.015) ||
+                   ZoneVoter.isNearResistance(lastClosed.close, candles.slice(0, -3), 0.015);
       if (near) {
         const direction = haramiCross.name.includes('БЫЧИЙ') ? 'long' : 'short';
         return this.makeSignal(direction, haramiCross.name + ' (У УРОВНЯ)', lastClosed, closed, tf, 0.9);
@@ -359,15 +360,15 @@ export class SignalGenerator {
           return this.makeSignal('long', `${dojiType.name} НА ДНЕ`, lastClosed, closed, tf, 0.8);
         }
         
-        const levels = SupportResistance.findLevels(closed);
+        const levels = ZoneVoter.collect(lastClosed.close, closed);
         const threshold = lastClosed.close * RANGE_PROXIMITY_PCT;
-        const supBelow = levels.support.filter((lv: number) => lv <= lastClosed.close);
-        const resAbove = levels.resistance.filter((lv: number) => lv >= lastClosed.close);
+        const supBelow = levels.support.filter((z) => z.level <= lastClosed.close);
+        const resAbove = levels.resistance.filter((z) => z.level >= lastClosed.close);
         
-        if (supBelow.length > 0 && (lastClosed.close - Math.max(...supBelow)) <= threshold) {
+        if (supBelow.length > 0 && (lastClosed.close - Math.max(...supBelow.map(z => z.level))) <= threshold) {
           return this.makeSignal('long', `${dojiType.name} У ПОДДЕРЖКИ`, lastClosed, closed, tf);
         }
-        if (resAbove.length > 0 && (Math.min(...resAbove) - lastClosed.close) <= threshold) {
+        if (resAbove.length > 0 && (Math.min(...resAbove.map(z => z.level)) - lastClosed.close) <= threshold) {
           return this.makeSignal('short', `${dojiType.name} У СОПРОТИВЛЕНИЯ`, lastClosed, closed, tf);
         }
       }
@@ -391,11 +392,11 @@ export class SignalGenerator {
 
   // Проверка близости к зоне
   private nearZone(closed: Candle[], idx: number, side: 'sup' | 'res', pct: number = 0.015): boolean {
-    const levels = SupportResistance.findLevels(closed.slice(0, idx + 1));
     const price = closed[idx].close;
+    const levels = ZoneVoter.collect(price, closed.slice(0, idx + 1));
     const threshold = price * pct;
     const pool = side === 'sup' ? levels.support : levels.resistance;
-    return pool.some((x: number) => Math.abs(price - x) <= threshold);
+    return pool.some((z) => Math.abs(price - z.level) <= threshold);
   }
 
   // Определение типа сигнала по контексту

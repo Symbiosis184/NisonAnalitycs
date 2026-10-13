@@ -181,26 +181,37 @@ export default function Analysis() {
         />
       </div>
 
-      {/* 3. КЛЮЧЕВЫЕ УРОВНИ S/R */}
+      {/* 3. КЛЮЧЕВЫЕ УРОВНИ S/R ПО МЕТОДОЛОГИИ НИСОНА */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Поддержка */}
         <div className="p-4 rounded-xl border border-green-500/20 bg-green-500/5">
           <h3 className="text-sm font-semibold text-green-400 mb-3 flex items-center gap-2">
             <Shield className="w-4 h-4" />
-            Уровни поддержки
+            Зоны поддержки (по Нисону)
           </h3>
-          <div className="space-y-2">
-            {report.support.map((zone: any, idx: number) => (
-              <div key={idx} className="flex items-center justify-between p-2 rounded-lg bg-gray-800/30">
-                <div>
-                  <div className="font-mono text-white">${formatPrice(zone.level)}</div>
-                  <div className="text-xs text-gray-500">{zone.reasons.join(', ')}</div>
+          <div className="space-y-3">
+            {report.support.slice(0, 5).map((zone: any, idx: number) => (
+              <div key={idx} className={`p-3 rounded-lg border ${
+                zone.strong ? 'border-green-500/30 bg-green-500/5' : 'border-gray-700/30 bg-gray-800/20'
+              }`}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-green-400 font-mono text-lg">${formatPrice(zone.level)}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">{zone.touches} касаний</span>
+                    {zone.strong && (
+                      <span className="px-2 py-0.5 rounded bg-green-500/10 text-green-400 text-xs font-semibold">
+                        СИЛЬНАЯ
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <div className="text-right">
-                  <div className="text-xs text-gray-400">{zone.votes} голосов</div>
-                  {zone.strong && (
-                    <div className="text-xs text-green-400 font-semibold">Сильная</div>
-                  )}
+                <div className="text-xs text-gray-400">
+                  <div className="mb-1">Голосов: {zone.votes}</div>
+                  <div className="text-gray-500">
+                    {zone.reasons.map((reason: string, i: number) => (
+                      <span key={i} className="inline-block mr-2">• {reason}</span>
+                    ))}
+                  </div>
                 </div>
               </div>
             ))}
@@ -211,20 +222,31 @@ export default function Analysis() {
         <div className="p-4 rounded-xl border border-red-500/20 bg-red-500/5">
           <h3 className="text-sm font-semibold text-red-400 mb-3 flex items-center gap-2">
             <Shield className="w-4 h-4" />
-            Уровни сопротивления
+            Зоны сопротивления (по Нисону)
           </h3>
-          <div className="space-y-2">
-            {report.resistance.map((zone: any, idx: number) => (
-              <div key={idx} className="flex items-center justify-between p-2 rounded-lg bg-gray-800/30">
-                <div>
-                  <div className="font-mono text-white">${formatPrice(zone.level)}</div>
-                  <div className="text-xs text-gray-500">{zone.reasons.join(', ')}</div>
+          <div className="space-y-3">
+            {report.resistance.slice(0, 5).map((zone: any, idx: number) => (
+              <div key={idx} className={`p-3 rounded-lg border ${
+                zone.strong ? 'border-red-500/30 bg-red-500/5' : 'border-gray-700/30 bg-gray-800/20'
+              }`}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-red-400 font-mono text-lg">${formatPrice(zone.level)}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">{zone.touches} касаний</span>
+                    {zone.strong && (
+                      <span className="px-2 py-0.5 rounded bg-red-500/10 text-red-400 text-xs font-semibold">
+                        СИЛЬНАЯ
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <div className="text-right">
-                  <div className="text-xs text-gray-400">{zone.votes} голосов</div>
-                  {zone.strong && (
-                    <div className="text-xs text-red-400 font-semibold">Сильная</div>
-                  )}
+                <div className="text-xs text-gray-400">
+                  <div className="mb-1">Голосов: {zone.votes}</div>
+                  <div className="text-gray-500">
+                    {zone.reasons.map((reason: string, i: number) => (
+                      <span key={i} className="inline-block mr-2">• {reason}</span>
+                    ))}
+                  </div>
                 </div>
               </div>
             ))}

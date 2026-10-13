@@ -1,5 +1,6 @@
 import { Candle } from './candle';
-import { PatternDetector } from './pattern_engine';
+import { PatternDetector, SupportResistance } from './pattern_engine';
+import { ZoneVoter } from './zone_voter';
 
 export interface PatternResult {
   name: string;
