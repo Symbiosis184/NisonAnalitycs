@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { createChart, ColorType, CandlestickSeries, LineSeries } from 'lightweight-charts';
+import { createChart, ColorType, CandlestickSeries } from 'lightweight-charts';
 
 interface Candle {
   time: number;
@@ -18,7 +18,7 @@ interface Props {
   height?: number;
 }
 
-export default function CandlestickChart({ candles, ema20, ema50, ema200, height = 500 }: Props) {
+export default function CandlestickChart({ candles, height = 500 }: Props) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
 
@@ -67,46 +67,6 @@ export default function CandlestickChart({ candles, ema20, ema50, ema200, height
 
     candlestickSeries.setData(chartData);
 
-    // Добавляем EMA линии
-    if (ema20 && ema20.length > 0) {
-      const ema20Series = chart.addSeries(LineSeries, {
-        color: '#f59e0b',
-        lineWidth: 1,
-        priceLineVisible: false,
-      });
-      const ema20Data = ema20.map((value, index) => ({
-        time: (candles[index].time / 1000) as any,
-        value,
-      }));
-      ema20Series.setData(ema20Data);
-    }
-
-    if (ema50 && ema50.length > 0) {
-      const ema50Series = chart.addSeries(LineSeries, {
-        color: '#3b82f6',
-        lineWidth: 1,
-        priceLineVisible: false,
-      });
-      const ema50Data = ema50.map((value, index) => ({
-        time: (candles[index].time / 1000) as any,
-        value,
-      }));
-      ema50Series.setData(ema50Data);
-    }
-
-    if (ema200 && ema200.length > 0) {
-      const ema200Series = chart.addSeries(LineSeries, {
-        color: '#a855f7',
-        lineWidth: 1,
-        priceLineVisible: false,
-      });
-      const ema200Data = ema200.map((value, index) => ({
-        time: (candles[index].time / 1000) as any,
-        value,
-      }));
-      ema200Series.setData(ema200Data);
-    }
-
     chart.timeScale().fitContent();
 
     const handleResize = () => {
@@ -121,7 +81,7 @@ export default function CandlestickChart({ candles, ema20, ema50, ema200, height
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [candles, ema20, ema50, ema200, height]);
+  }, [candles, height]);
 
   return <div ref={chartContainerRef} className="w-full" />;
 }

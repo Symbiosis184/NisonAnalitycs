@@ -104,9 +104,6 @@ export default function Analysis() {
       <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
         <CandlestickChart
           candles={report.candles}
-          ema20={[report.ema20]}
-          ema50={[report.ema50]}
-          ema200={[report.ema200]}
           height={500}
         />
       </div>
