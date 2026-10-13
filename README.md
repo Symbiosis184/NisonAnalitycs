@@ -1,0 +1,2 @@
+# NisonAnalitycs
+Дашборд трейдера
