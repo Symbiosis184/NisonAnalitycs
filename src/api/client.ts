@@ -182,14 +182,37 @@ export class ApiClient {
       symbols.map(async (symbol) => {
         try {
           const analysis = await this.getAnalysis(symbol, 'D');
+          
+          // Рассчитываем средний объём
+          const volumes = analysis.candles.map((c: any) => c.volume);
+          const avgVolume = volumes.reduce((sum: number, v: number) => sum + v, 0) / volumes.length;
+          
+          // Извлекаем подтверждённые паттерны
+          const confirmedPatterns = analysis.patterns
+            .filter((p: any) => p.confirmed)
+            .map((p: any) => ({
+              name: p.name,
+              type: p.type,
+              confirmed: p.confirmed,
+              confidence: p.confidence,
+            }));
+          
+          // Извлекаем уровни поддержки/сопротивления
+          const supportLevels = analysis.support.map((s: any) => s.level);
+          const resistanceLevels = analysis.resistance.map((r: any) => r.level);
+          
           return {
             symbol,
             price: analysis.price,
             change_24h: analysis.change_24h,
             trend: analysis.trend,
-            signal: analysis.patterns.length > 0 ? analysis.patterns[0].name : null,
-            rsi: analysis.rsi,
+            regime: analysis.regime,
+            patterns: confirmedPatterns,
+            support: supportLevels,
+            resistance: resistanceLevels,
             volume: analysis.candles[analysis.candles.length - 1]?.volume || 0,
+            avgVolume,
+            consensus: analysis.consensus,
           };
         } catch (err) {
           console.error(`Ошибка получения данных для ${symbol}:`, err);

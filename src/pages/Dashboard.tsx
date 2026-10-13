@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { TrendingUp, TrendingDown, Activity, BarChart2, AlertCircle, RefreshCw } from 'lucide-react';
+import { TrendingUp, TrendingDown, Activity, BarChart2, AlertCircle, RefreshCw, Target, Shield } from 'lucide-react';
 import { api } from '../api/client';
 import { formatPrice, formatVolume } from '../utils/format';
 
@@ -9,9 +9,22 @@ interface MarketOverview {
   price: number;
   change_24h: number;
   trend: string;
-  signal: string | null;
-  rsi: number;
+  regime: string;
+  patterns: Array<{
+    name: string;
+    type: string;
+    confirmed: boolean;
+    confidence: number;
+  }>;
+  support: number[];
+  resistance: number[];
   volume: number;
+  avgVolume: number;
+  consensus: {
+    score: number;
+    direction: string;
+    confidence: number;
+  };
 }
 
 const SYMBOLS = [
@@ -64,12 +77,21 @@ export default function Dashboard() {
     return 'text-yellow-400';
   };
 
+  const getConsensusColor = (score: number) => {
+    if (score >= 4) return 'text-green-400 bg-green-500/10 border-green-500/20';
+    if (score >= 2) return 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20';
+    return 'text-red-400 bg-red-500/10 border-red-500/20';
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-white">Обзор рынка</h1>
+          <h1 className="text-3xl font-bold text-white">Обзор рынка по методологии Нисона</h1>
           <p className="text-sm text-gray-400 mt-1">
+            Контекст → Паттерны → Подтверждение → Объём
+          </p>
+          <p className="text-xs text-gray-500 mt-1">
             {lastUpdate && `Обновлено: ${lastUpdate.toLocaleTimeString('ru-RU')}`}
           </p>
         </div>
@@ -106,6 +128,8 @@ export default function Dashboard() {
           market.map((item) => {
             const isPositive = item.change_24h >= 0;
             const baseAsset = item.symbol.replace('USDT', '');
+            const confirmedPatterns = item.patterns.filter(p => p.confirmed);
+            const volumeRatio = item.avgVolume > 0 ? item.volume / item.avgVolume : 1;
             
             return (
               <Link
@@ -113,6 +137,7 @@ export default function Dashboard() {
                 to={`/analysis/${item.symbol}`}
                 className="block p-4 rounded-xl border border-gray-800/60 bg-gradient-to-b from-[#131a2b] to-[#0f1524] hover:border-amber-500/30 transition-all group"
               >
+                {/* Заголовок: Контекст рынка */}
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-lg font-bold text-white group-hover:text-amber-400 transition-colors">
                     {baseAsset}
@@ -120,6 +145,7 @@ export default function Dashboard() {
                   {getTrendIcon(item.trend)}
                 </div>
 
+                {/* Цена и изменение */}
                 <div className="mb-3">
                   <div className="text-2xl font-bold text-white">
                     ${formatPrice(item.price)}
@@ -132,38 +158,94 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                <div className="space-y-2 text-xs">
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-500">Тренд</span>
-                    <span className={`font-medium ${getTrendColor(item.trend)}`}>
-                      {item.trend}
-                    </span>
+                {/* Режим рынка */}
+                <div className="mb-3 p-2 rounded-lg bg-gray-800/30">
+                  <div className="text-xs text-gray-500 mb-1">Режим рынка</div>
+                  <div className={`text-sm font-medium ${getTrendColor(item.regime)}`}>
+                    {item.regime}
                   </div>
+                </div>
+
+                {/* Consensus Score */}
+                <div className={`mb-3 p-2 rounded-lg border ${getConsensusColor(item.consensus.score)}`}>
                   <div className="flex items-center justify-between">
-                    <span className="text-gray-500">RSI</span>
-                    <span className={`font-mono ${
-                      item.rsi > 70 ? 'text-red-400' :
-                      item.rsi < 30 ? 'text-green-400' : 'text-gray-300'
-                    }`}>
-                      {item.rsi.toFixed(1)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-500">Объём</span>
-                    <span className="font-mono text-gray-300">
-                      {formatVolume(item.volume)}
-                    </span>
-                  </div>
-                  {item.signal && (
-                    <div className="pt-2 border-t border-gray-800/50">
-                      <div className="flex items-center gap-2">
-                        <BarChart2 className="w-3 h-3 text-amber-400" />
-                        <span className="text-amber-400 font-medium text-xs">
-                          {item.signal}
-                        </span>
+                    <div>
+                      <div className="text-xs text-gray-400">Consensus</div>
+                      <div className="text-lg font-bold">
+                        {item.consensus.score.toFixed(1)}/5
                       </div>
                     </div>
-                  )}
+                    <div className="text-right">
+                      <div className="text-xs text-gray-400">Уверенность</div>
+                      <div className="text-lg font-bold">
+                        {item.consensus.confidence.toFixed(0)}%
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Паттерны с подтверждением */}
+                {confirmedPatterns.length > 0 && (
+                  <div className="mb-3">
+                    <div className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+                      <Target className="w-3 h-3" />
+                      Подтверждённые паттерны ({confirmedPatterns.length})
+                    </div>
+                    <div className="space-y-1">
+                      {confirmedPatterns.slice(0, 2).map((pattern, idx) => (
+                        <div key={idx} className="flex items-center justify-between text-xs">
+                          <span className={`font-medium ${
+                            pattern.type === 'bullish' ? 'text-green-400' :
+                            pattern.type === 'bearish' ? 'text-red-400' : 'text-gray-400'
+                          }`}>
+                            {pattern.type === 'bullish' ? '▲' : pattern.type === 'bearish' ? '▼' : '◆'} {pattern.name}
+                          </span>
+                          <span className="text-gray-500">{pattern.confidence}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Уровни S/R */}
+                <div className="mb-3">
+                  <div className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+                    <Shield className="w-3 h-3" />
+                    Ключевые уровни
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <div className="text-green-400 mb-1">Поддержка</div>
+                      {item.support.slice(0, 2).map((level, idx) => (
+                        <div key={idx} className="font-mono text-gray-300">
+                          ${formatPrice(level)}
+                        </div>
+                      ))}
+                    </div>
+                    <div>
+                      <div className="text-red-400 mb-1">Сопротивление</div>
+                      {item.resistance.slice(0, 2).map((level, idx) => (
+                        <div key={idx} className="font-mono text-gray-300">
+                          ${formatPrice(level)}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Объём */}
+                <div className="pt-2 border-t border-gray-800/50">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-gray-500">Объём</span>
+                    <span className={`font-mono ${
+                      volumeRatio > 1.5 ? 'text-green-400' :
+                      volumeRatio < 0.5 ? 'text-red-400' : 'text-gray-300'
+                    }`}>
+                      {formatVolume(item.volume)}
+                      {volumeRatio > 1.5 && ' ↑'}
+                      {volumeRatio < 0.5 && ' ↓'}
+                    </span>
+                  </div>
                 </div>
               </Link>
             );
@@ -177,6 +259,29 @@ export default function Dashboard() {
           <p className="text-gray-400">Нет данных для отображения</p>
         </div>
       )}
+
+      {/* Легенда методологии */}
+      <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+        <h3 className="text-sm font-semibold text-white mb-3">📚 Методология Стива Нисона</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+          <div>
+            <div className="text-amber-400 font-semibold mb-1">1. Контекст</div>
+            <div className="text-gray-400">Определяем тренд и режим рынка. Торгуем только в направлении тренда.</div>
+          </div>
+          <div>
+            <div className="text-amber-400 font-semibold mb-1">2. Паттерны</div>
+            <div className="text-gray-400">Ищем свечные паттерны в контексте тренда. Паттерны без контекста не работают.</div>
+          </div>
+          <div>
+            <div className="text-amber-400 font-semibold mb-1">3. Подтверждение</div>
+            <div className="text-gray-400">Каждый паттерн должен быть подтверждён следующей свечой или объёмом.</div>
+          </div>
+          <div>
+            <div className="text-amber-400 font-semibold mb-1">4. Правило множества</div>
+            <div className="text-gray-400">Минимум 3 независимых сигнала для входа. Consensus score показывает силу.</div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
