@@ -52,7 +52,7 @@ export class SignalGenerator {
     return ratio >= 2.0 ? 1.0 : 0.7;
   }
 
-  // Создание сигнала
+  // Создание сигнала с улучшенной логикой
   private makeSignal(
     direction: 'long' | 'short',
     pattern: string,
@@ -60,26 +60,63 @@ export class SignalGenerator {
     closedCandles: Candle[],
     tf: string,
     quality: number = 1.0
-  ): Signal {
+  ): Signal | null {
     // Книжные границы формации
     const endIdx = closedCandles.length - 1;
     const bounds = PatternDetector.getFormationBounds(pattern, closedCandles, endIdx);
     const bookStop = direction === 'long' ? bounds.patternLow : bounds.patternHigh;
 
-    // Расчёт цели по зонам Нисона
+    // Проверка реалистичности стопа
+    const risk = Math.abs(candle.close - bookStop);
+    const riskPercent = risk / candle.close;
+    
+    // Стоп не должен быть слишком близко (< 0.5%) или слишком далеко (> 10%)
+    if (riskPercent < 0.005 || riskPercent > 0.10) {
+      return null; // Сигнал нереалистичен
+    }
+
+    // Расчёт цели по зонам Нисона с улучшенной логикой
     const zones = ZoneVoter.collect(candle.close, closedCandles);
     let target: number;
     
     if (direction === 'long') {
-      const candidates = zones.resistance.filter((z) => z.level > candle.close);
-      target = candidates.length > 0 ? candidates[0].level : candle.close * 1.05;
+      // Ищем сильную зону сопротивления выше цены входа
+      const candidates = zones.resistance
+        .filter((z) => z.level > candle.close && z.strong)
+        .sort((a, b) => a.level - b.level); // Ближайшая сильная зона
+      
+      if (candidates.length > 0) {
+        target = candidates[0].level;
+      } else {
+        // Если сильных зон нет, используем ATR для расчёта цели
+        const atrValue = atr(closedCandles, 14);
+        target = candle.close + (atrValue * 3); // Цель = 3 ATR
+      }
     } else {
-      const candidates = zones.support.filter((z) => z.level < candle.close);
-      target = candidates.length > 0 ? candidates[0].level : candle.close * 0.95;
+      // Ищем сильную зону поддержки ниже цены входа
+      const candidates = zones.support
+        .filter((z) => z.level < candle.close && z.strong)
+        .sort((a, b) => b.level - a.level); // Ближайшая сильная зона
+      
+      if (candidates.length > 0) {
+        target = candidates[0].level;
+      } else {
+        // Если сильных зон нет, используем ATR для расчёта цели
+        const atrValue = atr(closedCandles, 14);
+        target = candle.close - (atrValue * 3); // Цель = 3 ATR
+      }
     }
 
-    const risk = Math.abs(candle.close - bookStop);
-    const rr = Math.abs(target - candle.close) / risk;
+    // Проверка реалистичности цели
+    const reward = Math.abs(target - candle.close);
+    const rewardPercent = reward / candle.close;
+    
+    // Цель не должна быть слишком близко (< 1%) или слишком далеко (> 20%)
+    if (rewardPercent < 0.01 || rewardPercent > 0.20) {
+      return null; // Сигнал нереалистичен
+    }
+
+    const rr = reward / risk;
 
     return {
       direction,
@@ -87,7 +124,7 @@ export class SignalGenerator {
       entryPrice: candle.close,
       stopLoss: bookStop,
       target,
-      risk: risk / candle.close,
+      risk: riskPercent,
       rr,
       quality,
       timestamp: Date.now(),
@@ -119,11 +156,17 @@ export class SignalGenerator {
 
     const signals: Signal[] = [];
     
+    // Определяем текущий тренд для контекстной фильтрации
+    const currentTrend = getTrendMacro(candles, candles[candles.length - 1].close);
+    
     // Проверяем последние 20 свечей на наличие паттернов
     for (let i = candles.length - 2; i >= Math.max(0, candles.length - 20); i--) {
       const patternCandle = candles[i];
       const nextCandle = candles[i + 1]; // Следующая свеча для подтверждения
       const closed = candles.slice(0, i + 1);
+      
+      // Определяем тренд в момент паттерна
+      const patternTrend = getTrendMacro(closed, patternCandle.close);
       
       // Проверяем все типы паттернов
       const patterns = [
@@ -148,7 +191,22 @@ export class SignalGenerator {
 
       for (const { check, direction } of patterns) {
         if (check.found) {
+          // Контекстная фильтрация: сигнал должен соответствовать тренду
+          // Разворотные паттерны (Morning Star, Evening Star и т.д.) могут идти против тренда
+          const isReversalPattern = check.name.includes('ЗВЕЗДА') || 
+                                   check.name.includes('МАЛДЕНЕЦ') ||
+                                   check.name.includes('РАЗВОРОТ');
+          
+          if (!isReversalPattern) {
+            // Для продолжительных паттернов проверяем соответствие тренду
+            if (direction === 'long' && patternTrend === 'НИСХОДЯЩИЙ') continue;
+            if (direction === 'short' && patternTrend === 'ВОСХОДЯЩИЙ') continue;
+          }
+          
           const signal = this.makeSignal(direction, check.name, patternCandle, closed, tf);
+          
+          // Пропускаем если сигнал нереалистичен
+          if (!signal) continue;
           
           // Проверяем подтверждение следующей свечой
           const bounds = PatternDetector.getFormationBounds(check.name, closed, closed.length - 1);
@@ -174,7 +232,21 @@ export class SignalGenerator {
 
         for (const { check, direction } of twoCandlePatterns) {
           if (check.found) {
+            // Контекстная фильтрация для двухсвечных паттернов
+            const isReversalPattern = check.name.includes('ПОГЛОЩЕНИЕ') || 
+                                     check.name.includes('ЗАВЕСА') ||
+                                     check.name.includes('ПРОСВЕТ');
+            
+            if (!isReversalPattern) {
+              if (direction === 'long' && patternTrend === 'НИСХОДЯЩИЙ') continue;
+              if (direction === 'short' && patternTrend === 'ВОСХОДЯЩИЙ') continue;
+            }
+            
             const signal = this.makeSignal(direction, check.name, patternCandle, closed, tf);
+            
+            // Пропускаем если сигнал нереалистичен
+            if (!signal) continue;
+            
             const bounds = PatternDetector.getFormationBounds(check.name, closed, closed.length - 1);
             signal.confirmed = this.checkConfirmation(direction, patternCandle, nextCandle, bounds);
             
@@ -195,7 +267,21 @@ export class SignalGenerator {
 
       for (const { check, direction } of oneCandlePatterns) {
         if (check.found) {
+          // Контекстная фильтрация для односвечных паттернов
+          // Молот и перевёрнутый молот - разворотные, могут идти против тренда
+          // Повешенный и падающая звезда - продолжительные, должны соответствовать тренду
+          const isReversalPattern = check.name.includes('МОЛОТ') && !check.name.includes('ПЕРЕВЁРНУТЫЙ');
+          
+          if (!isReversalPattern) {
+            if (direction === 'long' && patternTrend === 'НИСХОДЯЩИЙ') continue;
+            if (direction === 'short' && patternTrend === 'ВОСХОДЯЩИЙ') continue;
+          }
+          
           const signal = this.makeSignal(direction, check.name, patternCandle, closed, tf);
+          
+          // Пропускаем если сигнал нереалистичен
+          if (!signal) continue;
+          
           const bounds = PatternDetector.getFormationBounds(check.name, closed, closed.length - 1);
           signal.confirmed = this.checkConfirmation(direction, patternCandle, nextCandle, bounds);
           
