@@ -11,6 +11,14 @@ const klinesResponse = (n = 3) => ({
   },
 });
 
+const mkBybitResponse = (body: unknown, status = 200) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  headers: { get: () => null },
+  clone: () => (mkBybitResponse(body)),
+  json: async () => body,
+});
+
 beforeEach(() => {
   vi.restoreAllMocks();
 });
@@ -34,7 +42,7 @@ describe('fetchKlines — валидация и защита от инъекци
     let capturedUrl = '';
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       capturedUrl = url;
-      return { json: async () => klinesResponse() };
+      return mkBybitResponse(klinesResponse());
     }));
     await fetchKlines('BTCUSDT', '1D', 1_000_000);
     expect(capturedUrl).toContain('limit=1000');
@@ -44,7 +52,7 @@ describe('fetchKlines — валидация и защита от инъекци
   });
 
   it('возвращает разобранные свечи в хронологическом порядке', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({ json: async () => klinesResponse(3) })));
+    vi.stubGlobal('fetch', vi.fn(async () => (mkBybitResponse(klinesResponse(3)))));
     const candles = await fetchKlines('SOLUSDT', '1D', 3);
     expect(candles).toHaveLength(3);
     expect(candles[0].close).toBe(104);
@@ -57,9 +65,7 @@ describe('fetchKlines — валидация и защита от инъекци
   });
 
   it('бросает при retCode != 0', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({
-      json: async () => ({ retCode: 10001, retMsg: 'invalid symbol' }),
-    })));
+    vi.stubGlobal('fetch', vi.fn(async () => (mkBybitResponse({ retCode: 10001, retMsg: 'invalid symbol' }))));
     await expect(fetchKlines('FAKECOIN', '1D', 10)).rejects.toThrow(/Bybit API error/);
     vi.unstubAllGlobals();
   });
@@ -73,12 +79,10 @@ describe('fetch24hTicker', () => {
   });
 
   it('парсит lastPrice и процент изменения', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({
-      json: async () => ({
-        retCode: 0,
-        result: { list: [{ lastPrice: '50000', price24hPcnt: '0.025' }] },
-      }),
-    })));
+    vi.stubGlobal('fetch', vi.fn(async () => (mkBybitResponse({
+      retCode: 0,
+      result: { list: [{ lastPrice: '50000', price24hPcnt: '0.025' }] },
+    }))));
     const t = await fetch24hTicker('XRPUSDT');
     expect(t.lastPrice).toBe(50000);
     expect(t.priceChangePercent).toBeCloseTo(2.5);
@@ -87,12 +91,10 @@ describe('fetch24hTicker', () => {
   });
 
   it('не выдаёт NaN при мусорных данных цены', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({
-      json: async () => ({
-        retCode: 0,
-        result: { list: [{ lastPrice: 'abc', price24hPcnt: 'xyz' }] },
-      }),
-    })));
+    vi.stubGlobal('fetch', vi.fn(async () => (mkBybitResponse({
+      retCode: 0,
+      result: { list: [{ lastPrice: 'abc', price24hPcnt: 'xyz' }] },
+    }))));
     const t = await fetch24hTicker('DOGEUSDT');
     expect(Number.isNaN(t.lastPrice)).toBe(true); // lastPrice остаётся честным NaN из API
     expect(t.priceChange).toBe(0);               // но производные поля защищены от NaN
@@ -103,7 +105,7 @@ describe('fetch24hTicker', () => {
 
 describe('Кэш Bybit-клиента', () => {
   it('повторный идентичный запрос берётся из кэша (fetch вызывается 1 раз)', async () => {
-    const fetchMock = vi.fn(async () => ({ json: async () => klinesResponse(2) }));
+    const fetchMock = vi.fn(async () => (mkBybitResponse(klinesResponse(2))));
     vi.stubGlobal('fetch', fetchMock);
     // уникальный symbol, чтобы не пересечься с кэшем других тестов
     await fetchKlines('CACHEOK', '1D', 2);
