@@ -5,6 +5,7 @@ import { ZoneVoter } from './zone_voter';
 import { getTrendContext, getTrendMacro } from './trend_detection';
 import { ema, atr } from './indicators';
 import { patternStory } from './patterns';
+import { matchesPatternId, PatternId } from './pattern_ids';
 
 // Константы
 const TIMEOUT_H1 = 10800; // 3 часа в секундах
@@ -12,11 +13,15 @@ const TIMEOUT_D1 = 259200; // 3 дня в секундах
 const DOJI_MAX_FREQ = 0.15;
 const RANGE_PROXIMITY_PCT = 0.015;
 
-// Самодостаточные модели по Нисону (гл. 4-6)
-const SELF_CONFIRMING = [
-  'ПОГЛОЩЕНИЕ', 'ЗАВЕСА', 'ПРОСВЕТ', 'УТРЕННЯЯ ЗВЕЗДА', 'ВЕЧЕРНЯЯ ЗВЕЗДА',
-  'СОЛДАТА', 'ВОРОНА', 'ТРИ МЕТОДА', 'ТАСУКИ', 'ТАТАМИ', 'ГЭП',
-  'РАЗДЕЛЕНИЕ', 'ПОЯСА', 'НИЖЕ ШЕИ', 'НА ШЕЕ', 'ТОЛЧОК'
+// Самодостаточные модели по Нисону (гл. 4-6).
+// П.7: стабильные ID вместо подстрок — переименование отображаемого имени
+// модели больше не сломает эту проверку.
+export const SELF_CONFIRMING: readonly PatternId[] = [
+  'BULLISH_ENGULFING', 'BEARISH_ENGULFING', 'DARK_CLOUD_COVER', 'LIGHTING_AT_THE_WELL',
+  'MORNING_STAR', 'EVENING_STAR', 'THREE_WHITE_SOLDIERS', 'THREE_BLACK_CROWS',
+  'RISE_THREE_METHODS', 'FALL_THREE_METHODS', 'TATAMI', 'SIDE_BY_SIDE_GAP',
+  'SEPARATING_LINE_BULL', 'SEPARATING_LINE_BEAR', 'BELT_HOLD_BULL', 'BELT_HOLD_BEAR',
+  'ADVANCE_BLOCK', 'RETREAT_BLOCK', 'THRUSTING', 'DOUBLE_THRUSTING_BULL',
 ];
 
 export interface Signal {
@@ -198,11 +203,12 @@ export class SignalGenerator {
         if (check.found) {
           // Контекстная фильтрация: сигнал должен соответствовать тренду
           // Разворотные паттерны (Morning Star, Evening Star и т.д.) могут идти против тренда
-          const isReversalPattern = check.name.includes('ЗВЕЗДА') || 
-                                   check.name.includes('МАЛДЕНЕЦ') ||
-                                   check.name.includes('БАШЕН') ||
-                                   check.name.includes('ГОРЫ') ||
-                                   check.name.includes('РЕКИ');
+          // П.7: сверка по стабильным ID моделей вместо includes по подстрокам
+          const isReversalPattern = matchesPatternId(check.name, [
+            'MORNING_STAR', 'EVENING_STAR',
+            'ABANDONED_BABY_BOTTOM', 'ABANDONED_BABY_TOP',
+            'TOWER_TOP', 'TOWER_BOTTOM', 'THREE_MOUNTAINS', 'THREE_RIVERS',
+          ]);
           
           if (!isReversalPattern) {
             // Для продолжительных паттернов проверяем соответствие тренду
@@ -242,9 +248,10 @@ export class SignalGenerator {
             // Контекстная фильтрация для двухсвечных паттернов
             // Поглощение, завеса и просвет - РАЗВОРОТНЫЕ паттерны
             // Они должны идти ПРОТИВ текущего тренда
-            const isReversalPattern = check.name.includes('ПОГЛОЩЕНИЕ') || 
-                                     check.name.includes('ЗАВЕСА') ||
-                                     check.name.includes('ПРОСВЕТ');
+            // П.7: сверка по стабильным ID моделей
+            const isReversalPattern = matchesPatternId(check.name, [
+              'BULLISH_ENGULFING', 'BEARISH_ENGULFING', 'DARK_CLOUD_COVER', 'LIGHTING_AT_THE_WELL',
+            ]);
             
             if (isReversalPattern) {
               // Разворотные паттерны должны идти против тренда
@@ -286,7 +293,8 @@ export class SignalGenerator {
           // Контекстная фильтрация для односвечных паттернов
           // Молот и перевёрнутый молот - разворотные, могут идти против тренда
           // Повешенный и падающая звезда - продолжительные, должны соответствовать тренду
-          const isReversalPattern = check.name.includes('МОЛОТ'); // Включает и обычный, и перевёрнутый молот
+          // П.7: включает обычный, несовершенный и перевёрнутый молот
+          const isReversalPattern = matchesPatternId(check.name, ['HAMMER', 'IMPERFECT_HAMMER', 'INVERTED_HAMMER']);
           
           if (!isReversalPattern) {
             if (direction === 'long' && patternTrend === 'НИСХОДЯЩИЙ') continue;
