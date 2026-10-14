@@ -1,3 +1,5 @@
+import { assertValidSymbol, isValidTimeframe, clampNumber } from '../utils/validation';
+
 const BASE_URL = 'https://api.bybit.com';
 
 // Маппинг таймфреймов для Bybit API
@@ -14,9 +16,17 @@ const INTERVAL_MAP: Record<string, string> = {
   'W': 'W',
 };
 
-export async function fetchKlines(symbol: string, interval: string, limit: number): Promise<any[]> {
+export async function fetchKlines(rawSymbol: string, interval: string, rawLimit: number): Promise<any[]> {
+  // Валидация ввода: symbol — whitelist-символы тикера, interval — из разрешённого списка,
+  // limit — безопасный диапазон. Это исключает инъекцию параметров в URL запроса к API.
+  const symbol = assertValidSymbol(rawSymbol);
+  if (!isValidTimeframe(interval)) {
+    throw new Error(`Invalid interval: ${String(interval).slice(0, 32)}`);
+  }
+  const limit = clampNumber(rawLimit, 1, 1000, 250);
+
   const bybitInterval = INTERVAL_MAP[interval] || interval;
-  const url = `${BASE_URL}/v5/market/kline?category=spot&symbol=${symbol}&interval=${bybitInterval}&limit=${limit}`;
+  const url = `${BASE_URL}/v5/market/kline?category=spot&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(bybitInterval)}&limit=${limit}`;
   const response = await fetch(url);
   const data = await response.json();
   
@@ -34,8 +44,10 @@ export async function fetchKlines(symbol: string, interval: string, limit: numbe
   })).reverse();
 }
 
-export async function fetch24hTicker(symbol: string): Promise<any> {
-  const url = `${BASE_URL}/v5/market/tickers?category=spot&symbol=${symbol}`;
+export async function fetch24hTicker(rawSymbol: string): Promise<any> {
+  // Валидация symbol защищает от инъекции параметров в URL запроса к Bybit
+  const symbol = assertValidSymbol(rawSymbol);
+  const url = `${BASE_URL}/v5/market/tickers?category=spot&symbol=${encodeURIComponent(symbol)}`;
   const response = await fetch(url);
   const data = await response.json();
   
@@ -44,8 +56,11 @@ export async function fetch24hTicker(symbol: string): Promise<any> {
   }
   
   const ticker = data.result.list[0];
+  const lastPrice = parseFloat(ticker.lastPrice);
+  const pct = parseFloat(ticker.price24hPcnt);
   return {
-    priceChange: parseFloat(ticker.price24hPcnt) * parseFloat(ticker.lastPrice),
-    priceChangePercent: parseFloat(ticker.price24hPcnt) * 100,
+    lastPrice,
+    priceChange: Number.isFinite(pct) && Number.isFinite(lastPrice) ? pct * lastPrice : 0,
+    priceChangePercent: Number.isFinite(pct) ? pct * 100 : 0,
   };
 }

@@ -51,7 +51,11 @@ export default function SignalJournal() {
       symbols.map(async (symbol) => {
         try {
           const ticker = await fetch24hTicker(symbol);
-          currentPrices[symbol] = parseFloat(ticker.lastPrice);
+          // fetch24hTicker теперь возвращает lastPrice; защищаемся от NaN
+          const price = typeof ticker?.lastPrice === 'number' ? ticker.lastPrice : parseFloat(ticker?.lastPrice);
+          if (Number.isFinite(price)) {
+            currentPrices[symbol] = price;
+          }
         } catch (err) {
           console.error(`Ошибка получения цены для ${symbol}:`, err);
         }
@@ -94,10 +98,19 @@ export default function SignalJournal() {
       const reader = new FileReader();
       reader.onload = (e) => {
         const content = e.target?.result as string;
-        importJournal(content);
-        loadSignals();
+        try {
+          const { imported, rejected } = importJournal(content);
+          if (rejected > 0) {
+            alert(`Импортировано сигналов: ${imported}. Отклонено некорректных записей: ${rejected}.`);
+          }
+          loadSignals();
+        } catch (err) {
+          alert(err instanceof Error ? err.message : 'Не удалось импортировать журнал');
+        }
       };
       reader.readAsText(file);
+      // Освобожжаем input, чтобы можно было повторить импорт того же файла
+      event.target.value = '';
     }
   };
 
