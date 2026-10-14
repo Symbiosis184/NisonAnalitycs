@@ -52,6 +52,12 @@ export default function CandlestickChart({
   useEffect(() => {
     if (!chartContainerRef.current || candles.length === 0) return;
 
+    // Очищаем предыдущий график если есть
+    if (chartRef.current) {
+      chartRef.current.remove();
+      chartRef.current = null;
+    }
+
     const chart = createChart(chartContainerRef.current, {
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
@@ -156,7 +162,10 @@ export default function CandlestickChart({
 
     return () => {
       window.removeEventListener('resize', handleResize);
-      chart.remove();
+      if (chartRef.current) {
+        chartRef.current.remove();
+        chartRef.current = null;
+      }
     };
   }, [candles, ema20, ema50, ema200, patterns, support, resistance, height]);
 
