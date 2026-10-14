@@ -88,22 +88,48 @@
 ### Быстрый старт
 
 ```bash
-# Установка зависимостей
-npm install
+# Установка зависимостей (Node.js 20+)
+npm ci
 
 # Запуск в режиме разработки
 npm run dev
 ```
 
-Frontend будет доступен по адресу: http://localhost:5173
+Приложение будет доступно по адресу: **http://localhost:3000**
 
-**Важно:** Frontend работает автономно с реальными данными Bybit API. Python бэкенд не требуется для базового анализа.
+**Важно:** приложение полностью клиентское, работает автономно с публичными API Bybit/Binance без ключей. Бэкенд не требуется. В dev-режиме vite-сервер отдаёт мягкий CSP-заголовок (`vite.csp.ts`), чтобы политика безопасности проверялась и локально.
 
-### Сборка для продакшена
+### Проверки качества
 
 ```bash
-npm run build
+npm run typecheck   # tsc --noEmit
+npm test            # vitest run (юнит-тесты аналитического ядра)
+npm run build       # production-сборка в dist/
 ```
+
+Все проверки автоматически выполняются в CI (`.github/workflows/ci.yml`) на каждый push/PR.
+
+### Деплой (П.4)
+
+Единый скрипт `./deploy.sh` (или `npm run deploy`) выполняет `npm ci` → typecheck → тесты → `npm audit` → сборку, затем публикует на выбранную площадку:
+
+```bash
+./deploy.sh                      # только проверки + сборка в dist/
+./deploy.sh netlify              # публикация на Netlify (нужен NETLIFY_AUTH_TOKEN)
+./deploy.sh vercel               # публикация на Vercel (нужен VERCEL_TOKEN)
+./deploy.sh rsync user@host:/var/www/nison-analytics   # загрузка на свой сервер
+```
+
+Готовые конфигурации хостингов в репозитории — **все они отдают CSP и другие защитные заголовки**:
+
+| Площадка | Файл | Особенности |
+|---|---|---|
+| Netlify | `netlify.toml` | build command со всеми проверками, SPA-fallback, заголовки безопасности |
+| Vercel | `vercel.json` | framework=vite, заголовки безопасности, no-cache для index.html |
+| Любой static-хостинг с поддержкой `_headers` | `public/_headers` | дублирует набор заголовков (Netlify читает его тоже) |
+| Nginx / Docker | см. «Перенос на VPS» ниже | добавьте `add_header Content-Security-Policy ...` из `public/_headers` |
+
+Превью production-сборки локально: `npm run preview` (http://localhost:4173).
 
 ## 📡 Источники данных
 
@@ -222,13 +248,17 @@ Frontend напрямую обращается к Bybit API для получе�
 src/
 ├── api/
 │   ├── client.ts          # API клиент (Bybit + расчёты)
-│   └── bybit.ts           # Bybit REST API клиент
+│   ├── bybit.ts           # Bybit REST API клиент (валидация, кэш, retry/backoff)
+│   └── types.ts           # Строгие типы AnalysisReport и ответов бирж
 ├── components/
 │   ├── Layout.tsx         # Основной layout с навигацией
-│   └── CandlestickChart.tsx # График TradingView
+│   ├── CandlestickChart.tsx # График TradingView
+│   └── SignalJournal.tsx  # Журнал сигналов (export/import, снапшоты)
 ├── pages/
 │   ├── Dashboard.tsx      # Обзор рынка (методология Нисона)
 │   └── Analysis.tsx       # Детальный анализ с сигналами
+├── hooks/
+│   └── useBinanceWebSocket.ts # Real-time цены, автопереподключение
 ├── utils/
 │   ├── candle.ts          # Класс Candle с методами Нисона
 │   ├── indicators.ts      # Индикаторы (EMA, RSI, MACD, ATR)
@@ -236,9 +266,12 @@ src/
 │   ├── patterns.ts        # detectPatterns + patternStory
 │   ├── zone_voter.ts      # ZoneVoter - зоны S/R по Нисону
 │   ├── signal_generator.ts # SignalGenerator с приоритетами
+│   ├── signalJournal.ts   # Хранилище журнала + санитизация импорта + снапшоты
 │   ├── trend_detection.ts # Определение тренда (8 признаков)
-│   ├── format.ts          # Утилиты форматирования
-│   └── adapters.ts        # Адаптеры данных
+│   ├── validation.ts      # Whitelist-валидация symbol/timeframe/limit
+│   ├── http.ts            # fetchWithRetry: backoff+jitter, rate-limit, таймауты
+│   └── format.ts          # Утилиты форматирования
+├── __tests__/             # Vitest: unit + integration (99 тестов)
 ├── App.tsx                # Маршрутизация
 └── main.tsx               # Точка входа
 ```

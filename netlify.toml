@@ -1,0 +1,37 @@
+# Netlify configuration — Nison Analytics
+# https://docs.netlify.com/configure-builds/file-based-configuration/
+
+[build]
+  command = "npm ci && npm run typecheck && npm test && npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# П.5 — продакшен-заголовки безопасности (CSP без unsafe-inline скриптов;
+# приложение использует только внешний module-script и инлайн-стили темы).
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Content-Security-Policy = """
+      default-src 'self';
+      script-src 'self';
+      style-src 'self' 'unsafe-inline';
+      font-src 'self' data:;
+      img-src 'self' data:;
+      connect-src 'self' https://api.bybit.com wss://stream.binance.com:9443;
+      object-src 'none';
+      base-uri 'self';
+      form-action 'none';
+      frame-ancestors 'self';
+      upgrade-insecure-requests"""
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=()"
+    Strict-Transport-Security = "max-age=63072000; includeSubDomains; preload"
+
+# SPA-fallback для react-router
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
