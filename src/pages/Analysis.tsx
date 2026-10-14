@@ -6,6 +6,7 @@ import CandlestickChart from '../components/CandlestickChart';
 import { formatPrice } from '../utils/format';
 import { addSignal } from '../utils/signalJournal';
 import { isValidSymbol } from '../utils/validation';
+import { describeNetworkError } from '../utils/http';
 
 export default function Analysis() {
   const rawSymbol = useParams<{ symbol: string }>().symbol;
@@ -26,7 +27,7 @@ export default function Analysis() {
       setReport(data);
     } catch (err) {
       console.error('Ошибка загрузки анализа:', err);
-      setError('Не удалось загрузить анализ. Проверьте подключение к интернету.');
+      setError(describeNetworkError(err));
     } finally {
       setLoading(false);
     }

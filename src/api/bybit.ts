@@ -1,4 +1,5 @@
 import { assertValidSymbol, isValidTimeframe, clampNumber } from '../utils/validation';
+import { fetchWithRetry } from '../utils/http';
 
 const BASE_URL = 'https://api.bybit.com';
 
@@ -22,8 +23,12 @@ async function cachedFetchJson(key: string, url: string, ttlMs: number): Promise
 
   const p = (async () => {
     try {
-      const response = await fetch(url);
+      // fetchWithRetry: экспоненциальный backoff при 5xx/таймаутах,
+      // уважение Retry-After / распознавание rate-limit (429, retCode 10006)
+      const response = await fetchWithRetry(url);
       const data = await response.json();
+      // Ошибки реткода проверяются в самих fetchKlines/fetch24hTicker;
+      // здесь не бросаем, чтобы не ломать семантику «кэшируем сырой ответ».
       cache.set(key, { value: data, expires: Date.now() + ttlMs });
       return data;
     } finally {

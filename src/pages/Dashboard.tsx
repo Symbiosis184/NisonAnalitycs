@@ -5,6 +5,7 @@ import { api } from '../api/client';
 import type { MarketOverviewItem as MarketOverview } from '../api/types';
 import { formatPrice, formatVolume } from '../utils/format';
 import { useBinanceWebSocket } from '../hooks/useBinanceWebSocket';
+import { describeNetworkError } from '../utils/http';
 
 
 const SYMBOLS = [
@@ -54,7 +55,7 @@ export default function Dashboard() {
       setLastUpdate(new Date());
     } catch (err) {
       console.error('Ошибка загрузки:', err);
-      setError('Не удалось загрузить данные с Bybit API. Проверьте подключение к интернету.');
+      setError(describeNetworkError(err));
     } finally {
       setLoading(false);
     }
