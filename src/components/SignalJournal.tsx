@@ -1,14 +1,17 @@
 import { useState, useEffect } from 'react';
-import { TrendingUp, TrendingDown, Target, Shield, Trash2, Download, Upload } from 'lucide-react';
-import { 
-  getAllSignals, 
-  getSignalStats, 
-  deleteSignal, 
-  exportJournal, 
+import { TrendingUp, TrendingDown, Target, Shield, Trash2, Download, Upload, History } from 'lucide-react';
+import {
+  getAllSignals,
+  getSignalStats,
+  deleteSignal,
+  exportJournal,
   importJournal,
   checkActiveSignals,
+  listSnapshots,
+  restoreFromSnapshot,
   type SignalEntry,
-  type SignalStats 
+  type SignalStats,
+  type JournalSnapshot
 } from '../utils/signalJournal';
 import { formatPrice } from '../utils/format';
 import { fetch24hTicker } from '../api/bybit';
@@ -32,9 +35,30 @@ export default function SignalJournal() {
     return () => clearInterval(interval);
   }, []);
 
+  const [snapshots, setSnapshots] = useState<JournalSnapshot[]>([]);
+
   const loadSignals = () => {
     setSignals(getAllSignals());
     setStats(getSignalStats());
+    setSnapshots(listSnapshots());
+  };
+
+  // Восстановление журнала из последнего авто-снапшота (защита от потери данных)
+  const handleRestore = () => {
+    if (snapshots.length === 0) {
+      alert('Резервных снапшотов пока нет.');
+      return;
+    }
+    const latest = snapshots[0];
+    const when = new Date(latest.savedAt).toLocaleString('ru-RU');
+    if (!confirm(`Восстановить журнал из снапшота от ${when} (${latest.entries} записей)?\nТекущее состояние также будет сохранено в снапшоты.`)) return;
+    const restored = restoreFromSnapshot();
+    if (restored) {
+      loadSignals();
+      alert(`Журнал восстановлен: ${restored.length} записей.`);
+    } else {
+      alert('Не удалось восстановить журнал из снапшота.');
+    }
   };
 
   // Проверка статусов активных сигналов
@@ -211,6 +235,14 @@ export default function SignalJournal() {
         </div>
 
         <div className="flex gap-2">
+          <button
+            onClick={handleRestore}
+            title={`Авто-снапшоты: ${snapshots.length} (хранится до 7 последних)`}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-500/20 hover:bg-gray-500/30 text-gray-300 transition-colors"
+          >
+            <History className="w-4 h-4" />
+            Восстановить{snapshots.length > 0 ? ` (${snapshots.length})` : ''}
+          </button>
           <button
             onClick={handleExport}
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 transition-colors"

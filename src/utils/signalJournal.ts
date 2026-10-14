@@ -35,10 +35,113 @@ export interface SignalStats {
 }
 
 const STORAGE_KEY = 'nison_signal_journal';
+const SNAPSHOT_PREFIX = 'nison_signal_journal_backup_';
+const SNAPSHOT_INTERVAL_MS = 24 * 60 * 60 * 1000; // не чаще одного снапшота в сутки
+const SNAPSHOT_RETENTION = 7;                     // хранить до 7 последних снапшотов
 
-// Сохранение журнала в localStorage
+// --- Автоматические снапшоты (защита от потери localStorage) ---
+// Перед каждой перезаписью журнала делаем резервную копию предыдущего состояния.
+// Снапшоты хранятся отдельными ключами и ротационно удаляются (не более 7).
+
+export interface JournalSnapshot {
+  key: string;        // ключ localStorage
+  savedAt: number;    // unix-мс создания снапшота
+  entries: number;    // количество записей в снимке
+}
+
+function isStorageAvailable(): boolean {
+  try {
+    return typeof localStorage !== 'undefined';
+  } catch {
+    return false; // приватный режим Safari и т.п. может бросать на доступе
+  }
+}
+
+// Запись с защитой от переполнения квоты localStorage (QuotaExceededError)
+function safeSetItem(key: string, value: string): boolean {
+  if (!isStorageAvailable()) return false;
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch {
+    // Квота исчерпана — чистим старые снапшоты и пробуем один раз снова
+    try {
+      for (const s of listSnapshots()) localStorage.removeItem(s.key);
+      localStorage.setItem(key, value);
+      return true;
+    } catch {
+      console.warn('localStorage недоступен для записи (квота/приватный режим)');
+      return false;
+    }
+  }
+}
+
+// Сохранение журнала в localStorage с предварительным авто-снапшотом
 function saveJournal(entries: SignalEntry[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+  maybeSnapshot();
+  safeSetItem(STORAGE_KEY, JSON.stringify(entries));
+}
+
+// Создаёт снапшот текущего журнала, если последний был старше SNAPSHOT_INTERVAL_MS
+function maybeSnapshot(): void {
+  if (!isStorageAvailable()) return;
+  const snapshots = listSnapshots();
+  const latest = snapshots[0];
+  if (latest && Date.now() - latest.savedAt < SNAPSHOT_INTERVAL_MS) return;
+
+  const data = localStorage.getItem(STORAGE_KEY);
+  if (!data) return; // снапшотить пустоту бессмысленно
+
+  const key = `${SNAPSHOT_PREFIX}${Date.now()}`;
+  if (safeSetItem(key, data)) {
+    // Ротация: удаляем всё, кроме SNAPSHOT_RETENTION самых свежих
+    snapshots
+      .map(s => s.key)
+      .concat(key)
+      .sort()
+      .slice(0, -SNAPSHOT_RETENTION)
+      .forEach(old => localStorage.removeItem(old));
+  }
+}
+
+// Список доступных снапшотов (по убыванию свежести)
+export function listSnapshots(): JournalSnapshot[] {
+  if (!isStorageAvailable()) return [];
+  const out: JournalSnapshot[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith(SNAPSHOT_PREFIX)) continue;
+    try {
+      const parsed = JSON.parse(localStorage.getItem(key) ?? '[]');
+      out.push({
+        key,
+        savedAt: Number(key.slice(SNAPSHOT_PREFIX.length)) || 0,
+        entries: Array.isArray(parsed) ? parsed.length : 0,
+      });
+    } catch {
+      /* повреждённый снапшот пропускаем */
+    }
+  }
+  return out.sort((a, b) => b.savedAt - a.savedAt);
+}
+
+// Восстановление журнала из снапшота (по ключу или последнего по умолчанию)
+export function restoreFromSnapshot(key?: string): SignalEntry[] | null {
+  if (!isStorageAvailable()) return null;
+  const target = key ?? listSnapshots()[0]?.key;
+  if (!target || !target.startsWith(SNAPSHOT_PREFIX)) return null;
+  const data = localStorage.getItem(target);
+  if (!data) return null;
+  try {
+    const parsed = JSON.parse(data);
+    if (!Array.isArray(parsed)) return null;
+    const restored = parsed.map(sanitizeSignalEntry).filter((e): e is SignalEntry => e !== null);
+    // Записываем восстановленное состояние как основной журнал (и делаем снапшот текущего перед заменой)
+    saveJournal(restored);
+    return restored;
+  } catch {
+    return null;
+  }
 }
 
 // Санитизация одной записи журнала: строгая проверка типов и границ.
@@ -329,7 +432,10 @@ export function importJournal(json: string): { imported: number; rejected: numbe
   return { imported: sanitized.length, rejected: Math.min(entries.length, MAX_IMPORT_ENTRIES) - sanitized.length };
 }
 
-// Очистка журнала
+// Очистка журнала. Снапшоты сохраняются намеренно: перед удалением
+// обязательно создаётся снимок текущего состояния, чтобы очистку можно
+// было отменить через restoreFromSnapshot().
 export function clearJournal(): void {
-  localStorage.removeItem(STORAGE_KEY);
+  maybeSnapshot();
+  if (isStorageAvailable()) localStorage.removeItem(STORAGE_KEY);
 }
