@@ -412,7 +412,7 @@ export default function Analysis() {
 
                 <button
                   onClick={() => {
-                    addSignal({
+                    const result = addSignal({
                       symbol: symbol || '',
                       timeframe,
                       pattern: signal.pattern,
@@ -423,7 +423,12 @@ export default function Analysis() {
                       riskReward: signal.rr,
                       confidence: signal.quality * 100,
                     });
-                    alert('Сигнал сохранён в журнал!');
+                    
+                    if (result) {
+                      alert('✓ Сигнал сохранён в журнал!');
+                    } else {
+                      alert('⚠️ Этот сигнал уже существует в журнале');
+                    }
                   }}
                   className="mt-3 flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 transition-colors text-sm"
                 >

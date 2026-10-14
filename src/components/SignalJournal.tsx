@@ -28,7 +28,9 @@ export default function SignalJournal() {
   const handleDelete = (id: string) => {
     if (confirm('Удалить сигнал?')) {
       deleteSignal(id);
-      loadSignals();
+      // Принудительно обновляем состояние после удаления
+      setSignals(getAllSignals());
+      setStats(getSignalStats());
     }
   };
 

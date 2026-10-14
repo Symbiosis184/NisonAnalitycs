@@ -45,9 +45,24 @@ function loadJournal(): SignalEntry[] {
   return data ? JSON.parse(data) : [];
 }
 
-// Добавление нового сигнала
-export function addSignal(signal: Omit<SignalEntry, 'id' | 'timestamp' | 'status'>): SignalEntry {
+// Добавление нового сигнала с проверкой на дубликаты
+export function addSignal(signal: Omit<SignalEntry, 'id' | 'timestamp' | 'status'>): SignalEntry | null {
   const entries = loadJournal();
+  
+  // Проверка на дубликаты: тот же символ, паттерн, направление и цена входа
+  const isDuplicate = entries.some(entry => 
+    entry.symbol === signal.symbol &&
+    entry.pattern === signal.pattern &&
+    entry.direction === signal.direction &&
+    Math.abs(entry.entryPrice - signal.entryPrice) < 0.0001 && // Учитываем погрешность float
+    entry.status === 'pending' // Только активные сигналы
+  );
+  
+  if (isDuplicate) {
+    console.warn('Дубликат сигнала обнаружен и пропущен');
+    return null;
+  }
+  
   const newEntry: SignalEntry = {
     ...signal,
     id: `signal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,

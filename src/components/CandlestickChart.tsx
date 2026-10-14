@@ -126,27 +126,27 @@ export default function CandlestickChart({
       });
     });
 
-    // Добавляем маркеры паттернов - только самый важный (топ-1 по confidence)
+    // Добавляем маркеры ВСЕХ подтверждённых паттернов
     if (patterns.length > 0) {
-      // Сортируем по confidence и берем только топ-1
-      const sortedPatterns = [...patterns]
-        .filter(p => p.candleIndex >= 0 && p.candleIndex < candles.length)
+      // Фильтруем только подтверждённые паттерны
+      const confirmedPatterns = patterns
+        .filter(p => p.confirmed && p.candleIndex >= 0 && p.candleIndex < candles.length)
         .sort((a, b) => b.confidence - a.confidence);
       
-      const topPattern = sortedPatterns[0];
-      
-      if (topPattern) {
-        const candle = candles[topPattern.candleIndex];
-        const marker = {
-          time: (candle.time / 1000) as any,
-          position: topPattern.type === 'bullish' ? 'belowBar' as const : 'aboveBar' as const,
-          color: topPattern.type === 'bullish' ? '#22c55e' : topPattern.type === 'bearish' ? '#ef4444' : '#94a3b8',
-          shape: topPattern.type === 'bullish' ? 'arrowUp' as const : topPattern.type === 'bearish' ? 'arrowDown' as const : 'circle' as const,
-          text: topPattern.confirmed ? `✓ ${topPattern.name}` : topPattern.name,
-          size: topPattern.confirmed ? 2 : 1.5,
-        };
+      if (confirmedPatterns.length > 0) {
+        const markers = confirmedPatterns.map(pattern => {
+          const candle = candles[pattern.candleIndex];
+          return {
+            time: (candle.time / 1000) as any,
+            position: pattern.type === 'bullish' ? 'belowBar' as const : 'aboveBar' as const,
+            color: pattern.type === 'bullish' ? '#22c55e' : pattern.type === 'bearish' ? '#ef4444' : '#94a3b8',
+            shape: pattern.type === 'bullish' ? 'arrowUp' as const : pattern.type === 'bearish' ? 'arrowDown' as const : 'circle' as const,
+            text: `✓ ${pattern.name}`,
+            size: 2,
+          };
+        });
 
-        createSeriesMarkers(candlestickSeries, [marker]);
+        createSeriesMarkers(candlestickSeries, markers);
       }
     }
 

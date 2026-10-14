@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { TrendingUp, TrendingDown, Activity, BarChart2, AlertCircle, RefreshCw, Target, Shield } from 'lucide-react';
 import { api } from '../api/client';
 import { formatPrice, formatVolume } from '../utils/format';
+import { useBinanceWebSocket } from '../hooks/useBinanceWebSocket';
 
 interface MarketOverview {
   symbol: string;
@@ -48,6 +49,27 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+
+  // WebSocket для real-time цен
+  const symbols = market.map(m => m.symbol);
+  const realTimePrices = useBinanceWebSocket(symbols);
+
+  // Обновляем цены в market данными из WebSocket
+  useEffect(() => {
+    if (Object.keys(realTimePrices).length > 0) {
+      setMarket(prev => prev.map(item => {
+        const rtPrice = realTimePrices[item.symbol];
+        if (rtPrice) {
+          return {
+            ...item,
+            price: rtPrice.price,
+            change_24h: rtPrice.priceChangePercent,
+          };
+        }
+        return item;
+      }));
+    }
+  }, [realTimePrices]);
 
   const loadData = async () => {
     try {
@@ -102,9 +124,17 @@ export default function Dashboard() {
           <p className="text-sm text-gray-400 mt-1">
             Контекст → Паттерны → Подтверждение → Объём
           </p>
-          <p className="text-xs text-gray-500 mt-1">
-            {lastUpdate && `Обновлено: ${lastUpdate.toLocaleTimeString('ru-RU')}`}
-          </p>
+          <div className="flex items-center gap-3 mt-1">
+            <p className="text-xs text-gray-500">
+              {lastUpdate && `Обновлено: ${lastUpdate.toLocaleTimeString('ru-RU')}`}
+            </p>
+            {Object.keys(realTimePrices).length > 0 && (
+              <span className="flex items-center gap-1 text-xs text-green-400">
+                <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
+                Real-time
+              </span>
+            )}
+          </div>
         </div>
         <button
           onClick={loadData}
