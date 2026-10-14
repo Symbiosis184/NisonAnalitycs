@@ -31,8 +31,20 @@ export function isValidTimeframe(tf: unknown): tf is string {
   return typeof tf === 'string' && ALLOWED_TIMEFRAMES.has(tf);
 }
 
-/** Ограничение числа безопасным диапазоном с фолбэком. */
-export function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
+/**
+ * Приведение к безопасному числу: не-числа/NaN/Infinity → fallback,
+ * конечные значения клампятся в [min, max].
+ */
+export function clampNumber(
+  value: unknown,
+  min: number,
+  max: number,
+  fallbackOrMax: number = max,
+): number {
+  // Фолбэк — необязательный 4-й аргумент. Если он не передан, используется max.
+  // Важно: сам `value` может быть NaN/null/строкой — тогда возвращаем фолбэк,
+  // но валидное число всегда клампится в [min, max].
+  const fallback = arguments.length >= 4 ? fallbackOrMax : max;
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, n));
