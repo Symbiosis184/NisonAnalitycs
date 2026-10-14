@@ -109,24 +109,31 @@ function loadJournal(): SignalEntry[] {
 
 // Добавление нового сигнала с проверкой на дубликаты
 export function addSignal(signal: Omit<SignalEntry, 'id' | 'timestamp' | 'status'>): SignalEntry | null {
+  // Строгая санитизация входа: отбрасываем вредные/битые данные до записи
+  const clean = sanitizeSignalEntry(signal);
+  if (!clean) {
+    console.warn('addSignal: запись отклонена (не прошла валидацию)');
+    return null;
+  }
+
   const entries = loadJournal();
-  
+
   // Проверка на дубликаты: тот же символ, паттерн, направление и цена входа
-  const isDuplicate = entries.some(entry => 
-    entry.symbol === signal.symbol &&
-    entry.pattern === signal.pattern &&
-    entry.direction === signal.direction &&
-    Math.abs(entry.entryPrice - signal.entryPrice) < 0.0001 && // Учитываем погрешность float
+  const isDuplicate = entries.some(entry =>
+    entry.symbol === clean.symbol &&
+    entry.pattern === clean.pattern &&
+    entry.direction === clean.direction &&
+    Math.abs(entry.entryPrice - clean.entryPrice) < 0.0001 && // Учитываем погрешность float
     entry.status === 'pending' // Только активные сигналы
   );
-  
+
   if (isDuplicate) {
     console.warn('Дубликат сигнала обнаружен и пропущен');
     return null;
   }
-  
+
   const newEntry: SignalEntry = {
-    ...signal,
+    ...clean,
     id: (typeof crypto !== 'undefined' && crypto.randomUUID)
       ? `signal_${Date.now()}_${crypto.randomUUID()}`
       : `signal_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,

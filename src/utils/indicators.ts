@@ -2,6 +2,7 @@ import { Candle } from './candle';
 
 export function ema(values: number[], period: number): number[] {
   const result: number[] = [];
+  if (values.length === 0) return result;
   const multiplier = 2 / (period + 1);
   
   let prev = values[0];
@@ -111,15 +112,20 @@ export function pivotLevels(candles: Candle[]) {
   const last = candles[candles.length - 1];
   const pivot = (last.high + last.low + last.close) / 3;
   
+  // Классические дневные пивот-уровни: S1/R1 и более глубокие S2/R2
+  const s1 = pivot * 2 - last.high;
+  const r1 = pivot * 2 - last.low;
+  const s2 = pivot - (last.high - last.low);
+  const r2 = pivot + (last.high - last.low);
+
   return {
-    support: [
-      pivot * 2 - last.high,
-      pivot - (last.high - last.low),
-    ],
-    resistance: [
-      pivot * 2 - last.low,
-      pivot + (last.high - last.low),
-    ]
+    pivot,
+    support: [s1, s2],
+    resistance: [r1, r2],
+    s1,
+    r1,
+    s2,
+    r2,
   };
 }
 
