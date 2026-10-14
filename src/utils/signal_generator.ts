@@ -31,7 +31,7 @@ export interface Signal {
   timestamp: number;
   confirmed: boolean;
   story: string;
-  metadata: {
+  meta: {
     patternCandlesCount: number;
     patternStartIdx: number;
     patternEndIdx: number;
@@ -116,6 +116,11 @@ export class SignalGenerator {
       return null; // Сигнал нереалистичен
     }
 
+    // Явная проверка на нулевой риск перед расчётом R:R
+    if (risk === 0) {
+      return null; // Невозможно рассчитать R:R
+    }
+
     const rr = reward / risk;
 
     return {
@@ -130,7 +135,7 @@ export class SignalGenerator {
       timestamp: Date.now(),
       confirmed: false, // Будет установлено позже
       story: patternStory(pattern),
-      metadata: bounds,
+      meta: bounds,
     };
   }
 
@@ -168,25 +173,25 @@ export class SignalGenerator {
       // Определяем тренд в момент паттерна
       const patternTrend = getTrendMacro(closed, patternCandle.close);
       
-      // Проверяем все типы паттернов
+      // Проверяем все типы паттернов с проверкой минимального количества свечей
       const patterns = [
-        // Высокоприоритетные
-        { check: PatternDetector.isMorningStar(closed), direction: 'long' as const },
-        { check: PatternDetector.isEveningStar(closed), direction: 'short' as const },
-        { check: PatternDetector.isAbandonedBaby(closed), direction: closed[closed.length - 1].isBullish ? 'long' as const : 'short' as const },
-        { check: PatternDetector.isTowerTop(closed), direction: 'short' as const },
-        { check: PatternDetector.isTowerBottom(closed), direction: 'long' as const },
-        { check: PatternDetector.isThreeMountains(closed), direction: 'short' as const },
-        { check: PatternDetector.isThreeRivers(closed), direction: 'long' as const },
-        { check: PatternDetector.isRisingThree(closed), direction: 'long' as const },
-        { check: PatternDetector.isFallingThree(closed), direction: 'short' as const },
-        { check: PatternDetector.isMatHold(closed), direction: 'long' as const },
-        { check: PatternDetector.isDoubleThrustingBull(closed), direction: 'long' as const },
-        { check: PatternDetector.isThreeWhiteSoldiers(closed), direction: 'long' as const },
-        { check: PatternDetector.isThreeBlackCrows(closed), direction: 'short' as const },
-        { check: PatternDetector.isLadderBottom(closed), direction: 'long' as const },
-        { check: PatternDetector.isTwoCrows(closed), direction: 'short' as const },
-        { check: PatternDetector.isTasuki(closed), direction: closed[closed.length - 1].isBullish ? 'long' as const : 'short' as const },
+        // Высокоприоритетные (3+ свечи)
+        { check: closed.length >= 3 ? PatternDetector.isMorningStar(closed) : { found: false, name: '' }, direction: 'long' as const },
+        { check: closed.length >= 3 ? PatternDetector.isEveningStar(closed) : { found: false, name: '' }, direction: 'short' as const },
+        { check: closed.length >= 3 ? PatternDetector.isAbandonedBaby(closed) : { found: false, name: '' }, direction: closed[closed.length - 1].isBullish ? 'long' as const : 'short' as const },
+        { check: closed.length >= 6 ? PatternDetector.isTowerTop(closed) : { found: false, name: '' }, direction: 'short' as const },
+        { check: closed.length >= 6 ? PatternDetector.isTowerBottom(closed) : { found: false, name: '' }, direction: 'long' as const },
+        { check: closed.length >= 12 ? PatternDetector.isThreeMountains(closed) : { found: false, name: '' }, direction: 'short' as const },
+        { check: closed.length >= 12 ? PatternDetector.isThreeRivers(closed) : { found: false, name: '' }, direction: 'long' as const },
+        { check: closed.length >= 5 ? PatternDetector.isRisingThree(closed) : { found: false, name: '' }, direction: 'long' as const },
+        { check: closed.length >= 5 ? PatternDetector.isFallingThree(closed) : { found: false, name: '' }, direction: 'short' as const },
+        { check: closed.length >= 5 ? PatternDetector.isMatHold(closed) : { found: false, name: '' }, direction: 'long' as const },
+        { check: closed.length >= 4 ? PatternDetector.isDoubleThrustingBull(closed) : { found: false, name: '' }, direction: 'long' as const },
+        { check: closed.length >= 3 ? PatternDetector.isThreeWhiteSoldiers(closed) : { found: false, name: '' }, direction: 'long' as const },
+        { check: closed.length >= 3 ? PatternDetector.isThreeBlackCrows(closed) : { found: false, name: '' }, direction: 'short' as const },
+        { check: closed.length >= 5 ? PatternDetector.isLadderBottom(closed) : { found: false, name: '' }, direction: 'long' as const },
+        { check: closed.length >= 3 ? PatternDetector.isTwoCrows(closed) : { found: false, name: '' }, direction: 'short' as const },
+        { check: closed.length >= 3 ? PatternDetector.isTasuki(closed) : { found: false, name: '' }, direction: closed[closed.length - 1].isBullish ? 'long' as const : 'short' as const },
       ];
 
       for (const { check, direction } of patterns) {
@@ -195,7 +200,9 @@ export class SignalGenerator {
           // Разворотные паттерны (Morning Star, Evening Star и т.д.) могут идти против тренда
           const isReversalPattern = check.name.includes('ЗВЕЗДА') || 
                                    check.name.includes('МАЛДЕНЕЦ') ||
-                                   check.name.includes('РАЗВОРОТ');
+                                   check.name.includes('БАШЕН') ||
+                                   check.name.includes('ГОРЫ') ||
+                                   check.name.includes('РЕКИ');
           
           if (!isReversalPattern) {
             // Для продолжительных паттернов проверяем соответствие тренду
@@ -208,8 +215,8 @@ export class SignalGenerator {
           // Пропускаем если сигнал нереалистичен
           if (!signal) continue;
           
-          // Проверяем подтверждение следующей свечой
-          const bounds = PatternDetector.getFormationBounds(check.name, closed, closed.length - 1);
+          // Правильный расчёт границ формации для многокомпонентных паттернов
+          const bounds = PatternDetector.getFormationBounds(check.name, candles, i);
           signal.confirmed = this.checkConfirmation(direction, patternCandle, nextCandle, bounds);
           
           if (signal.confirmed && signal.rr >= 2) {
@@ -233,11 +240,18 @@ export class SignalGenerator {
         for (const { check, direction } of twoCandlePatterns) {
           if (check.found) {
             // Контекстная фильтрация для двухсвечных паттернов
+            // Поглощение, завеса и просвет - РАЗВОРОТНЫЕ паттерны
+            // Они должны идти ПРОТИВ текущего тренда
             const isReversalPattern = check.name.includes('ПОГЛОЩЕНИЕ') || 
                                      check.name.includes('ЗАВЕСА') ||
                                      check.name.includes('ПРОСВЕТ');
             
-            if (!isReversalPattern) {
+            if (isReversalPattern) {
+              // Разворотные паттерны должны идти против тренда
+              if (direction === 'long' && patternTrend === 'ВОСХОДЯЩИЙ') continue;
+              if (direction === 'short' && patternTrend === 'НИСХОДЯЩИЙ') continue;
+            } else {
+              // Продолжительные паттерны должны соответствовать тренду
               if (direction === 'long' && patternTrend === 'НИСХОДЯЩИЙ') continue;
               if (direction === 'short' && patternTrend === 'ВОСХОДЯЩИЙ') continue;
             }
@@ -247,7 +261,9 @@ export class SignalGenerator {
             // Пропускаем если сигнал нереалистичен
             if (!signal) continue;
             
-            const bounds = PatternDetector.getFormationBounds(check.name, closed, closed.length - 1);
+            // Правильный расчёт границ формации
+            // Для двухсвечного паттерна: prevCandle (i-1) и patternCandle (i)
+            const bounds = PatternDetector.getFormationBounds(check.name, candles, i);
             signal.confirmed = this.checkConfirmation(direction, patternCandle, nextCandle, bounds);
             
             if (signal.confirmed && signal.rr >= 2) {
@@ -270,7 +286,8 @@ export class SignalGenerator {
           // Контекстная фильтрация для односвечных паттернов
           // Молот и перевёрнутый молот - разворотные, могут идти против тренда
           // Повешенный и падающая звезда - продолжительные, должны соответствовать тренду
-          const isReversalPattern = check.name.includes('МОЛОТ') && !check.name.includes('ПЕРЕВЁРНУТЫЙ');
+          const isReversalPattern = (check.name.includes('МОЛОТ') && !check.name.includes('ПЕРЕВЁРНУТЫЙ')) ||
+                                   check.name.includes('ПЕРЕВЁРНУТЫЙ');
           
           if (!isReversalPattern) {
             if (direction === 'long' && patternTrend === 'НИСХОДЯЩИЙ') continue;
@@ -282,7 +299,8 @@ export class SignalGenerator {
           // Пропускаем если сигнал нереалистичен
           if (!signal) continue;
           
-          const bounds = PatternDetector.getFormationBounds(check.name, closed, closed.length - 1);
+          // Правильный расчёт границ формации для односвечных паттернов
+          const bounds = PatternDetector.getFormationBounds(check.name, candles, i);
           signal.confirmed = this.checkConfirmation(direction, patternCandle, nextCandle, bounds);
           
           if (signal.confirmed && signal.rr >= 2) {
