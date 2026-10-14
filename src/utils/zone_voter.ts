@@ -8,6 +8,7 @@
 
 import { Candle } from './candle';
 import { ema } from './indicators';
+import { findSwings, addLevelToMap, ZoneClusterData } from './levels';
 
 export interface Zone {
   level: number;
@@ -29,30 +30,18 @@ export class ZoneVoter {
    * Сбор всех зон с голосованием
    */
   static collect(price: number, candles: Candle[]): { support: Zone[]; resistance: Zone[] } {
-    const supMap = new Map<number, { reasons: string[]; touches: number; lastTouch: number }>();
-    const resMap = new Map<number, { reasons: string[]; touches: number; lastTouch: number }>();
+    const supMap = new Map<number, ZoneClusterData>();
+    const resMap = new Map<number, ZoneClusterData>();
 
+    // П.7: кластеризация уровней — общая реализация из levels.ts (см. addLevelToMap),
+    // идентичная той, что использует SupportResistance через тот же модуль.
     const addZone = (
-      map: Map<number, { reasons: string[]; touches: number; lastTouch: number }>,
+      map: Map<number, ZoneClusterData>,
       level: number,
       reason: string,
       touchTime: number = candles[candles.length - 1].time
     ) => {
-      // Кластеризация: ищем близкие уровни
-      let clustered = false;
-      for (const [existingLevel, data] of map.entries()) {
-        if (Math.abs(level - existingLevel) / existingLevel <= this.CLUSTER_TOLERANCE) {
-          data.reasons.push(reason);
-          data.touches++;
-          data.lastTouch = Math.max(data.lastTouch, touchTime);
-          clustered = true;
-          break;
-        }
-      }
-      
-      if (!clustered) {
-        map.set(level, { reasons: [reason], touches: 1, lastTouch: touchTime });
-      }
+      addLevelToMap(map, level, reason, touchTime, this.CLUSTER_TOLERANCE);
     };
 
     // 1. Свинг-минимумы и максимумы (главный источник по Нисону)
@@ -91,55 +80,16 @@ export class ZoneVoter {
    */
   private static addSwingLevels(
     candles: Candle[],
-    supMap: Map<number, { reasons: string[]; touches: number; lastTouch: number }>,
-    resMap: Map<number, { reasons: string[]; touches: number; lastTouch: number }>
+    supMap: Map<number, ZoneClusterData>,
+    resMap: Map<number, ZoneClusterData>
   ) {
+    // П.7: единый свинг-детектор из levels.ts (тот же, что у SupportResistance)
     const lookback = Math.min(100, candles.length);
-    const recent = candles.slice(-lookback);
-
-    for (let i = 2; i < recent.length - 2; i++) {
-      const c = recent[i];
-
-      // Swing low (поддержка)
-      if (c.low < recent[i - 1].low && c.low < recent[i - 2].low &&
-          c.low < recent[i + 1].low && c.low < recent[i + 2].low) {
-        const addZone = (map: Map<number, any>, level: number, reason: string, time: number) => {
-          let clustered = false;
-          for (const [existingLevel, data] of map.entries()) {
-            if (Math.abs(level - existingLevel) / existingLevel <= this.CLUSTER_TOLERANCE) {
-              data.reasons.push(reason);
-              data.touches++;
-              data.lastTouch = Math.max(data.lastTouch, time);
-              clustered = true;
-              break;
-            }
-          }
-          if (!clustered) {
-            map.set(level, { reasons: [reason], touches: 1, lastTouch: time });
-          }
-        };
-        addZone(supMap, c.low, 'свинг-минимум', c.time);
-      }
-
-      // Swing high (сопротивление)
-      if (c.high > recent[i - 1].high && c.high > recent[i - 2].high &&
-          c.high > recent[i + 1].high && c.high > recent[i + 2].high) {
-        const addZone = (map: Map<number, any>, level: number, reason: string, time: number) => {
-          let clustered = false;
-          for (const [existingLevel, data] of map.entries()) {
-            if (Math.abs(level - existingLevel) / existingLevel <= this.CLUSTER_TOLERANCE) {
-              data.reasons.push(reason);
-              data.touches++;
-              data.lastTouch = Math.max(data.lastTouch, time);
-              clustered = true;
-              break;
-            }
-          }
-          if (!clustered) {
-            map.set(level, { reasons: [reason], touches: 1, lastTouch: time });
-          }
-        };
-        addZone(resMap, c.high, 'свинг-максимум', c.time);
+    for (const swing of findSwings(candles, lookback)) {
+      if (swing.type === 'low') {
+        addLevelToMap(supMap, swing.level, 'свинг-минимум', swing.time, this.CLUSTER_TOLERANCE);
+      } else {
+        addLevelToMap(resMap, swing.level, 'свинг-максимум', swing.time, this.CLUSTER_TOLERANCE);
       }
     }
   }
@@ -151,69 +101,23 @@ export class ZoneVoter {
   private static addPolarityLevels(
     price: number,
     candles: Candle[],
-    supMap: Map<number, { reasons: string[]; touches: number; lastTouch: number }>,
-    resMap: Map<number, { reasons: string[]; touches: number; lastTouch: number }>
+    supMap: Map<number, ZoneClusterData>,
+    resMap: Map<number, ZoneClusterData>
   ) {
+    // П.7: единый свинг-детектор из levels.ts
     const lookback = Math.min(100, candles.length);
-    const recent = candles.slice(-lookback);
-
-    // Находим все свинги
-    const swings: { level: number; type: 'high' | 'low'; time: number }[] = [];
-    
-    for (let i = 2; i < recent.length - 2; i++) {
-      const c = recent[i];
-      
-      if (c.low < recent[i - 1].low && c.low < recent[i - 2].low &&
-          c.low < recent[i + 1].low && c.low < recent[i + 2].low) {
-        swings.push({ level: c.low, type: 'low', time: c.time });
-      }
-      
-      if (c.high > recent[i - 1].high && c.high > recent[i - 2].high &&
-          c.high > recent[i + 1].high && c.high > recent[i + 2].high) {
-        swings.push({ level: c.high, type: 'high', time: c.time });
-      }
-    }
+    const swings = findSwings(candles, lookback);
 
     // Проверяем полярность
     for (const swing of swings) {
       if (swing.type === 'high' && price > swing.level) {
         // Пробитое сопротивление -> поддержка
-        const addZone = (map: Map<number, any>, level: number, reason: string, time: number) => {
-          let clustered = false;
-          for (const [existingLevel, data] of map.entries()) {
-            if (Math.abs(level - existingLevel) / existingLevel <= this.CLUSTER_TOLERANCE) {
-              data.reasons.push(reason);
-              data.touches++;
-              data.lastTouch = Math.max(data.lastTouch, time);
-              clustered = true;
-              break;
-            }
-          }
-          if (!clustered) {
-            map.set(level, { reasons: [reason], touches: 1, lastTouch: time });
-          }
-        };
-        addZone(supMap, swing.level, 'полярность: пробитое сопротивление → поддержка', swing.time);
+        addLevelToMap(supMap, swing.level, 'полярность: пробитое сопротивление → поддержка', swing.time, this.CLUSTER_TOLERANCE);
       }
-      
+
       if (swing.type === 'low' && price < swing.level) {
         // Пробитая поддержка -> сопротивление
-        const addZone = (map: Map<number, any>, level: number, reason: string, time: number) => {
-          let clustered = false;
-          for (const [existingLevel, data] of map.entries()) {
-            if (Math.abs(level - existingLevel) / existingLevel <= this.CLUSTER_TOLERANCE) {
-              data.reasons.push(reason);
-              data.touches++;
-              data.lastTouch = Math.max(data.lastTouch, time);
-              clustered = true;
-              break;
-            }
-          }
-          if (!clustered) {
-            map.set(level, { reasons: [reason], touches: 1, lastTouch: time });
-          }
-        };
-        addZone(resMap, swing.level, 'полярность: пробитая поддержка → сопротивление', swing.time);
+        addLevelToMap(resMap, swing.level, 'полярность: пробитая поддержка → сопротивление', swing.time, this.CLUSTER_TOLERANCE);
       }
     }
   }

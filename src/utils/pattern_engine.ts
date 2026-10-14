@@ -1,27 +1,15 @@
 import { Candle } from './candle';
 import { ema } from './indicators';
 import { ZoneVoter } from './zone_voter';
+import { findSwings } from './levels';
 
 export class SupportResistance {
+  // П.7: свинг-детекция вынесена в единый модуль levels.ts — тот же алгоритм,
+  // что использует ZoneVoter, чтобы аналитика уровней не расходилась между модулями.
   static findLevels(candles: Candle[], lookback: number = 50): { support: number[]; resistance: number[] } {
-    const recent = candles.slice(-lookback);
-    const support: number[] = [];
-    const resistance: number[] = [];
-    
-    for (let i = 2; i < recent.length - 2; i++) {
-      const c = recent[i];
-      
-      if (c.low < recent[i - 1].low && c.low < recent[i - 2].low &&
-          c.low < recent[i + 1].low && c.low < recent[i + 2].low) {
-        support.push(c.low);
-      }
-      
-      if (c.high > recent[i - 1].high && c.high > recent[i - 2].high &&
-          c.high > recent[i + 1].high && c.high > recent[i + 2].high) {
-        resistance.push(c.high);
-      }
-    }
-    
+    const swings = findSwings(candles, lookback);
+    const support = swings.filter(s => s.type === 'low').map(s => s.level);
+    const resistance = swings.filter(s => s.type === 'high').map(s => s.level);
     return { support, resistance };
   }
   
