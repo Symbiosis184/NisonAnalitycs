@@ -119,7 +119,9 @@ export class SignalGenerator {
     const rr = Math.abs(target - candle.close) / risk;
 
     // Проверка подтверждения паттерна следующей свечой (по Нисону)
-    const confirmed = this.checkConfirmation(direction, lc, closedCandles[closedCandles.length - 1]);
+    // Для многокомпонентных паттернов проверяем подтверждение на последней свече
+    // относительно всей формации (bounds)
+    const confirmed = this.checkConfirmationWithBounds(direction, lc, bounds);
 
     return {
       direction,
@@ -151,6 +153,21 @@ export class SignalGenerator {
     } else {
       // Для медвежьего паттерна: следующая свеча должна быть медвежьей и закрыться ниже минимума сигнальной свечи
       return confirmationCandle.isBearish && confirmationCandle.close < signalCandle.low;
+    }
+  }
+
+  // Проверка подтверждения с учётом границ всей формации (для многокомпонентных паттернов)
+  private checkConfirmationWithBounds(
+    direction: 'long' | 'short',
+    confirmationCandle: Candle,
+    bounds: { patternLow: number; patternHigh: number }
+  ): boolean {
+    if (direction === 'long') {
+      // Для бычьего паттерна: следующая свеча должна быть бычьей и закрыться выше максимума всей формации
+      return confirmationCandle.isBullish && confirmationCandle.close > bounds.patternHigh;
+    } else {
+      // Для медвежьего паттерна: следующая свеча должна быть медвежьей и закрыться ниже минимума всей формации
+      return confirmationCandle.isBearish && confirmationCandle.close < bounds.patternLow;
     }
   }
 

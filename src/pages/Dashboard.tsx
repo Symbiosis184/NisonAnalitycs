@@ -16,6 +16,17 @@ interface MarketOverview {
     confirmed: boolean;
     confidence: number;
   }>;
+  signals: Array<{
+    direction: 'long' | 'short';
+    pattern: string;
+    entry_price: number;
+    stop_loss: number;
+    target: number;
+    risk: number;
+    rr: number;
+    quality: number;
+    confirmed: boolean;
+  }>;
   support: number[];
   resistance: number[];
   volume: number;
@@ -204,6 +215,44 @@ export default function Dashboard() {
                             <span className="text-green-400 text-[10px]">✓</span>
                           </div>
                           <span className="text-gray-500">{pattern.confidence}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Торговые сигналы */}
+                {item.signals && item.signals.length > 0 && (
+                  <div className="mb-3">
+                    <div className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+                      <BarChart2 className="w-3 h-3" />
+                      Торговые сигналы ({item.signals.length})
+                    </div>
+                    <div className="space-y-1">
+                      {item.signals.slice(0, 2).map((signal, idx) => (
+                        <div key={idx} className={`p-2 rounded text-xs ${
+                          signal.direction === 'long' ? 'bg-green-500/5 border border-green-500/20' : 'bg-red-500/5 border border-red-500/20'
+                        }`}>
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-1">
+                              {signal.direction === 'long' ? (
+                                <TrendingUp className="w-3 h-3 text-green-400" />
+                              ) : (
+                                <TrendingDown className="w-3 h-3 text-red-400" />
+                              )}
+                              <span className={`font-medium ${
+                                signal.direction === 'long' ? 'text-green-400' : 'text-red-400'
+                              }`}>
+                                {signal.direction === 'long' ? 'LONG' : 'SHORT'}
+                              </span>
+                            </div>
+                            <span className="text-green-400 text-[10px]">✓</span>
+                          </div>
+                          <div className="text-gray-400 text-[10px]">{signal.pattern}</div>
+                          <div className="flex items-center justify-between mt-1 text-[10px]">
+                            <span className="text-gray-500">R:R 1:{signal.rr.toFixed(2)}</span>
+                            <span className="text-gray-500">{(signal.quality * 100).toFixed(0)}%</span>
+                          </div>
                         </div>
                       ))}
                     </div>

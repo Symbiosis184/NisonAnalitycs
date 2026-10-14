@@ -207,6 +207,21 @@ export class ApiClient {
           const supportLevels = analysis.support.map((s: any) => s.level);
           const resistanceLevels = analysis.resistance.map((r: any) => r.level);
           
+          // Извлекаем подтверждённые сигналы
+          const confirmedSignals = analysis.signals
+            .filter((s: any) => s.confirmed)
+            .map((s: any) => ({
+              direction: s.direction,
+              pattern: s.pattern,
+              entry_price: s.entry_price,
+              stop_loss: s.stop_loss,
+              target: s.target,
+              risk: s.risk,
+              rr: s.rr,
+              quality: s.quality,
+              confirmed: s.confirmed,
+            }));
+          
           return {
             symbol,
             price: analysis.price,
@@ -214,6 +229,7 @@ export class ApiClient {
             trend: analysis.trend,
             regime: analysis.regime,
             patterns: confirmedPatterns,
+            signals: confirmedSignals,
             support: supportLevels,
             resistance: resistanceLevels,
             volume: analysis.candles[analysis.candles.length - 1]?.volume || 0,

@@ -217,11 +217,17 @@ export function detectPatterns(candles: Candle[]): PatternResult[] {
     // Обработка найденных паттернов
     for (const check of checks) {
       const patternStartIdx = i - check.patternCandles + 1;
-      const patternCandle = candles[patternStartIdx];
+      const patternEndIdx = i;
+      const lastPatternCandle = candles[patternEndIdx]; // Последняя свеча паттерна
+      
+      // Подтверждение по Нисону: следующая свеча должна закрыть выше максимума (для бычьих)
+      // или ниже минимума (для медвежьих) ВСЕГО паттерна
+      const patternHigh = Math.max(...candles.slice(patternStartIdx, patternEndIdx + 1).map(c => c.high));
+      const patternLow = Math.min(...candles.slice(patternStartIdx, patternEndIdx + 1).map(c => c.low));
       
       const confirmed = next ? (
-        check.type === 'бычий' ? next.isBullish && next.close > patternCandle.high :
-        check.type === 'медвежий' ? next.isBearish && next.close < patternCandle.low :
+        check.type === 'бычий' ? next.isBullish && next.close > patternHigh :
+        check.type === 'медвежий' ? next.isBearish && next.close < patternLow :
         false
       ) : false;
       
@@ -232,8 +238,16 @@ export function detectPatterns(candles: Candle[]): PatternResult[] {
       else if (check.patternCandles === 2 && check.name.includes('ПОГЛОЩЕНИЕ')) confidence = 62;
       else if (check.name.includes('ЗВЕЗДА')) confidence = 63;
       
+      // Проверка близости к уровню поддержки/сопротивления
+      const atLevel = check.type === 'бычий' 
+        ? ZoneVoter.isNearSupport(candle.close, prev, 0.015)
+        : check.type === 'медвежий'
+        ? ZoneVoter.isNearResistance(candle.close, prev, 0.015)
+        : false;
+      
       if (confirmed) confidence += 15;
       if (hasVolume) confidence += 8;
+      if (atLevel) confidence += 7;
       if (check.name.includes('ОБЪЁМ')) confidence += 5;
       if (check.name.includes('ПОДДЕРЖКИ') || check.name.includes('СОПРОТИВЛЕНИЯ')) confidence += 5;
       
@@ -246,7 +260,7 @@ export function detectPatterns(candles: Candle[]): PatternResult[] {
         confidence,
         confirmed,
         hasVolume,
-        atLevel: false,
+        atLevel,
       });
     }
   }
