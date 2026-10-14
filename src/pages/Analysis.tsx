@@ -39,7 +39,7 @@ export default function Analysis() {
   // Автоматическое сохранение обнаруженных сигналов в журнал
   useEffect(() => {
     if (report && report.signals) {
-      report.signals.forEach((signal: any) => {
+      report.signals.forEach((signal) => {
         if (signal.confirmed) {
           const result = addSignal({
             symbol: symbol || '',
@@ -84,10 +84,10 @@ export default function Analysis() {
 
   const baseAsset = symbol?.replace('USDT', '') || '';
   const isPositive = report.change_24h >= 0;
-  const confirmedPatterns = report.patterns.filter((p: any) => p.confirmed);
+  const confirmedPatterns = report.patterns.filter((p) => p.confirmed);
   const volumeRatio = report.candles.length > 0 
     ? report.candles[report.candles.length - 1].volume / 
-      (report.candles.reduce((sum: number, c: any) => sum + c.volume, 0) / report.candles.length)
+      (report.candles.reduce((sum: number, c) => sum + c.volume, 0) / report.candles.length)
     : 1;
 
   const getConsensusColor = (score: number) => {
@@ -218,7 +218,7 @@ export default function Analysis() {
             Зоны поддержки (по Нисону)
           </h3>
           <div className="space-y-3">
-            {report.support.slice(0, 5).map((zone: any, idx: number) => (
+            {report.support.slice(0, 5).map((zone, idx: number) => (
               <div key={idx} className={`p-3 rounded-lg border ${
                 zone.strong ? 'border-green-500/30 bg-green-500/5' : 'border-gray-700/30 bg-gray-800/20'
               }`}>
@@ -253,7 +253,7 @@ export default function Analysis() {
             Зоны сопротивления (по Нисону)
           </h3>
           <div className="space-y-3">
-            {report.resistance.slice(0, 5).map((zone: any, idx: number) => (
+            {report.resistance.slice(0, 5).map((zone, idx: number) => (
               <div key={idx} className={`p-3 rounded-lg border ${
                 zone.strong ? 'border-red-500/30 bg-red-500/5' : 'border-gray-700/30 bg-gray-800/20'
               }`}>
@@ -292,7 +292,7 @@ export default function Analysis() {
             </span>
           </h3>
           <div className="space-y-3">
-            {confirmedPatterns.map((pattern: any, i: number) => (
+            {confirmedPatterns.map((pattern, i: number) => (
               <div
                 key={i}
                 className={`p-4 rounded-lg border ${
@@ -349,17 +349,17 @@ export default function Analysis() {
       )}
 
       {/* 5. ТОРГОВЫЕ СИГНАЛЫ - только подтверждённые */}
-      {report.signals.filter((s: any) => s.confirmed).length > 0 && (
+      {report.signals.filter((s) => s.confirmed).length > 0 && (
         <div className="p-6 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
           <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
             <Target className="w-5 h-5 text-amber-400" />
             Подтверждённые торговые сигналы
             <span className="text-xs text-gray-500 font-normal ml-2">
-              ({report.signals.filter((s: any) => s.confirmed).length} из {report.signals.length})
+              ({report.signals.filter((s) => s.confirmed).length} из {report.signals.length})
             </span>
           </h3>
           <div className="space-y-3">
-            {report.signals.filter((signal: any) => signal.confirmed).map((signal: any, idx: number) => (
+            {report.signals.filter((signal) => signal.confirmed).map((signal, idx: number) => (
               <div
                 key={idx}
                 className={`p-4 rounded-lg border ${

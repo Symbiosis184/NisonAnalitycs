@@ -37,6 +37,23 @@ async function cachedFetchJson(key: string, url: string, ttlMs: number): Promise
 const KLINES_TTL_MS = 30_000;   // свечи переиспользуем 30 секунд
 const TICKER_TTL_MS = 10_000;   // тикер — 10 секунд
 
+/** Одна свеча (K-line) в нормализованном виде */
+export interface Kline {
+  openTime: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+/** Тикер за 24 часа в нормализованном виде */
+export interface Ticker24h {
+  lastPrice: number;
+  priceChange: number;
+  priceChangePercent: number;
+}
+
 // Маппинг таймфреймов для Bybit API
 const INTERVAL_MAP: Record<string, string> = {
   '1m': '1',
@@ -51,7 +68,7 @@ const INTERVAL_MAP: Record<string, string> = {
   'W': 'W',
 };
 
-export async function fetchKlines(rawSymbol: string, interval: string, rawLimit: number): Promise<any[]> {
+export async function fetchKlines(rawSymbol: string, interval: string, rawLimit: number): Promise<Kline[]> {
   // Валидация ввода: symbol — whitelist-символы тикера, interval — из разрешённого списка,
   // limit — безопасный диапазон. Это исключает инъекцию параметров в URL запроса к API.
   const symbol = assertValidSymbol(rawSymbol);
@@ -78,7 +95,7 @@ export async function fetchKlines(rawSymbol: string, interval: string, rawLimit:
   })).reverse();
 }
 
-export async function fetch24hTicker(rawSymbol: string): Promise<any> {
+export async function fetch24hTicker(rawSymbol: string): Promise<Ticker24h> {
   // Валидация symbol защищает от инъекции параметров в URL запроса к Bybit
   const symbol = assertValidSymbol(rawSymbol);
   const url = `${BASE_URL}/v5/market/tickers?category=spot&symbol=${encodeURIComponent(symbol)}`;

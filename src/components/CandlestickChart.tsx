@@ -1,28 +1,17 @@
 import { useEffect, useRef } from 'react';
 import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
+import type { CandleDTO, PatternDTO, ZoneDTO } from '../api/types';
 
-interface Candle {
-  time: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-}
+// Единые типы данных графика — из общего контракта src/api/types.ts
+type Candle = CandleDTO;
+type Zone = ZoneDTO;
 
 interface Pattern {
   name: string;
-  type: 'bullish' | 'bearish' | 'neutral';
+  type: PatternDTO['type'];
   candleIndex: number;
   confidence: number;
   confirmed: boolean;
-}
-
-interface Zone {
-  level: number;
-  votes: number;
-  strong: boolean;
-  reasons: string[];
 }
 
 interface Props {

@@ -2,42 +2,10 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { TrendingUp, TrendingDown, Activity, BarChart2, AlertCircle, RefreshCw, Target, Shield } from 'lucide-react';
 import { api } from '../api/client';
+import type { MarketOverviewItem as MarketOverview } from '../api/types';
 import { formatPrice, formatVolume } from '../utils/format';
 import { useBinanceWebSocket } from '../hooks/useBinanceWebSocket';
 
-interface MarketOverview {
-  symbol: string;
-  price: number;
-  change_24h: number;
-  trend: string;
-  regime: string;
-  patterns: Array<{
-    name: string;
-    type: string;
-    confirmed: boolean;
-    confidence: number;
-  }>;
-  signals: Array<{
-    direction: 'long' | 'short';
-    pattern: string;
-    entry_price: number;
-    stop_loss: number;
-    target: number;
-    risk: number;
-    rr: number;
-    quality: number;
-    confirmed: boolean;
-  }>;
-  support: number[];
-  resistance: number[];
-  volume: number;
-  avgVolume: number;
-  consensus: {
-    score: number;
-    direction: string;
-    confidence: number;
-  };
-}
 
 const SYMBOLS = [
   'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 
