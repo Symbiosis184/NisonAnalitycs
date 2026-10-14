@@ -1,49 +1,35 @@
 import { fetchKlines, fetch24hTicker } from './bybit';
 import { Candle } from '../utils/candle';
-import { ema, rsi, macd, pivotLevels, detectTrend, generateSignal } from '../utils/indicators';
+import { ema, rsi, macd, detectTrend, generateSignal } from '../utils/indicators';
 import { detectPatterns, patternStory } from '../utils/patterns';
 import { signalGenerator } from '../utils/signal_generator';
 import { ZoneVoter } from '../utils/zone_voter';
+import { detectTrendStart } from '../utils/trend_detection';
+import type {
+  AnalysisReport,
+  CandleDTO,
+  ConsensusDTO,
+  MarketOverviewItem,
+  PatternDTO,
+  PatternDirection,
+  Regime,
+  SignalDTO,
+} from './types';
 
-export interface AnalysisReport {
-  symbol: string;
-  timeframe: string;
-  price: number;
-  change_24h: number;
-  trend: string;
-  trend_strength: number;
-  rsi: number;
-  macd: { value: number; signal: number; histogram: number };
-  ema20: number;
-  ema50: number;
-  ema200: number;
-  candles: any[];
-  patterns: any[];
-  signals: any[];
-  support: any[];
-  resistance: any[];
-  volume_profile: any;
-  regime: string;
-  regime_description: string;
-  consensus: any;
-  radar: any;
-  trend_analysis: any;
-  quality_filter: any;
-  multiTimeframe: any;
-  divergences: any;
-  assetProfile: any;
-  backtest: any;
-  btcCorrelation: any;
-  fibonacci: any;
-  generated: number;
-}
+export type { AnalysisReport } from './types';
+
+const toRegime = (trend: 'бычий' | 'медвежий' | 'нейтральный'): Regime =>
+  trend === 'бычий' ? 'ВОСХОДЯЩИЙ' : trend === 'медвежий' ? 'НИСХОДЯЩИЙ' : 'БОКОВИК';
+
+const toPatternDirection = (type: 'бычий' | 'медвежий' | 'нейтральный'): PatternDirection =>
+  type === 'бычий' ? 'bullish' : type === 'медвежий' ? 'bearish' : 'neutral';
 
 export class ApiClient {
   async getAnalysis(symbol: string, timeframe: string = 'D'): Promise<AnalysisReport> {
     const klines = await fetchKlines(symbol, timeframe, 250);
     const ticker = await fetch24hTicker(symbol).catch(() => null);
-    
-    const candles = klines.map((k: any) => new Candle({
+
+    const candles = klines.map((k) => new Candle({
       time: k.openTime,
       open: k.open,
       high: k.high,
@@ -51,7 +37,7 @@ export class ApiClient {
       close: k.close,
       volume: k.volume,
     }));
-    
+
     const closes = candles.map((c: Candle) => c.close);
     const currentPrice = closes[closes.length - 1];
     
@@ -77,9 +63,9 @@ export class ApiClient {
     
     // Детекция паттернов по Нисону
     const detectedPatterns = detectPatterns(candles);
-    const apiPatterns = detectedPatterns.map(p => ({
+    const apiPatterns: PatternDTO[] = detectedPatterns.map(p => ({
       name: p.name,
-      type: p.type === 'бычий' ? 'bullish' : p.type === 'медвежий' ? 'bearish' : 'neutral',
+      type: toPatternDirection(p.type),
       candleIndex: p.candleIndex,
       confidence: p.confidence,
       confirmed: p.confirmed,
@@ -90,7 +76,7 @@ export class ApiClient {
     
     // Генерация торговых сигналов через SignalGenerator
     const detectedSignals = signalGenerator.findSignals(candles, timeframe);
-    const apiSignals = detectedSignals.map(s => ({
+    const apiSignals: SignalDTO[] = detectedSignals.map(s => ({
       direction: s.direction,
       pattern: s.pattern,
       entry_price: s.entryPrice,
@@ -104,15 +90,22 @@ export class ApiClient {
       story: s.story,
     }));
     
-    const change24h = ticker ? parseFloat(ticker.priceChange) : currentPrice - candles[candles.length - 2].close;
-    const changePercent = ticker ? parseFloat(ticker.priceChangePercent) : (change24h / candles[candles.length - 2].close) * 100;
-    
+    // priceChange/priceChangePercent в fetch24hTicker уже числа (не строки)
+    const change24h = ticker ? ticker.priceChange : currentPrice - candles[candles.length - 2].close;
+    const changePercent = ticker ? ticker.priceChangePercent : (change24h / candles[candles.length - 2].close) * 100;
+
+    const regime = toRegime(trend);
+    const consensusDirection: ConsensusDTO['direction'] =
+      signal.toLowerCase().includes('покупка') ? 'buy'
+        : signal.toLowerCase().includes('продажа') ? 'sell'
+          : 'neutral';
+
     return {
       symbol,
       timeframe,
       price: currentPrice,
       change_24h: changePercent,
-      trend: trend === 'бычий' ? 'ВОСХОДЯЩИЙ' : trend === 'медвежий' ? 'НИСХОДЯЩИЙ' : 'БОКОВИК',
+      trend: regime,
       trend_strength: confidence / 100,
       rsi: isNaN(rsiVal) ? 50 : rsiVal,
       macd: {
@@ -123,7 +116,7 @@ export class ApiClient {
       ema20,
       ema50,
       ema200,
-      candles: candles.map((c: Candle) => ({
+      candles: candles.map((c): CandleDTO => ({
         time: c.time,
         open: c.open,
         high: c.high,
@@ -133,70 +126,40 @@ export class ApiClient {
       })),
       patterns: apiPatterns,
       signals: apiSignals,
-      support: zones.support.map((zone) => ({
-        level: zone.level,
-        votes: zone.votes,
-        strong: zone.strong,
-        reasons: zone.reasons,
-        touches: zone.touches,
-        lastTouch: zone.lastTouch,
-      })),
-      resistance: zones.resistance.map((zone) => ({
-        level: zone.level,
-        votes: zone.votes,
-        strong: zone.strong,
-        reasons: zone.reasons,
-        touches: zone.touches,
-        lastTouch: zone.lastTouch,
-      })),
-      volume_profile: null,
-      regime: trend === 'бычий' ? 'ВОСХОДЯЩИЙ' : trend === 'медвежий' ? 'НИСХОДЯЩИЙ' : 'БОКОВИК',
+      support: zones.support,
+      resistance: zones.resistance,
+      regime,
       regime_description: `Тренд: ${trend}`,
       consensus: {
         score: confidence / 20,
-        direction: signal.toLowerCase().includes('покупка') ? 'buy' : signal.toLowerCase().includes('продажа') ? 'sell' : 'neutral',
+        direction: consensusDirection,
         confidence,
       },
-      radar: null,
       trend_analysis: {
-        trendStart: {
-          detected: false,
-          trend: null,
-          reasons: [],
-        },
-        threeLineBreak: {
-          trend: 'БОКОВИК',
-          reversalIdx: null,
-        },
-        bookTrend: trend === 'бычий' ? 'ВОСХОДЯЩИЙ' : trend === 'медвежий' ? 'НИСХОДЯЩИЙ' : 'БОКОВИК',
+        // Реальная детекция старта тренда (движок trend_detection)
+        trendStart: detectTrendStart(candles, currentPrice),
+        bookTrend: regime,
       },
-      quality_filter: null,
-      multiTimeframe: null,
-      divergences: null,
-      assetProfile: null,
-      backtest: null,
-      btcCorrelation: null,
-      fibonacci: null,
       generated: Date.now(),
     };
   }
   
-  async getMarketOverview(): Promise<any[]> {
+  async getMarketOverview(): Promise<MarketOverviewItem[]> {
     const symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT'];
     
     const results = await Promise.all(
-      symbols.map(async (symbol) => {
+      symbols.map(async (symbol): Promise<MarketOverviewItem | null> => {
         try {
           const analysis = await this.getAnalysis(symbol, 'D');
           
           // Рассчитываем средний объём
-          const volumes = analysis.candles.map((c: any) => c.volume);
-          const avgVolume = volumes.reduce((sum: number, v: number) => sum + v, 0) / volumes.length;
+          const volumes = analysis.candles.map((c) => c.volume);
+          const avgVolume = volumes.reduce((sum, v) => sum + v, 0) / volumes.length;
           
           // Извлекаем подтверждённые паттерны
           const confirmedPatterns = analysis.patterns
-            .filter((p: any) => p.confirmed)
-            .map((p: any) => ({
+            .filter((p) => p.confirmed)
+            .map((p) => ({
               name: p.name,
               type: p.type,
               confirmed: p.confirmed,
@@ -204,13 +167,13 @@ export class ApiClient {
             }));
           
           // Извлекаем уровни поддержки/сопротивления
-          const supportLevels = analysis.support.map((s: any) => s.level);
-          const resistanceLevels = analysis.resistance.map((r: any) => r.level);
+          const supportLevels = analysis.support.map((s) => s.level);
+          const resistanceLevels = analysis.resistance.map((r) => r.level);
           
           // Извлекаем подтверждённые сигналы
           const confirmedSignals = analysis.signals
-            .filter((s: any) => s.confirmed)
-            .map((s: any) => ({
+            .filter((s) => s.confirmed)
+            .map((s) => ({
               direction: s.direction,
               pattern: s.pattern,
               entry_price: s.entry_price,
@@ -243,7 +206,7 @@ export class ApiClient {
       })
     );
     
-    return results.filter((r): r is any => r !== null);
+    return results.filter((r): r is MarketOverviewItem => r !== null);
   }
 }
 
