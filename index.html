@@ -4,10 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nison Analytics — анализ рынка по методу Нисона</title>
-    <link
-      rel="stylesheet"
-      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
-    />
+    <!--
+      Font Awesome удалён из загрузки: в коде приложения не используется ни одной
+      fa- иконки (иконки берутся из lucide-react). Убран внешний CDN-запрос —
+      меньше поверхность атаки (MITM/компрометация CDN) и быстрее загрузка.
+    -->
     <style>
       /* 内联样式确保主题色立即生效，避免闪烁 */
       html,
