@@ -4,11 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nison Analytics — анализ рынка по методу Нисона</title>
-    <!--
-      Font Awesome удалён из загрузки: в коде приложения не используется ни одной
-      fa- иконки (иконки берутся из lucide-react). Убран внешний CDN-запрос —
-      меньше поверхность атаки (MITM/компрометация CDN) и быстрее загрузка.
-    -->
+    <!-- П.5: CSP в production отдают заголовки хостинга (netlify.toml / vercel.json /
+         public/_headers), в dev — плагин devSecurityHeaders() из vite.config.ts.
+         Font Awesome удалён: fa-* классы в коде не используются, иконки — lucide-react. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self' https://api.bybit.com wss://stream.binance.com:9443; object-src 'none'; base-uri 'self'; form-action 'none'" />
     <style>
       /* 内联样式确保主题色立即生效，避免闪烁 */
       html,
