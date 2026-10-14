@@ -6,10 +6,12 @@ import {
   deleteSignal, 
   exportJournal, 
   importJournal,
+  checkActiveSignals,
   type SignalEntry,
   type SignalStats 
 } from '../utils/signalJournal';
 import { formatPrice } from '../utils/format';
+import { fetch24hTicker } from '../api/bybit';
 
 export default function SignalJournal() {
   const [signals, setSignals] = useState<SignalEntry[]>([]);
@@ -18,11 +20,52 @@ export default function SignalJournal() {
 
   useEffect(() => {
     loadSignals();
+    
+    // Автоматическая проверка статусов сигналов каждые 30 секунд
+    const interval = setInterval(() => {
+      checkSignalStatuses();
+    }, 30000);
+    
+    // Первоначальная проверка при загрузке
+    checkSignalStatuses();
+    
+    return () => clearInterval(interval);
   }, []);
 
   const loadSignals = () => {
     setSignals(getAllSignals());
     setStats(getSignalStats());
+  };
+
+  // Проверка статусов активных сигналов
+  const checkSignalStatuses = async () => {
+    const activeSignals = getAllSignals().filter(s => s.status === 'pending');
+    if (activeSignals.length === 0) return;
+
+    // Получаем уникальные символы
+    const symbols = Array.from(new Set(activeSignals.map(s => s.symbol)));
+    
+    // Получаем текущие цены для всех символов
+    const currentPrices: Record<string, number> = {};
+    await Promise.all(
+      symbols.map(async (symbol) => {
+        try {
+          const ticker = await fetch24hTicker(symbol);
+          currentPrices[symbol] = parseFloat(ticker.lastPrice);
+        } catch (err) {
+          console.error(`Ошибка получения цены для ${symbol}:`, err);
+        }
+      })
+    );
+
+    // Проверяем сигналы и обновляем статусы
+    if (Object.keys(currentPrices).length > 0) {
+      const updated = checkActiveSignals(currentPrices);
+      if (updated.length > 0) {
+        setSignals(getAllSignals());
+        setStats(getSignalStats());
+      }
+    }
   };
 
   const handleDelete = (id: string) => {

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, TrendingUp, TrendingDown, Activity, AlertTriangle, RefreshCw, Target, Shield, BarChart2, Save } from 'lucide-react';
+import { ArrowLeft, TrendingUp, TrendingDown, Activity, AlertTriangle, RefreshCw, Target, Shield, BarChart2 } from 'lucide-react';
 import { api, type AnalysisReport } from '../api/client';
 import CandlestickChart from '../components/CandlestickChart';
 import { formatPrice } from '../utils/format';
@@ -32,6 +32,31 @@ export default function Analysis() {
   useEffect(() => {
     loadAnalysis();
   }, [symbol, timeframe]);
+
+  // Автоматическое сохранение обнаруженных сигналов в журнал
+  useEffect(() => {
+    if (report && report.signals) {
+      report.signals.forEach((signal: any) => {
+        if (signal.confirmed) {
+          const result = addSignal({
+            symbol: symbol || '',
+            timeframe,
+            pattern: signal.pattern,
+            direction: signal.direction,
+            entryPrice: signal.entry_price,
+            stopLoss: signal.stop_loss,
+            target: signal.target,
+            riskReward: signal.rr,
+            confidence: signal.quality * 100,
+          });
+          
+          if (result) {
+            console.log(`✓ Сигнал автоматически сохранён в журнал: ${signal.pattern} для ${symbol}`);
+          }
+        }
+      });
+    }
+  }, [report, symbol, timeframe]);
 
   if (loading) {
     return (
@@ -410,31 +435,9 @@ export default function Analysis() {
                   </div>
                 )}
 
-                <button
-                  onClick={() => {
-                    const result = addSignal({
-                      symbol: symbol || '',
-                      timeframe,
-                      pattern: signal.pattern,
-                      direction: signal.direction,
-                      entryPrice: signal.entry_price,
-                      stopLoss: signal.stop_loss,
-                      target: signal.target,
-                      riskReward: signal.rr,
-                      confidence: signal.quality * 100,
-                    });
-                    
-                    if (result) {
-                      alert('✓ Сигнал сохранён в журнал!');
-                    } else {
-                      alert('⚠️ Этот сигнал уже существует в журнале');
-                    }
-                  }}
-                  className="mt-3 flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 transition-colors text-sm"
-                >
-                  <Save className="w-4 h-4" />
-                  Сохранить в журнал
-                </button>
+                <div className="mt-3 p-2 rounded bg-green-500/10 border border-green-500/20 text-xs text-green-400">
+                  ✓ Сигнал автоматически сохранён в журнал
+                </div>
               </div>
             ))}
           </div>
