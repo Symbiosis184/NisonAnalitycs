@@ -14,12 +14,13 @@ export interface PatternResult {
 
 export function detectPatterns(candles: Candle[]): PatternResult[] {
   const patterns: PatternResult[] = [];
-  const lookback = Math.min(20, candles.length - 1);
   
-  for (let i = candles.length - lookback; i < candles.length; i++) {
+  // По Нисону: проверяем все свечи, а не только последние 20
+  // Паттерн должен быть подтверждён следующей свечой
+  for (let i = 1; i < candles.length - 1; i++) {
     const candle = candles[i];
     const prev = candles.slice(0, i);
-    const next = i < candles.length - 1 ? candles[i + 1] : undefined;
+    const next = candles[i + 1]; // Следующая свеча для подтверждения
     
     const checks: Array<{ found: boolean; name: string; type: 'бычий' | 'медвежий' | 'нейтральный'; patternCandles: number }> = [];
     

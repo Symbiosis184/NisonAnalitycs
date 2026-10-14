@@ -89,20 +89,20 @@ export class ApiClient {
     }));
     
     // Генерация торговых сигналов через SignalGenerator
-    const detectedSignals = signalGenerator.findSignal(candles, timeframe);
-    const apiSignals = detectedSignals ? [{
-      direction: detectedSignals.direction,
-      pattern: detectedSignals.pattern,
-      entry_price: detectedSignals.entryPrice,
-      stop_loss: detectedSignals.stopLoss,
-      target: detectedSignals.target,
-      risk: detectedSignals.risk,
-      rr: detectedSignals.rr,
-      quality: detectedSignals.quality,
-      timestamp: detectedSignals.timestamp,
-      confirmed: detectedSignals.confirmed,
-      story: detectedSignals.story,
-    }] : [];
+    const detectedSignals = signalGenerator.findSignals(candles, timeframe);
+    const apiSignals = detectedSignals.map(s => ({
+      direction: s.direction,
+      pattern: s.pattern,
+      entry_price: s.entryPrice,
+      stop_loss: s.stopLoss,
+      target: s.target,
+      risk: s.risk,
+      rr: s.rr,
+      quality: s.quality,
+      timestamp: s.timestamp,
+      confirmed: s.confirmed,
+      story: s.story,
+    }));
     
     const change24h = ticker ? parseFloat(ticker.priceChange) : currentPrice - candles[candles.length - 2].close;
     const changePercent = ticker ? parseFloat(ticker.priceChangePercent) : (change24h / candles[candles.length - 2].close) * 100;
