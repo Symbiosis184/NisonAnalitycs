@@ -221,10 +221,13 @@ export function detectPatterns(candles: Candle[]): PatternResult[] {
       const patternEndIdx = i;
       const lastPatternCandle = candles[patternEndIdx]; // Последняя свеча паттерна
       
+      // Защита от отрицательного индекса
+      const safeStartIdx = Math.max(0, patternStartIdx);
+      
       // Подтверждение по Нисону: следующая свеча должна закрыть выше максимума (для бычьих)
       // или ниже минимума (для медвежьих) ВСЕГО паттерна
-      const patternHigh = Math.max(...candles.slice(patternStartIdx, patternEndIdx + 1).map(c => c.high));
-      const patternLow = Math.min(...candles.slice(patternStartIdx, patternEndIdx + 1).map(c => c.low));
+      const patternHigh = Math.max(...candles.slice(safeStartIdx, patternEndIdx + 1).map(c => c.high));
+      const patternLow = Math.min(...candles.slice(safeStartIdx, patternEndIdx + 1).map(c => c.low));
       
       const confirmed = next ? (
         check.type === 'бычий' ? next.isBullish && next.close > patternHigh :
@@ -232,7 +235,9 @@ export function detectPatterns(candles: Candle[]): PatternResult[] {
         false
       ) : false;
       
-      const hasVolume = candle.volume > (prev.slice(-20).reduce((s, c) => s + c.volume, 0) / 20) * 1.3;
+      // Правильный расчёт среднего объёма с защитой от деления на ноль
+      const volumePeriod = Math.min(20, prev.length);
+      const hasVolume = volumePeriod > 0 && candle.volume > (prev.slice(-volumePeriod).reduce((s, c) => s + c.volume, 0) / volumePeriod) * 1.3;
       
       let confidence = 50;
       if (check.patternCandles === 3) confidence = 65;

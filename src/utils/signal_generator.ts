@@ -286,8 +286,7 @@ export class SignalGenerator {
           // Контекстная фильтрация для односвечных паттернов
           // Молот и перевёрнутый молот - разворотные, могут идти против тренда
           // Повешенный и падающая звезда - продолжительные, должны соответствовать тренду
-          const isReversalPattern = (check.name.includes('МОЛОТ') && !check.name.includes('ПЕРЕВЁРНУТЫЙ')) ||
-                                   check.name.includes('ПЕРЕВЁРНУТЫЙ');
+          const isReversalPattern = check.name.includes('МОЛОТ'); // Включает и обычный, и перевёрнутый молот
           
           if (!isReversalPattern) {
             if (direction === 'long' && patternTrend === 'НИСХОДЯЩИЙ') continue;
