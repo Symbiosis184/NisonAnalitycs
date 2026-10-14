@@ -5,9 +5,12 @@ import { api, type AnalysisReport } from '../api/client';
 import CandlestickChart from '../components/CandlestickChart';
 import { formatPrice } from '../utils/format';
 import { addSignal } from '../utils/signalJournal';
+import { isValidSymbol } from '../utils/validation';
 
 export default function Analysis() {
-  const { symbol } = useParams<{ symbol: string }>();
+  const rawSymbol = useParams<{ symbol: string }>().symbol;
+  // Валидация symbol из URL: недопустивые значения не дойдут до внешних API-запросов
+  const symbol = rawSymbol && isValidSymbol(rawSymbol) ? rawSymbol.trim().toUpperCase() : undefined;
   const [timeframe, setTimeframe] = useState('D');
   const [report, setReport] = useState<AnalysisReport | null>(null);
   const [loading, setLoading] = useState(true);

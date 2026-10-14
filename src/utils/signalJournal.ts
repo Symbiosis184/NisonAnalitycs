@@ -1,6 +1,8 @@
 // Журнал торговых сигналов
 // Отслеживает сработавшие сигналы по методологии Нисона
 
+import { assertValidSymbol, isValidTimeframe, clampNumber, sanitizeText } from './validation';
+
 export interface SignalEntry {
   id: string;
   timestamp: number;
@@ -39,10 +41,70 @@ function saveJournal(entries: SignalEntry[]): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
 }
 
-// Загрузка журнала из localStorage
+// Санитизация одной записи журнала: строгая проверка типов и границ.
+// Возвращает безопасную копию или null, если запись некорректна.
+export function sanitizeSignalEntry(raw: any): SignalEntry | null {
+  if (!raw || typeof raw !== 'object') return null;
+
+  let symbol: string;
+  try {
+    symbol = assertValidSymbol(raw.symbol);
+  } catch {
+    return null;
+  }
+
+  const direction = raw.direction === 'long' || raw.direction === 'short' ? raw.direction : null;
+  const statusValues = ['pending', 'hit_target', 'hit_stop', 'expired'];
+  const status = statusValues.includes(raw.status) ? raw.status : 'pending';
+  if (!direction) return null;
+
+  const entryPrice = clampNumber(raw.entryPrice, 0.00000001, 1e12, NaN);
+  if (!Number.isFinite(entryPrice)) return null;
+
+  const sanitized: SignalEntry = {
+    id: sanitizeText(raw.id, 64, `signal_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`),
+    timestamp: clampNumber(raw.timestamp, 0, Date.now() + 86400000, Date.now()),
+    symbol,
+    timeframe: isValidTimeframe(raw.timeframe) ? raw.timeframe : 'D',
+    pattern: sanitizeText(raw.pattern, 100, 'unknown'),
+    direction,
+    entryPrice,
+    stopLoss: clampNumber(raw.stopLoss, 0, 1e12, entryPrice),
+    target: clampNumber(raw.target, 0, 1e12, entryPrice),
+    riskReward: clampNumber(raw.riskReward, 0, 1000, 0),
+    confidence: clampNumber(raw.confidence, 0, 100, 0),
+    status,
+  };
+
+  if (typeof raw.exitPrice === 'number' && Number.isFinite(raw.exitPrice)) {
+    sanitized.exitPrice = clampNumber(raw.exitPrice, 0, 1e12, undefined as any as number);
+  }
+  if (typeof raw.exitTimestamp === 'number' && Number.isFinite(raw.exitTimestamp)) {
+    sanitized.exitTimestamp = clampNumber(raw.exitTimestamp, 0, Date.now() + 86400000, Date.now());
+  }
+  if (typeof raw.pnl === 'number' && Number.isFinite(raw.pnl)) {
+    sanitized.pnl = clampNumber(raw.pnl, -1e12, 1e12, 0);
+  }
+  if (typeof raw.pnlPercent === 'number' && Number.isFinite(raw.pnlPercent)) {
+    sanitized.pnlPercent = clampNumber(raw.pnlPercent, -100, 1e6, 0);
+  }
+  const notes = sanitizeText(raw.notes, 500);
+  if (notes) sanitized.notes = notes;
+
+  return sanitized;
+}
+
+// Загрузка журнала из localStorage с валидацией каждой записи
 function loadJournal(): SignalEntry[] {
   const data = localStorage.getItem(STORAGE_KEY);
-  return data ? JSON.parse(data) : [];
+  if (!data) return [];
+  try {
+    const parsed = JSON.parse(data);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(sanitizeSignalEntry).filter((e): e is SignalEntry => e !== null);
+  } catch {
+    return [];
+  }
 }
 
 // Добавление нового сигнала с проверкой на дубликаты
@@ -65,7 +127,9 @@ export function addSignal(signal: Omit<SignalEntry, 'id' | 'timestamp' | 'status
   
   const newEntry: SignalEntry = {
     ...signal,
-    id: `signal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    id: (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? `signal_${Date.now()}_${crypto.randomUUID()}`
+      : `signal_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
     timestamp: Date.now(),
     status: 'pending',
   };
@@ -228,16 +292,34 @@ export function exportJournal(): string {
   return JSON.stringify(loadJournal(), null, 2);
 }
 
-// Импорт журнала из JSON
-export function importJournal(json: string): void {
+// Импорт журнала из JSON со строгой валидацией каждой записи.
+// Некорректные/вредные элементы отбрасываются; при отсутствии валидных — ошибка.
+export function importJournal(json: string): { imported: number; rejected: number } {
+  let entries: unknown;
   try {
-    const entries = JSON.parse(json);
-    if (Array.isArray(entries)) {
-      saveJournal(entries);
-    }
+    entries = JSON.parse(json);
   } catch (error) {
-    console.error('Ошибка импорта журнала:', error);
+    console.error('Ошибка импорта журнала: некорректный JSON', error);
+    throw new Error('Некорректный JSON-файл');
   }
+
+  if (!Array.isArray(entries)) {
+    throw new Error('Ожидался массив сигналов');
+  }
+
+  // Разумное ограничение на размер импорта (защита от DoS огромными файлами)
+  const MAX_IMPORT_ENTRIES = 5000;
+  const sanitized = entries
+    .slice(0, MAX_IMPORT_ENTRIES)
+    .map(sanitizeSignalEntry)
+    .filter((e): e is SignalEntry => e !== null);
+
+  if (sanitized.length === 0) {
+    throw new Error('В файле не найдено корректных записей журнала');
+  }
+
+  saveJournal(sanitized);
+  return { imported: sanitized.length, rejected: Math.min(entries.length, MAX_IMPORT_ENTRIES) - sanitized.length };
 }
 
 // Очистка журнала

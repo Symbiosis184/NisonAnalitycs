@@ -1,5 +1,6 @@
 // WebSocket хук для получения real-time цен с Binance
 import { useEffect, useRef, useState } from 'react';
+import { isValidSymbol } from '../utils/validation';
 
 interface TickerData {
   symbol: string;
@@ -13,13 +14,19 @@ export function useBinanceWebSocket(symbols: string[]) {
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    if (symbols.length === 0) return;
+    // Фильтруем некорректные символы (защита от инъекции в URL потока Binance)
+    const validSymbols = symbols.filter(isValidSymbol);
+    if (validSymbols.length === 0) return;
 
     // Создаем WebSocket подключение к Binance
-    const streamName = symbols.map(s => s.toLowerCase()).join('/');
+    const streamName = validSymbols.map(s => s.toLowerCase().trim()).join('/');
     const wsUrl = `wss://stream.binance.com:9443/ws/${streamName}@ticker`;
 
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let disposed = false;
+
     const connect = () => {
+      if (disposed) return;
       try {
         const ws = new WebSocket(wsUrl);
         wsRef.current = ws;
@@ -54,19 +61,26 @@ export function useBinanceWebSocket(symbols: string[]) {
         };
 
         ws.onclose = () => {
+          if (disposed) return;
           console.log('WebSocket closed, reconnecting in 5s...');
-          setTimeout(connect, 5000);
+          reconnectTimer = setTimeout(connect, 5000);
         };
       } catch (error) {
         console.error('Error creating WebSocket:', error);
-        setTimeout(connect, 5000);
+        if (!disposed) reconnectTimer = setTimeout(connect, 5000);
       }
     };
 
     connect();
 
     return () => {
+      disposed = true;
+      if (reconnectTimer !== null) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
       if (wsRef.current) {
+        wsRef.current.onclose = null; // предотвращаем переподключение после unmount
         wsRef.current.close();
         wsRef.current = null;
       }
