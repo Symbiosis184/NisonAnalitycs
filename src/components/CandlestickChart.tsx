@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { createChart, ColorType, CandlestickSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
+import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
 
 interface Candle {
   time: number;
@@ -99,6 +99,29 @@ export default function CandlestickChart({
     }));
 
     candlestickSeries.setData(chartData);
+
+    // Добавляем объем
+    const volumeSeries = chart.addSeries(HistogramSeries, {
+      priceFormat: {
+        type: 'volume',
+      },
+      priceScaleId: 'volume',
+    });
+
+    chart.priceScale('volume').applyOptions({
+      scaleMargins: {
+        top: 0.8,
+        bottom: 0,
+      },
+    });
+
+    const volumeData = candles.map(candle => ({
+      time: (candle.time / 1000) as any,
+      value: candle.volume,
+      color: candle.close >= candle.open ? 'rgba(34, 197, 94, 0.5)' : 'rgba(239, 68, 68, 0.5)',
+    }));
+
+    volumeSeries.setData(volumeData);
 
     // Добавляем только СИЛЬНЫЕ уровни поддержки (зелёные)
     const strongSupport = support.filter(zone => zone.strong);
