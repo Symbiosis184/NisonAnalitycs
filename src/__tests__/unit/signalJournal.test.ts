@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   sanitizeSignalEntry,
   addSignal,
@@ -10,6 +10,8 @@ import {
   exportJournal,
   importJournal,
   clearJournal,
+  listSnapshots,
+  restoreFromSnapshot,
 } from '../../utils/signalJournal';
 
 const validRaw = () => ({
@@ -202,5 +204,121 @@ describe('Журнал (localStorage)', () => {
     addSignal(newSig({ symbol: 'ETHUSDT', pattern: 'ЗВЕЗДА', entryPrice: 3000 }));
     updateSignalStatus(e.id, 'expired');
     expect(getActiveSignals()).toHaveLength(1);
+  });
+});
+
+describe('Авто-снапшоты журнала (П.6)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  const sig = (over: Partial<any> = {}) => ({
+    symbol: 'BTCUSDT',
+    timeframe: 'D',
+    pattern: 'МОЛОТ',
+    direction: 'long' as const,
+    entryPrice: 50000,
+    stopLoss: 49000,
+    target: 53000,
+    riskReward: 3,
+    confidence: 75,
+    ...over,
+  });
+
+  it('первое сохранение не создаёт снапшот (снимать нечего)', () => {
+    addSignal(sig());
+    expect(listSnapshots()).toHaveLength(0);
+  });
+
+  it('второе сохранение после смены суток создаёт снапшот предыдущего состояния', () => {
+    vi.useFakeTimers();
+    try {
+      addSignal(sig({ pattern: 'МОЛОТ' }));
+      // сдвигаем время на сутки вперёд, чтобы интервал снапшотов истёк
+      vi.setSystemTime(Date.now() + 24 * 60 * 60 * 1000 + 1000);
+      addSignal(sig({ pattern: 'ЗВЕЗДА', entryPrice: 60000 }));
+      const snaps = listSnapshots();
+      expect(snaps).toHaveLength(1);
+      expect(snaps[0].entries).toBe(1);
+      // в снапшоте — состояние ДО последнего сохранения (1 сигнал)
+      const restored = JSON.parse(localStorage.getItem(snaps[0].key)!);
+      expect(restored[0].pattern).toBe('МОЛОТ');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('частые сохранения внутри суток не плодят снапшоты', () => {
+    addSignal(sig({ pattern: 'A', entryPrice: 100 }));
+    addSignal(sig({ pattern: 'B', entryPrice: 200 }));
+    const afterSecond = listSnapshots().length; // не более 1 (первый снимок)
+    addSignal(sig({ pattern: 'C', entryPrice: 300 }));
+    // в течение суток новые снапшоты создаваться не должны
+    expect(listSnapshots().length).toBe(afterSecond);
+    expect(listSnapshots().length).toBeLessThanOrEqual(1);
+  });
+
+  it('restoreFromSnapshot возвращает записи и заменяет основной журнал', () => {
+    vi.useFakeTimers();
+    try {
+      addSignal(sig({ pattern: 'СТАРЫЙ' }));
+      vi.setSystemTime(Date.now() + 24 * 60 * 60 * 1000 + 1000);
+      addSignal(sig({ pattern: 'НОВЫЙ', entryPrice: 60000 }));
+      // сейчас в журнале 2 записи; снапшот содержит «СТАРЫЙ»
+      expect(getAllSignals()).toHaveLength(2);
+      const restored = restoreFromSnapshot()!;
+      expect(restored).toHaveLength(1);
+      expect(restored[0].pattern).toBe('СТАРЫЙ');
+      expect(getAllSignals()[0].pattern).toBe('СТАРЫЙ');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('restoreFromSnapshot без снапшотов возвращает null', () => {
+    expect(restoreFromSnapshot()).toBeNull();
+  });
+
+  it('restoreFromSnapshot отбрасывает битые записи в снапшоте', () => {
+    localStorage.setItem('nison_signal_journal_backup_123', JSON.stringify([
+      { symbol: 'BTCUSDT', direction: 'long', entryPrice: 50000 },
+      { symbol: 'BAD!!SYM', direction: 'long', entryPrice: 1 },
+      'junk',
+    ]));
+    const restored = restoreFromSnapshot('nison_signal_journal_backup_123')!;
+    expect(restored).toHaveLength(1);
+    expect(restored[0].symbol).toBe('BTCUSDT');
+  });
+
+  it('clearJournal сохраняет возможность восстановления (снапшот перед очисткой)', () => {
+    vi.useFakeTimers();
+    try {
+      addSignal(sig({ pattern: 'ЦЕННЫЙ' }));
+      vi.setSystemTime(Date.now() + 24 * 60 * 60 * 1000 + 1000);
+      // saveJournal внутри addSignal уже снял снапшот пустоты? нет — журнал был непустой при 2м add
+      addSignal(sig({ pattern: 'ВТОРОЙ', entryPrice: 60000 }));
+      clearJournal();
+      expect(getAllSignals()).toHaveLength(0);
+      const snaps = listSnapshots();
+      expect(snaps.length).toBeGreaterThanOrEqual(1);
+      const restored = restoreFromSnapshot()!;
+      expect(restored.some(e => e.pattern === 'ЦЕННЫЙ')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ротация: хранится не более 7 снапшотов', () => {
+    vi.useFakeTimers();
+    try {
+      addSignal(sig({ pattern: 'P0' }));
+      for (let day = 1; day <= 9; day++) {
+        vi.setSystemTime(day * (24 * 60 * 60 * 1000) + 1000);
+        addSignal(sig({ pattern: `P${day}`, entryPrice: 1000 + day }));
+      }
+      expect(listSnapshots().length).toBeLessThanOrEqual(7);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
