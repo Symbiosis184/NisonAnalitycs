@@ -1,11 +1,12 @@
 // Signal Generator - Главный класс генерации торговых сигналов по Нисону
 import { Candle } from './candle';
 import { PatternDetector, VolumeAnalyzer } from './pattern_engine';
-import { ZoneVoter } from './zone_voter';
+
 import { getTrendContext, getTrendMacro } from './trend_detection';
 import { ema, atr } from './indicators';
 import { patternStory } from './patterns';
 import { matchesPatternId, PatternId } from './pattern_ids';
+import { nearestStructuralTarget } from './nison_targets';
 
 // Константы
 const TIMEOUT_H1 = 10800; // 3 часа в секундах
@@ -88,41 +89,19 @@ export class SignalGenerator {
       return null; // Сигнал нереалистичен
     }
 
-    // FIX аудита №6: ATR-пол — минимальная дистанция цели от шума.
-    // Зона S/R ближе половины ATR к цене входа игнорируется как «не цель, а шум».
-    const atrValue = atr(closedCandles, 14);
-    const minReward = Math.max(candle.close * 0.01, atrValue * 1.0);
+    // Канон Нисона (гл. 4–6): цель — ближайший ЗНАЧИМЫЙ ценовой ориентир
+    // (сильная S/R-зона или экстремум предшествующего движения), а не индикаторный уровень.
+    // FIX: удалена подмена «Цель = 3×ATR» — у Нисона выход определяется структурой рынка.
+    // ATR остаётся только как шумовой пол (risk-менеджмент, см. nison_targets.ts).
+    const noiseFloor = Math.max(candle.close * 0.01, atr(closedCandles, 14));
     const maxReward = candle.close * 0.20;
-
-    // Расчёт цели по зонам Нисона с улучшенной логикой
-    const zones = ZoneVoter.collect(candle.close, closedCandles);
-    let target: number;
-    
-    if (direction === 'long') {
-      // Ищем сильную зону сопротивления выше цены входа (с АТR-полом)
-      const candidates = zones.resistance
-        .filter((z) => z.level - candle.close >= minReward && z.level - candle.close <= maxReward && z.strong)
-        .sort((a, b) => a.level - b.level); // Ближайшая сильная зона
-      
-      if (candidates.length > 0) {
-        target = candidates[0].level;
-      } else {
-        // Если сильных зон нет, используем ATR для расчёта цели
-        target = candle.close + (atrValue * 3); // Цель = 3 ATR
-      }
-    } else {
-      // Ищем сильную зону поддержки ниже цены входа (с АТR-полом)
-      const candidates = zones.support
-        .filter((z) => candle.close - z.level >= minReward && candle.close - z.level <= maxReward && z.strong)
-        .sort((a, b) => b.level - a.level); // Ближайшая сильная зона
-      
-      if (candidates.length > 0) {
-        target = candidates[0].level;
-      } else {
-        // Если сильных зон нет, используем ATR для расчёта цели
-        target = candle.close - (atrValue * 3); // Цель = 3 ATR
-      }
-    }
+    const structural = nearestStructuralTarget(candle.close, direction, closedCandles, {
+      noiseFloor,
+      maxReward,
+    });
+    if (!structural) return null; // Нет явного уровня — ждём (Нисон), сигнал не генерируем
+    const target = structural.level;
+    const minReward = noiseFloor;
 
     // Проверка реалистичности цели
     const reward = Math.abs(target - candle.close);
@@ -150,7 +129,7 @@ export class SignalGenerator {
       quality,
       timestamp: Date.now(),
       confirmed: false, // Будет установлено позже
-      story: patternStory(pattern),
+      story: patternStory(pattern) + ` | цель: ${structural.detail} (${structural.kind === 'zone' ? 'S/R-зона' : 'свинг'})`,
       meta: bounds,
     };
   }
