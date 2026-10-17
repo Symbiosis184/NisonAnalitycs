@@ -42,6 +42,8 @@ export interface SignalDTO {
   quality: number;
   timestamp: number;
   confirmed: boolean;
+  /** Жизненный цикл по Нисону (аудит №11): pending/confirmed/invalidated/expired */
+  lifecycle_status?: 'pending' | 'confirmed' | 'invalidated' | 'expired';
   story: string;
   /** Контекст старшего таймфрейма (аудит №9): тренд на HTF в момент сигнала */
   htf?: {

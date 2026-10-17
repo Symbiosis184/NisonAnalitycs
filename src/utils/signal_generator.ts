@@ -7,6 +7,7 @@ import { ema, atr } from './indicators';
 import { patternStory } from './patterns';
 import { matchesPatternId, PatternId } from './pattern_ids';
 import { nearestStructuralTarget } from './nison_targets';
+import { resolveSignalStatus, SignalStatus } from './signal_lifecycle';
 
 // Константы
 const TIMEOUT_H1 = 10800; // 3 часа в секундах
@@ -36,6 +37,8 @@ export interface Signal {
   quality: number;
   timestamp: number;
   confirmed: boolean;
+  // Аудит №11: полноценный жизненный цикл по Нисону вместо булева «раз и навсегда».
+  status?: SignalStatus;
   story: string;
   meta: {
     patternCandlesCount: number;
@@ -134,38 +137,36 @@ export class SignalGenerator {
     };
   }
 
-  // Проверка подтверждения паттерна следующей свечой (методология Нисона).
-  // FIX аудита №3: раньше требовалось закрытие ВЫШЕ максимума всей формации для лонга —
-  // это отсекало почти все бычьи развороты (утренняя звезда закрывается ниже хая первой свечи).
-  // Канон Нисона: подтверждение = продолжение движения в сторону сигнала
-  // (бычья свеча, закрывшаяся выше close сигнальной свечи для лонга; зеркально для шорта)
-  // ИЛИ пробой «шеи» формации. Плюс стоп-уровень формации не должен быть пробит.
-  private checkConfirmation(
+  // Аудит №11: подтверждение = жизненный цикл signal_lifecycle.resolveSignalStatus,
+  // вычисляемый ТОЛЬКО по закрытым свечам (closedCount). Булев confirmed сохранён
+  // как «status === 'confirmed'» для обратной совместимости UI/journal.
+  private applyLifecycle(
+    signal: Signal,
     direction: 'long' | 'short',
     patternCandle: Candle,
-    confirmationCandle: Candle,
-    bounds: { patternLow: number; patternHigh: number }
-  ): boolean {
-    if (direction === 'long') {
-      // Бычье подтверждение: свеча бычья, закрылась выше close сигнальной свечи
-      // (или выше максимума формации — усиленный вариант), и стоп формации не пробит.
-      const heldStop = confirmationCandle.low > bounds.patternLow;
-      const progressed =
-        confirmationCandle.isBullish && confirmationCandle.close > patternCandle.close;
-      const breakout = confirmationCandle.close > bounds.patternHigh;
-      return heldStop && (progressed || breakout);
-    } else {
-      const heldStop = confirmationCandle.high < bounds.patternHigh;
-      const progressed =
-        confirmationCandle.isBearish && confirmationCandle.close < patternCandle.close;
-      const breakdown = confirmationCandle.close < bounds.patternLow;
-      return heldStop && (progressed || breakdown);
-    }
+    bounds: { patternLow: number; patternHigh: number },
+    candles: Candle[],
+    i: number,
+    closedCount: number,
+  ): void {
+    const status = resolveSignalStatus(candles, i, direction, patternCandle.close, bounds, closedCount);
+    signal.status = status;
+    signal.confirmed = status === 'confirmed';
   }
 
-  // Главный метод поиска всех подтверждённых сигналов
+  // Главный метод поиска всех сигналов с жизненным циклом по Нисону
   findSignals(candles: Candle[], tf: string = 'D'): Signal[] {
     if (candles.length < 6) return [];
+
+    // Аудит №11: live-последняя свеча Bybit формируется — не учитывать её
+    // как подтверждающую. Исторический прогон (все свечи закрыты) передаёт
+    // весь массив; здесь conservative-правило: последняя свеча считается
+    // незакрытой только если она помечена формирующейся (isForming).
+    const closedCount = (() => {
+      const last = candles[candles.length - 1];
+      const forming = (last as unknown as { isForming?: boolean }).isForming === true;
+      return forming ? candles.length - 1 : candles.length;
+    })();
 
     const signals: Signal[] = [];
     
@@ -175,7 +176,6 @@ export class SignalGenerator {
     // Проверяем последние 20 свечей на наличие паттернов
     for (let i = candles.length - 2; i >= Math.max(0, candles.length - 20); i--) {
       const patternCandle = candles[i];
-      const nextCandle = candles[i + 1]; // Следующая свеча для подтверждения
       const closed = candles.slice(0, i + 1);
       
       // Определяем тренд в момент паттерна
@@ -229,8 +229,8 @@ export class SignalGenerator {
           // Пропускаем если сигнал нереалистичен
           if (!signal) continue;
           
-          // FIX аудита №3: подтверждение следующей свечой (канон Нисона)
-          signal.confirmed = this.checkConfirmation(direction, patternCandle, nextCandle, bounds);
+          // Аудит №11: жизненный цикл по ЗАКРЫТЫМ свечам (pending/confirmed/invalidated/expired)
+          this.applyLifecycle(signal, direction, patternCandle, bounds, candles, i, closedCount);
           
           // FIX аудита №7: раньше неподтверждённые сигналы молча выбрасывались —
           // пользователь не видел «почти-сигналов». Теперь они возвращаются с confirmed=false.
@@ -280,8 +280,8 @@ export class SignalGenerator {
             // Пропускаем если сигнал нереалистичен
             if (!signal) continue;
             
-            // FIX аудита №3: подтверждение следующей свечой (канон Нисона)
-            signal.confirmed = this.checkConfirmation(direction, patternCandle, nextCandle, bounds);
+            // Аудит №11: жизненный цикл по закрытым свечам
+            this.applyLifecycle(signal, direction, patternCandle, bounds, candles, i, closedCount);
             
             // FIX аудита №7: неподтверждённые сигналы возвращаются с confirmed=false
             if (signal.rr >= 2) {
@@ -320,8 +320,8 @@ export class SignalGenerator {
           // Пропускаем если сигнал нереалистичен
           if (!signal) continue;
           
-          // FIX аудита №3: подтверждение следующей свечой (канон Нисона)
-          signal.confirmed = this.checkConfirmation(direction, patternCandle, nextCandle, bounds);
+          // Аудит №11: жизненный цикл по ЗАКРЫТЫМ свечам (pending/confirmed/invalidated/expired)
+          this.applyLifecycle(signal, direction, patternCandle, bounds, candles, i, closedCount);
           
           // FIX аудита №7: неподтверждённые сигналы возвращаются с confirmed=false
           if (signal.rr >= 2) {
@@ -331,10 +331,12 @@ export class SignalGenerator {
       }
     }
 
-    // FIX аудита №8: детерминированная сортировка — сначала подтверждённые,
-    // затем по качеству, затем по RR (стабильный порядок для UI и бэктеста).
+    // FIX аудита №8: детерминированная сортировка.
+    // Аудит №11: приоритет жизненного цикла — подтверждённые > ожидает > истёк > отменён.
+    const RANK: Record<string, number> = { confirmed: 3, pending: 2, expired: 1, invalidated: 0 };
     return signals
       .sort((a, b) =>
+        (RANK[b.status ?? 'pending'] - RANK[a.status ?? 'pending']) ||
         Number(b.confirmed) - Number(a.confirmed) ||
         b.quality - a.quality ||
         b.rr - a.rr

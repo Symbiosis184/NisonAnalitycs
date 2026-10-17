@@ -5,6 +5,7 @@ import { api, type AnalysisReport } from '../api/client';
 import CandlestickChart from '../components/CandlestickChart';
 import { formatPrice } from '../utils/format';
 import { addSignal } from '../utils/signalJournal';
+import { STATUS_LABEL } from '../utils/signal_lifecycle';
 import { loadRiskSettings, saveRiskSettings, RISK_LIMITS } from '../utils/risk_settings';
 import { isValidSymbol } from '../utils/validation';
 import { describeNetworkError } from '../utils/http';
@@ -96,8 +97,11 @@ export default function Analysis() {
   // Автоматическое сохранение обнаруженных сигналов в журнал
   useEffect(() => {
     if (report && report.signals) {
+      // Аудит №11: в журнал попадают сигналы со статусом pending (ожидает
+      // подтверждения) и confirmed; invalidated/expired не записываем.
       report.signals.forEach((signal) => {
-        if (signal.confirmed) {
+        const st = signal.lifecycle_status ?? (signal.confirmed ? 'confirmed' : 'pending');
+        if (st === 'pending' || st === 'confirmed') {
           const result = addSignal({
             symbol: symbol || '',
             timeframe,
@@ -405,14 +409,14 @@ export default function Analysis() {
         </div>
       )}
 
-      {/* 5. ТОРГОВЫЕ СИГНАЛЫ - только подтверждённые */}
-      {report.signals.filter((s) => s.confirmed).length > 0 && (
+      {/* 5. ТОРГОВЫЕ СИГНАЛЫ — аудит №11: живой список со статусами жизненного цикла */}
+      {report.signals.filter((s) => (s.lifecycle_status ?? (s.confirmed ? 'confirmed' : 'pending')) !== 'invalidated').length > 0 && (
         <div className="p-6 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
           <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
             <Target className="w-5 h-5 text-amber-400" />
-            Подтверждённые торговые сигналы
+            Торговые сигналы (Нисон: ожидание → подтверждение)
             <span className="text-xs text-gray-500 font-normal ml-2">
-              ({report.signals.filter((s) => s.confirmed).length} из {report.signals.length})
+              подтверждено {report.signals.filter((s) => s.lifecycle_status === 'confirmed').length} · ждёт {report.signals.filter((s) => (s.lifecycle_status ?? 'pending') === 'pending').length} из {report.signals.length}
             </span>
             {/* Аудит №10: редактор риск-настроек для расчёта размера позиции */}
             <button
@@ -426,7 +430,7 @@ export default function Analysis() {
             <RiskSettingsPanel settings={riskSettings} onApply={applyRiskSettings} />
           )}
           <div className="space-y-3">
-            {report.signals.filter((signal) => signal.confirmed).map((signal, idx: number) => (
+            {report.signals.filter((signal) => (signal.lifecycle_status ?? (signal.confirmed ? 'confirmed' : 'pending')) !== 'invalidated').map((signal, idx: number) => (
               <div
                 key={idx}
                 className={`p-4 rounded-lg border ${
@@ -500,11 +504,17 @@ export default function Analysis() {
                       </span>
                     </div>
                   )}
-                  {signal.confirmed && (
-                    <span className="px-2 py-1 rounded bg-green-500/10 text-green-400">
-                      ✓ Подтверждён
-                    </span>
-                  )}
+                  {(() => {
+                    const st = signal.lifecycle_status ?? (signal.confirmed ? 'confirmed' : 'pending');
+                    const cls = st === 'confirmed' ? 'bg-green-500/10 text-green-400'
+                      : st === 'pending' ? 'bg-yellow-500/10 text-yellow-400'
+                      : 'bg-gray-500/10 text-gray-400';
+                    return (
+                      <span className={`px-2 py-1 rounded ${cls}`}>
+                        {st === 'confirmed' ? '✓' : st === 'pending' ? '⏳' : '–'} {STATUS_LABEL[st]}
+                      </span>
+                    );
+                  })()}
                 </div>
 
                 {/* Аудит №10: план размера позиции по правилу фиксированного риска */}

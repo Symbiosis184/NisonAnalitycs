@@ -129,6 +129,7 @@ export class ApiClient {
         quality: s.quality,
         timestamp: s.timestamp,
         confirmed: s.confirmed,
+        lifecycle_status: s.status,
         story: s.story,
         ...(htf ? { htf } : {}),
         ...(plan ? { position_plan: plan } : {}),
