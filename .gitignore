@@ -1,0 +1,17 @@
+node_modules/
+.next/
+dist/
+build/
+*.log
+
+# OS/editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# env (запрет коммита секретов)
+.env
+.env.*
+!.env.example
