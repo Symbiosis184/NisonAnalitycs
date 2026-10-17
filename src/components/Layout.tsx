@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { BarChart3, TrendingUp, BookOpen } from 'lucide-react';
+import { BarChart3, TrendingUp, BookOpen, FlaskConical } from 'lucide-react';
 
 export default function Layout() {
   const location = useLocation();
@@ -45,6 +45,17 @@ export default function Layout() {
               >
                 <BookOpen className="w-4 h-4" />
                 Журнал
+              </Link>
+              <Link
+                to="/backtest"
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  location.pathname === '/backtest'
+                    ? 'bg-amber-500/10 text-amber-400'
+                    : 'text-gray-400 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <FlaskConical className="w-4 h-4" />
+                Бэктест
               </Link>
             </nav>
           </div>

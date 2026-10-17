@@ -30,8 +30,8 @@ fi
 echo "    node $(node -v), npm $(npm -v)"
 
 echo "==> 3/6 Фикс IPv6 в типовом конфиге nginx (если IPv6 не поддерживается)"
-if ! ip -6 addr show lo >/dev/null 2>&1 || [ ! -e /proc/net/if_inet6 ]; then
-    sed -ri 's/^(\s*)listen\s+\[::\]:80.*;/\1# disabled (no IPv6): &/' /etc/nginx/sites-available/default 2>/dev/null || true
+if [ ! -e /proc/net/if_inet6 ]; then
+    sed -ri 's/^(\s*)listen\s+\[::\]:80.*/\1# disabled (no IPv6): &/' /etc/nginx/sites-available/default /etc/nginx/conf.d/*.conf 2>/dev/null || true
 fi
 dpkg --configure -a 2>/dev/null || true
 
@@ -48,7 +48,7 @@ rm -rf "${WEB_ROOT:?}/"*
 cp -r dist/* "$WEB_ROOT/"
 chown -R www-data:www-data "$WEB_ROOT" && chmod -R a+rX "$WEB_ROOT"
 
-echo "==> 6/6 Конфиг сайта nginx + запуск"
+echo "==> 6/6 Настройка nginx + запуск"
 cat > /etc/nginx/sites-available/nison <<'EOF'
 server {
     listen 80 default_server;

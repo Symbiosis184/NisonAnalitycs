@@ -3,6 +3,7 @@ import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import Analysis from './pages/Analysis';
 import SignalJournal from './components/SignalJournal';
+import BacktestPage from './pages/Backtest';
 
 export default function App() {
   return (
@@ -12,6 +13,7 @@ export default function App() {
           <Route index element={<Dashboard />} />
           <Route path="analysis/:symbol" element={<Analysis />} />
           <Route path="journal" element={<SignalJournal />} />
+          <Route path="backtest" element={<BacktestPage />} />
         </Route>
       </Routes>
     </BrowserRouter>
