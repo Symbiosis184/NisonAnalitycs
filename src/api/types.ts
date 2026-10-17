@@ -45,6 +45,19 @@ export interface SignalDTO {
   story: string;
 }
 
+/** План позиции по правилу фиксированного риска (utils/position_sizing) */
+export interface PositionPlanDTO {
+  risk_usd: number;          // заявленный риск в USDT
+  stop_distance_pct: number; // расстояние до стопа, % от входа
+  qty: number;               // размер позиции в базовом активе
+  notional_usd: number;      // номинал позиции
+  cost_reserve_usd: number;  // резерв на комиссии+слиппедж полного цикла
+  worst_case_loss_usd: number; // реальный убыток по стопу (риск + издержки)
+  worst_case_loss_pct: number; // то же, % капитала
+  capped_by_notional: boolean;
+  leverage: number;
+}
+
 /** Зона поддержки/сопротивления с «голосами» (из ZoneVoter) */
 export interface ZoneDTO {
   level: number;
@@ -75,6 +88,20 @@ export interface TrendAnalysisDTO {
 
 export type Regime = TrendContext;
 
+/** Сводная статистика эмпирического бэктеста паттерна (utils/backtest) */
+export interface BacktestSummaryDTO {
+  pattern: string;
+  direction: 'long' | 'short';
+  total_trades: number;
+  win_rate_net: number;   // % прибыльных сделок ПОСЛЕ издержек
+  win_rate_gross: number; // % прибыльных сделок ДО издержек (для сравнения)
+  expectancy_r: number;   // средний net R на сделку
+  profit_factor: number;
+  total_net_r: number;
+  max_drawdown_r: number;
+  costs_drag_r: number;   // суммарные издержки в R
+}
+
 /** Полный отчёт анализа одного инструмента */
 export interface AnalysisReport {
   symbol: string;
@@ -97,6 +124,8 @@ export interface AnalysisReport {
   regime_description: string;
   consensus: ConsensusDTO;
   trend_analysis: TrendAnalysisDTO;
+  /** Бэктест-сводка по найденным сигналам (заглушка до подключения движка — П.3) */
+  backtest?: BacktestSummaryDTO[];
   generated: number;
 }
 

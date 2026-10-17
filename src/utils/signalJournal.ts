@@ -2,6 +2,7 @@
 // Отслеживает сработавшие сигналы по методологии Нисона
 
 import { assertValidSymbol, isValidTimeframe, clampNumber, sanitizeText } from './validation';
+import { costImpactPercent, costImpactR, DEFAULT_COSTS, type CostModel } from './costs';
 
 export interface SignalEntry {
   id: string;
@@ -18,8 +19,14 @@ export interface SignalEntry {
   status: 'pending' | 'hit_target' | 'hit_stop' | 'expired';
   exitPrice?: number;
   exitTimestamp?: number;
+  /** Валовый P&L в USDT (без издержек) — прежнее поле, сохранено для совместимости */
   pnl?: number;
+  /** Валовый P&L в % (без издержек) */
   pnlPercent?: number;
+  /** Чистый P&L в % после комиссий/проскальзывания (бэклога П.2) */
+  netPnlPercent?: number;
+  /** Эффект издержки цикла, выраженный в единицах риска R */
+  costsR?: number;
   notes?: string;
 }
 
@@ -29,8 +36,11 @@ export interface SignalStats {
   hitTarget: number;
   hitStop: number;
   expired: number;
-  winRate: number;
-  avgPnl: number;
+  winRate: number;      // по чистому результату (net) — честная статистика
+  grossWinRate: number; // по валовому результату — как считалось до учёта издержек
+  avgPnl: number;       // средний чистый %
+  avgNetPnl: number;    // то же, явное имя
+  avgCostsR: number;    // средние издержки в R
   avgRiskReward: number;
 }
 
@@ -191,6 +201,12 @@ export function sanitizeSignalEntry(raw: any): SignalEntry | null {
   if (typeof raw.pnlPercent === 'number' && Number.isFinite(raw.pnlPercent)) {
     sanitized.pnlPercent = clampNumber(raw.pnlPercent, -100, 1e6, 0);
   }
+  if (typeof raw.netPnlPercent === 'number' && Number.isFinite(raw.netPnlPercent)) {
+    sanitized.netPnlPercent = clampNumber(raw.netPnlPercent, -100, 1e6, 0);
+  }
+  if (typeof raw.costsR === 'number' && Number.isFinite(raw.costsR)) {
+    sanitized.costsR = clampNumber(raw.costsR, -1000, 0, 0); // издержки — всегда ≤ 0
+  }
   const notes = sanitizeText(raw.notes, 500);
   if (notes) sanitized.notes = notes;
 
@@ -262,22 +278,42 @@ export function updateSignalStatus(
     entry.status = status;
     entry.exitTimestamp = Date.now();
     if (exitPrice !== undefined) {
-      entry.exitPrice = exitPrice;
-      
-      // Расчет P&L
-      if (entry.direction === 'long') {
-        entry.pnl = exitPrice - entry.entryPrice;
-        entry.pnlPercent = ((exitPrice - entry.entryPrice) / entry.entryPrice) * 100;
-      } else {
-        entry.pnl = entry.entryPrice - exitPrice;
-        entry.pnlPercent = ((entry.entryPrice - exitPrice) / entry.entryPrice) * 100;
-      }
+      applyExit(entry, exitPrice);
     }
     if (notes) {
       entry.notes = notes;
     }
     
     saveJournal(entries);
+  }
+}
+
+/**
+ * Единая точка закрытия сделки: валовый P&L + чистый P&L за вычетом
+ * комиссий/проскальзывания (costs.ts). Используется и ручным обновлением
+ * статуса, и автоматической проверкой цен (бэклога П.2 — win-rate честный).
+ */
+export function applyExit(entry: SignalEntry, exitPrice: number, costs: CostModel = DEFAULT_COSTS): void {
+  entry.exitPrice = exitPrice;
+  entry.exitTimestamp = Date.now();
+
+  // Валовый результат (прежняя формула — сохранена для совместимости)
+  if (entry.direction === 'long') {
+    entry.pnl = exitPrice - entry.entryPrice;
+    entry.pnlPercent = ((exitPrice - entry.entryPrice) / entry.entryPrice) * 100;
+  } else {
+    entry.pnl = entry.entryPrice - exitPrice;
+    entry.pnlPercent = ((entry.entryPrice - exitPrice) / entry.entryPrice) * 100;
+  }
+
+  // Чистый результат с издержками
+  const impactPct = costImpactPercent(entry.direction, entry.entryPrice, exitPrice, costs);
+  if (Number.isFinite(impactPct)) {
+    entry.netPnlPercent = (entry.pnlPercent ?? 0) + impactPct;
+  }
+  const impactR = costImpactR(entry.direction, entry.entryPrice, exitPrice, entry.stopLoss, costs);
+  if (Number.isFinite(impactR)) {
+    entry.costsR = impactR;
   }
 }
 
@@ -307,15 +343,26 @@ export function getSignalStats(): SignalStats {
   const hitStop = closed.filter(e => e.status === 'hit_stop').length;
   const expired = closed.filter(e => e.status === 'expired').length;
   
-  const totalPnl = closed.reduce((sum, e) => sum + (e.pnlPercent || 0), 0);
-  const avgPnl = closed.length > 0 ? totalPnl / closed.length : 0;
-  
-  const avgRR = entries.length > 0 
-    ? entries.reduce((sum, e) => sum + e.riskReward, 0) / entries.length 
+  // Средний чистый % (net, если посчитан; иначе gross — старые записи без издержек)
+  const netOf = (e: SignalEntry) => e.netPnlPercent ?? e.pnlPercent ?? 0;
+  const totalNet = closed.reduce((sum, e) => sum + netOf(e), 0);
+  const avgPnl = closed.length > 0 ? totalNet / closed.length : 0;
+
+  const avgRR = entries.length > 0
+    ? entries.reduce((sum, e) => sum + e.riskReward, 0) / entries.length
     : 0;
-  
-  const winRate = closed.length > 0 ? (hitTarget / closed.length) * 100 : 0;
-  
+
+  // Win rate по чистому результату: сделка с net<=0 — не выигрыш (бэклога П.2)
+  const netWins = closed.filter(e => netOf(e) > 0).length;
+  const grossWins = closed.filter(e => (e.pnlPercent ?? 0) > 0).length;
+  const winRate = closed.length > 0 ? (netWins / closed.length) * 100 : 0;
+  const grossWinRate = closed.length > 0 ? (grossWins / closed.length) * 100 : 0;
+
+  const withCosts = closed.filter(e => typeof e.costsR === 'number');
+  const avgCostsR = withCosts.length > 0
+    ? withCosts.reduce((sum, e) => sum + (e.costsR || 0), 0) / withCosts.length
+    : 0;
+
   return {
     totalSignals: entries.length,
     activeSignals: entries.filter(e => e.status === 'pending').length,
@@ -323,7 +370,10 @@ export function getSignalStats(): SignalStats {
     hitStop,
     expired,
     winRate,
+    grossWinRate,
     avgPnl,
+    avgNetPnl: avgPnl,
+    avgCostsR,
     avgRiskReward: avgRR,
   };
 }
@@ -348,48 +398,28 @@ export function checkActiveSignals(currentPrices: Record<string, number>): Signa
     // Проверка достижения цели
     if (entry.direction === 'long' && currentPrice >= entry.target) {
       entry.status = 'hit_target';
-      entry.exitPrice = currentPrice;
-      entry.exitTimestamp = Date.now();
-      entry.pnl = currentPrice - entry.entryPrice;
-      entry.pnlPercent = ((currentPrice - entry.entryPrice) / entry.entryPrice) * 100;
+      applyExit(entry, currentPrice);
     } else if (entry.direction === 'short' && currentPrice <= entry.target) {
       entry.status = 'hit_target';
-      entry.exitPrice = currentPrice;
-      entry.exitTimestamp = Date.now();
-      entry.pnl = entry.entryPrice - currentPrice;
-      entry.pnlPercent = ((entry.entryPrice - currentPrice) / entry.entryPrice) * 100;
+      applyExit(entry, currentPrice);
     }
     // Проверка достижения стопа
     else if (entry.direction === 'long' && currentPrice <= entry.stopLoss) {
       entry.status = 'hit_stop';
-      entry.exitPrice = currentPrice;
-      entry.exitTimestamp = Date.now();
-      entry.pnl = currentPrice - entry.entryPrice;
-      entry.pnlPercent = ((currentPrice - entry.entryPrice) / entry.entryPrice) * 100;
+      applyExit(entry, currentPrice);
     } else if (entry.direction === 'short' && currentPrice >= entry.stopLoss) {
       entry.status = 'hit_stop';
-      entry.exitPrice = currentPrice;
-      entry.exitTimestamp = Date.now();
-      entry.pnl = entry.entryPrice - currentPrice;
-      entry.pnlPercent = ((entry.entryPrice - currentPrice) / entry.entryPrice) * 100;
+      applyExit(entry, currentPrice);
     }
     // Проверка истечения времени (7 дней для дневных сигналов)
     else {
       const maxAge = entry.timeframe === 'D' ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
       if (Date.now() - entry.timestamp > maxAge) {
         entry.status = 'expired';
-        entry.exitPrice = currentPrice;
-        entry.exitTimestamp = Date.now();
-        if (entry.direction === 'long') {
-          entry.pnl = currentPrice - entry.entryPrice;
-          entry.pnlPercent = ((currentPrice - entry.entryPrice) / entry.entryPrice) * 100;
-        } else {
-          entry.pnl = entry.entryPrice - currentPrice;
-          entry.pnlPercent = ((entry.entryPrice - currentPrice) / entry.entryPrice) * 100;
-        }
+        applyExit(entry, currentPrice);
       }
     }
-    
+
     updated.push(entry);
   });
   
