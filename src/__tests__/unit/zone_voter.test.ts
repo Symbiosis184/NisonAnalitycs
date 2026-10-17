@@ -92,3 +92,70 @@ describe('ZoneVoter.isNearSupport / isNearResistance', () => {
 function minLowSafe(arr: { low: number }[]) {
   return Math.min(...arr.map((a) => a.low));
 }
+
+describe('Аудит №1: единый источник S/R — транзитивная дедупликация зон', () => {
+  it('dedupeZones сливает не-транзитивные кластеры (A≈B, B≈C) в один уровень', async () => {
+    const { dedupeZones } = await import('../../utils/levels');
+    const map = new Map<number, { reasons: string[]; touches: number; lastTouch: number }>([
+      [100.0, { reasons: ['a'], touches: 2, lastTouch: 10 }],
+      [100.4, { reasons: ['b'], touches: 1, lastTouch: 20 }], // ≈ обоим соседям по 0.5%
+      [100.8, { reasons: ['c'], touches: 3, lastTouch: 30 }],
+    ]);
+    dedupeZones(map, 0.005);
+    expect(map.size).toBe(1);
+    const [level, data] = [...map.entries()][0];
+    expect(level).toBeCloseTo(100.4, 6);
+    expect(data.touches).toBe(6);          // касания суммируются
+    expect(data.lastTouch).toBe(30);       // максимум времени
+    expect(new Set(data.reasons).size).toBe(data.reasons.length); // без дублей причин
+  });
+
+  it('dedupeZones НЕ сливает реально разные зоны (>допуска)', async () => {
+    const { dedupeZones } = await import('../../utils/levels');
+    const map = new Map<number, { reasons: string[]; touches: number; lastTouch: number }>([
+      [100.0, { reasons: ['a'], touches: 1, lastTouch: 1 }],
+      [105.0, { reasons: ['b'], touches: 1, lastTouch: 2 }],
+    ]);
+    dedupeZones(map, 0.005);
+    expect(map.size).toBe(2);
+  });
+
+  it('findClusterZone симметричен: новый уровень на границе допуска сливается с зоной', async () => {
+    const { findClusterZone } = await import('../../utils/levels');
+    const map = new Map<number, unknown>([[100.0, {}]]);
+    // |Δ|/100 <= 0.005 → входит; даже если проверка шла бы от нового уровня
+    expect(findClusterZone(map, 100.49, 0.005)).toBe(100.0);
+    expect(findClusterZone(map, 101.0, 0.005)).toBeUndefined();
+  });
+
+  it('collect(): в результате нет двух зон ближе 0.5% друг к другу (инвариант)', () => {
+    // Генерируем «шумную» историю со свингами около ~90 и ~110 + MA-уровни
+    const arr = [] as ReturnType<typeof c>[];
+    for (let i = 0; i < 200; i++) {
+      const mid = 100 + 10 * Math.sin(i / 7) + (i % 5) * 0.11;
+      arr.push(c(mid - 0.3, mid + 0.9, mid - 0.9, mid + 0.3));
+    }
+    const zones = ZoneVoter.collect(arr[arr.length - 1].close, arr);
+    for (const list of [zones.support, zones.resistance]) {
+      const sortedLevels = [...list.map((z) => z.level)].sort((a, b) => a - b);
+      for (let k = 1; k < sortedLevels.length; k++) {
+        const rel = Math.abs(sortedLevels[k] - sortedLevels[k - 1]) / sortedLevels[k - 1];
+        expect(rel).toBeGreaterThan(0.005); // никаких «половин» одной зоны
+      }
+    }
+  });
+
+  it('зоны из разных источников (свинг + круглое число) усиливают одну зону, а не дублируют', () => {
+    // три V-отскока с минимумами ровно у круглого числа 90 → одна зона поддержки
+    const candles = [
+      ...flat(30, 96),
+      c(93, 94, 89.9, 92), c(93, 96, 91, 94), c(95, 98, 93, 96), c(96, 97, 92, 95),
+      c(93, 94, 90.0, 92), c(93, 96, 91, 94), c(95, 98, 93, 96), c(96, 97, 92, 95),
+      c(93, 94, 90.1, 92), c(93, 96, 91, 94), c(95, 98, 93, 96),
+    ];
+    const zones = ZoneVoter.collect(95, candles);
+    const near90 = zones.support.filter((z) => Math.abs(z.level - 90) < 1.2);
+    expect(near90.length).toBe(1);
+    expect(near90[0].touches).toBeGreaterThanOrEqual(3);
+  });
+});

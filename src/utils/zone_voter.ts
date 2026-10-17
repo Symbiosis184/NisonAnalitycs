@@ -8,7 +8,7 @@
 
 import { Candle } from './candle';
 import { ema } from './indicators';
-import { findSwings, addLevelToMap, ZoneClusterData } from './levels';
+import { findSwings, addLevelToMap, dedupeZones, ZoneClusterData } from './levels';
 
 export interface Zone {
   level: number;
@@ -54,6 +54,12 @@ export class ZoneVoter {
     // 6. Психологические круглые числа
     this.addRoundNumbers(price, supMap, resMap);
 
+    // FIX аудита №1: финальная транзитивная дедупликация — разные источники
+    // (MA, климакс, середины тел, круглые числа) могли оставить «половины»
+    // одной зоны; до mapToZones сливаем их в единый уровень.
+    dedupeZones(supMap, this.CLUSTER_TOLERANCE);
+    dedupeZones(resMap, this.CLUSTER_TOLERANCE);
+
     // Преобразуем в массивы Zone
     const support = this.mapToZones(supMap)
       .filter(z => z.level <= price)
@@ -85,15 +91,19 @@ export class ZoneVoter {
     const lookback = Math.min(150, candles.length);
     const tol = this.CLUSTER_TOLERANCE;
 
-    // Сначала группируем свинги в зоны (кластеризация), помня самый ранний индекс каждой зоны.
-    // В одну зону сливаются и свинг-минимумы, и свинг-максимумы: касания считаются отдельно.
-    const zoneDefs: Array<{ level: number; firstIndex: number }> = [];
+    // Сначала группируем свинги в зоны (кластеризация), помня самый ранний индекс
+    // и ВСЕ составляющие цены каждой зоны. В одну зону сливаются и свинг-минимумы,
+    // и свинг-максимумы: касания считаются отдельно для каждой ценой составляющей
+    // (иначе зона из уровней 89.0 и 89.4 теряла бы касания к более высокому краю).
+    const zoneDefs: Array<{ level: number; firstIndex: number; members: number[] }> = [];
     for (const swing of findSwings(candles, lookback)) {
-      const hit = zoneDefs.find((z) => Math.abs(swing.level - z.level) / z.level <= tol);
+      const hit = zoneDefs.find((z) =>
+        z.members.some((m) => Math.abs(swing.level - m) / m <= tol));
       if (hit) {
         hit.firstIndex = Math.min(hit.firstIndex, swing.index);
+        if (!hit.members.includes(swing.level)) hit.members.push(swing.level);
       } else {
-        zoneDefs.push({ level: swing.level, firstIndex: swing.index });
+        zoneDefs.push({ level: swing.level, firstIndex: swing.index, members: [swing.level] });
       }
     }
 
@@ -105,16 +115,18 @@ export class ZoneVoter {
 
       for (let j = zone.firstIndex + 1; j < candles.length; j++) {
         const c = candles[j];
-        // Поддержка: коснулась зоны и закрылась ВЫШЕ уровня
-        if (c.low <= zone.level * (1 + tol) && c.close > zone.level) {
-          supTouches++;
-          lastSupTime = c.time;
-        }
-        // Сопротивление: коснулась зоны и закрылась НИЖЕ уровня
-        // (проверяется независимо — свеча может дать оба сигнала на разных участках)
-        if (c.high >= zone.level * (1 - tol) && c.close < zone.level) {
-          resTouches++;
-          lastResTime = c.time;
+        for (const m of zone.members) {
+          // Поддержка: коснулась края зоны и закрылась ВЫШЕ него
+          if (c.low <= m * (1 + tol) && c.close > m) {
+            supTouches++;
+            lastSupTime = c.time;
+          }
+          // Сопротивление: коснулась края зоны и закрылась НИЖЕ него
+          // (проверяется независимо — свеча может дать оба сигнала на разных участках)
+          if (c.high >= m * (1 - tol) && c.close < m) {
+            resTouches++;
+            lastResTime = c.time;
+          }
         }
       }
 
@@ -125,10 +137,10 @@ export class ZoneVoter {
       const asResistance = resTouches > 0 && (zone.level >= price || resTouches > supTouches);
 
       if (asSupport) {
-        addLevelToMap(supMap, zone.level, `свинг-зона: ${supTouches} касание(й) поддержки`, lastSupTime, tol);
+        addLevelToMap(supMap, zone.level, `свинг-зона: ${supTouches} касание(й) поддержки`, lastSupTime, tol, supTouches);
       }
       if (asResistance) {
-        addLevelToMap(resMap, zone.level, `свинг-зона: ${resTouches} касание(й) сопротивления`, lastResTime, tol);
+        addLevelToMap(resMap, zone.level, `свинг-зона: ${resTouches} касание(й) сопротивления`, lastResTime, tol, resTouches);
       }
     }
   }
@@ -192,26 +204,10 @@ export class ZoneVoter {
         const maVal = ma[ma.length - 1];
         const lastTime = candles[candles.length - 1].time;
 
-        const addZone = (map: Map<number, any>, level: number, reason: string, time: number) => {
-          let clustered = false;
-          for (const [existingLevel, data] of map.entries()) {
-            if (Math.abs(level - existingLevel) / existingLevel <= this.CLUSTER_TOLERANCE) {
-              data.reasons.push(reason);
-              data.touches++;
-              data.lastTouch = Math.max(data.lastTouch, time);
-              clustered = true;
-              break;
-            }
-          }
-          if (!clustered) {
-            map.set(level, { reasons: [reason], touches: 1, lastTouch: time });
-          }
-        };
-
-        if (maVal <= price) {
-          addZone(supMap, maVal, `MA${period}`, lastTime);
+                if (maVal <= price) {
+          addLevelToMap(supMap, maVal, `MA${period}`, lastTime, this.CLUSTER_TOLERANCE);
         } else {
-          addZone(resMap, maVal, `MA${period}`, lastTime);
+          addLevelToMap(resMap, maVal, `MA${period}`, lastTime, this.CLUSTER_TOLERANCE);
         }
       }
     }
@@ -235,27 +231,11 @@ export class ZoneVoter {
     for (const c of recent) {
       // Кульминационный объём (>2x среднего)
       if (c.volume > avgVolume * 2) {
-        const addZone = (map: Map<number, any>, level: number, reason: string, time: number) => {
-          let clustered = false;
-          for (const [existingLevel, data] of map.entries()) {
-            if (Math.abs(level - existingLevel) / existingLevel <= this.CLUSTER_TOLERANCE) {
-              data.reasons.push(reason);
-              data.touches++;
-              data.lastTouch = Math.max(data.lastTouch, time);
-              clustered = true;
-              break;
-            }
-          }
-          if (!clustered) {
-            map.set(level, { reasons: [reason], touches: 1, lastTouch: time });
-          }
-        };
-
-        const level = c.isBullish ? c.low : c.high;
+                const level = c.isBullish ? c.low : c.high;
         if (c.isBullish) {
-          addZone(supMap, level, 'объёмный климакс (гл. 15)', c.time);
+          addLevelToMap(supMap, level, 'объёмный климакс (гл. 15)', c.time, this.CLUSTER_TOLERANCE);
         } else {
-          addZone(resMap, level, 'объёмный климакс (гл. 15)', c.time);
+          addLevelToMap(resMap, level, 'объёмный климакс (гл. 15)', c.time, this.CLUSTER_TOLERANCE);
         }
       }
     }
@@ -281,28 +261,12 @@ export class ZoneVoter {
       if (c.isLongCandle && c.body > avgBody * 1.5) {
         const mid = (c.open + c.close) / 2;
 
-        const addZone = (map: Map<number, any>, level: number, reason: string, time: number) => {
-          let clustered = false;
-          for (const [existingLevel, data] of map.entries()) {
-            if (Math.abs(level - existingLevel) / existingLevel <= this.CLUSTER_TOLERANCE) {
-              data.reasons.push(reason);
-              data.touches++;
-              data.lastTouch = Math.max(data.lastTouch, time);
-              clustered = true;
-              break;
-            }
-          }
-          if (!clustered) {
-            map.set(level, { reasons: [reason], touches: 1, lastTouch: time });
-          }
-        };
-
-        if (c.isBullish) {
-          addZone(supMap, mid, 'середина длинного белого тела (гл. 2)', c.time);
-          addZone(supMap, c.low, 'основание длинного белого тела (гл. 2)', c.time);
+                if (c.isBullish) {
+          addLevelToMap(supMap, mid, 'середина длинного белого тела (гл. 2)', c.time, this.CLUSTER_TOLERANCE);
+          addLevelToMap(supMap, c.low, 'основание длинного белого тела (гл. 2)', c.time, this.CLUSTER_TOLERANCE);
         } else {
-          addZone(resMap, mid, 'середина длинного чёрного тела (гл. 2)', c.time);
-          addZone(resMap, c.high, 'вершина длинного чёрного тела (гл. 2)', c.time);
+          addLevelToMap(resMap, mid, 'середина длинного чёрного тела (гл. 2)', c.time, this.CLUSTER_TOLERANCE);
+          addLevelToMap(resMap, c.high, 'вершина длинного чёрного тела (гл. 2)', c.time, this.CLUSTER_TOLERANCE);
         }
       }
     }
@@ -330,23 +294,8 @@ export class ZoneVoter {
     const lower = Math.floor(price / step) * step;
     const upper = Math.ceil(price / step) * step;
 
-    const addZone = (map: Map<number, any>, level: number, reason: string) => {
-      let clustered = false;
-      for (const [existingLevel, data] of map.entries()) {
-        if (Math.abs(level - existingLevel) / existingLevel <= this.CLUSTER_TOLERANCE) {
-          data.reasons.push(reason);
-          data.touches++;
-          clustered = true;
-          break;
-        }
-      }
-      if (!clustered) {
-        map.set(level, { reasons: [reason], touches: 1, lastTouch: Date.now() });
-      }
-    };
-
-    addZone(supMap, lower, 'психологический уровень (круглое число)');
-    addZone(resMap, upper, 'психологический уровень (круглое число)');
+    addLevelToMap(supMap, lower, 'психологический уровень (круглое число)', Date.now(), this.CLUSTER_TOLERANCE);
+    addLevelToMap(resMap, upper, 'психологический уровень (круглое число)', Date.now(), this.CLUSTER_TOLERANCE);
   }
 
   /**
