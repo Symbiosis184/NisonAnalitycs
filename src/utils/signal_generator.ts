@@ -8,6 +8,7 @@ import { patternStory } from './patterns';
 import { matchesPatternId, PatternId } from './pattern_ids';
 import { nearestStructuralTarget } from './nison_targets';
 import { resolveSignalStatus, SignalStatus } from './signal_lifecycle';
+import { computeSignalQuality } from './signal_quality';
 
 // Константы
 const TIMEOUT_H1 = 10800; // 3 часа в секундах
@@ -152,6 +153,16 @@ export class SignalGenerator {
     const status = resolveSignalStatus(candles, i, direction, patternCandle.close, bounds, closedCount);
     signal.status = status;
     signal.confirmed = status === 'confirmed';
+
+    // Аудит №12: честная оценка силы сигнала по канону Нисона вместо константы 1.0
+    // (тренд-контекст + объём подтверждения + тело свечи + качество тени + жизненный цикл).
+    signal.quality = computeSignalQuality({
+      direction,
+      pattern: signal.pattern,
+      confirmCandle: patternCandle,
+      priorCandles: candles.slice(0, i),
+      status,
+    });
   }
 
   // Главный метод поиска всех сигналов с жизненным циклом по Нисону
