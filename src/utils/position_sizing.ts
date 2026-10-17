@@ -81,3 +81,22 @@ export function planPosition(input: PositionPlanInput): PositionPlan | null {
 function riskPerCheck(riskPct: number): boolean {
   return riskPct > 1; // риск больше 100% капитала — явная ошибка ввода
 }
+
+/**
+ * Сериализация плана в контракт DTO (аудит №10).
+ * Сигналы с нулевым риском (entry == stop) план не получают — planPosition вернёт null.
+ */
+export function toPlanDTO(plan: PositionPlan | null): import('../api/types').PositionPlanDTO | undefined {
+  if (!plan) return undefined;
+  return {
+    risk_usd: plan.riskUsd,
+    stop_distance_pct: plan.stopDistancePct,
+    qty: plan.qty,
+    notional_usd: plan.notionalUsd,
+    cost_reserve_usd: plan.costReserveUsd,
+    worst_case_loss_usd: plan.worstCaseLossUsd,
+    worst_case_loss_pct: plan.worstCaseLossPct,
+    capped_by_notional: plan.cappedByNotional,
+    leverage: plan.leverage,
+  };
+}

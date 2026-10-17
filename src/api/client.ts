@@ -4,7 +4,9 @@ import { ema, rsi, macd, detectTrend, generateSignal } from '../utils/indicators
 import { detectPatterns, patternStory } from '../utils/patterns';
 import { signalGenerator } from '../utils/signal_generator';
 import { ZoneVoter } from '../utils/zone_voter';
-import { detectTrendStart } from '../utils/trend_detection';
+import { detectTrendStart, getTrendMacro, type TrendContext } from '../utils/trend_detection';
+import { planPosition, toPlanDTO } from '../utils/position_sizing';
+import { loadRiskSettings } from '../utils/risk_settings';
 import type {
   AnalysisReport,
   CandleDTO,
@@ -12,7 +14,9 @@ import type {
   MarketOverviewItem,
   PatternDTO,
   PatternDirection,
+  PositionPlanDTO,
   Regime,
+  RiskSettings,
   SignalDTO,
 } from './types';
 
@@ -23,6 +27,12 @@ const toRegime = (trend: 'бычий' | 'медвежий' | 'нейтральн
 
 const toPatternDirection = (type: 'бычий' | 'медвежий' | 'нейтральный'): PatternDirection =>
   type === 'бычий' ? 'bullish' : type === 'медвежий' ? 'bearish' : 'neutral';
+
+/** Старший таймфрейм для контекста (аудит №9). Неизвестные ТФ → null (без HTF-слоя). */
+export function higherTimeframe(tf: string): string | null {
+  const map: Record<string, string> = { '1': '15', '5': '30', '15': '1H', '30': '4H', '1H': '4H', '4H': 'D', D: 'W' };
+  return map[tf] ?? null;
+}
 
 export class ApiClient {
   async getAnalysis(symbol: string, timeframe: string = 'D'): Promise<AnalysisReport> {
@@ -76,19 +86,54 @@ export class ApiClient {
     
     // Генерация торговых сигналов через SignalGenerator
     const detectedSignals = signalGenerator.findSignals(candles, timeframe);
-    const apiSignals: SignalDTO[] = detectedSignals.map(s => ({
-      direction: s.direction,
-      pattern: s.pattern,
-      entry_price: s.entryPrice,
-      stop_loss: s.stopLoss,
-      target: s.target,
-      risk: s.risk,
-      rr: s.rr,
-      quality: s.quality,
-      timestamp: s.timestamp,
-      confirmed: s.confirmed,
-      story: s.story,
-    }));
+
+    // Аудит №10: план размера позиции по правилу фиксированного риска.
+    // Настройки (капитал/риск) берутся из localStorage; риск-расчёт учитывает издержки цикла.
+    const riskSettings = loadRiskSettings();
+    // Аудит №9: контекст старшего ТФ (HTF) — отдельный запрос кэшируется http-слоем.
+    const htfTf = higherTimeframe(timeframe);
+    let htfCandles: Candle[] | null = null;
+    try {
+      if (!htfTf) throw new Error('no HTF mapping');
+      const htfKlines = await fetchKlines(symbol, htfTf, 250);
+      htfCandles = htfKlines.map((k) => new Candle({
+        time: k.openTime, open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume,
+      }));
+    } catch {
+      htfCandles = null; // нет HTF-данных — не блокируем основной отчёт (fallback в UI)
+    }
+    const htfTrend: TrendContext | null = htfCandles ? getTrendMacro(htfCandles, currentPrice) : null;
+
+    const apiSignals: SignalDTO[] = detectedSignals.map(s => {
+      const plan = toPlanDTO(planPosition({
+        capitalUsd: riskSettings.capitalUsd,
+        riskPct: riskSettings.riskPct,
+        entryPrice: s.entryPrice,
+        stopPrice: s.stopLoss,
+      }));
+      const htf = htfTrend ? {
+        timeframe: htfTf,
+        trend: htfTrend,
+        aligned: htfTrend === 'БОКОВИК'
+          || (s.direction === 'long' && htfTrend === 'ВОСХОДЯЩИЙ')
+          || (s.direction === 'short' && htfTrend === 'НИСХОДЯЩИЙ'),
+      } : undefined;
+      return {
+        direction: s.direction,
+        pattern: s.pattern,
+        entry_price: s.entryPrice,
+        stop_loss: s.stopLoss,
+        target: s.target,
+        risk: s.risk,
+        rr: s.rr,
+        quality: s.quality,
+        timestamp: s.timestamp,
+        confirmed: s.confirmed,
+        story: s.story,
+        ...(htf ? { htf } : {}),
+        ...(plan ? { position_plan: plan } : {}),
+      };
+    });
     
     // priceChange/priceChangePercent в fetch24hTicker уже числа (не строки)
     const change24h = ticker ? ticker.priceChange : currentPrice - candles[candles.length - 2].close;
@@ -208,6 +253,38 @@ export class ApiClient {
     
     return results.filter((r): r is MarketOverviewItem => r !== null);
   }
+
+  /** Аудит №10: пересчёт плана позиции под конкретный капитал/риск (для UI-калькулятора). */
+  planForSignal(signal: SignalDTO, settings: RiskSettings): PositionPlanDTO | undefined {
+    return toPlanDTO(planPosition({
+      capitalUsd: settings.capitalUsd,
+      riskPct: settings.riskPct,
+      entryPrice: signal.entry_price,
+      stopPrice: signal.stop_loss,
+    }));
+  }
 }
 
 export const api = new ApiClient();
+
+// Тестовый хук: подмена источника данных анализа (по умолчанию — реальный ApiClient).
+let analysisProvider: ApiClient | { getAnalysis(symbol: string, timeframe?: string): Promise<AnalysisReport> } = api;
+export function __setAnalysisProvider(p: typeof analysisProvider) {
+  const prev = analysisProvider;
+  analysisProvider = p;
+  return () => { analysisProvider = prev; };
+}
+
+class ApiClientFacade {
+  getAnalysis(symbol: string, timeframe: string = 'D') {
+    return analysisProvider.getAnalysis(symbol, timeframe);
+  }
+  getMarketOverview() {
+    return api.getMarketOverview();
+  }
+  planForSignal(signal: SignalDTO, settings: RiskSettings) {
+    return api.planForSignal(signal, settings);
+  }
+}
+
+export const apiProxy = new ApiClientFacade();

@@ -5,8 +5,46 @@ import { api, type AnalysisReport } from '../api/client';
 import CandlestickChart from '../components/CandlestickChart';
 import { formatPrice } from '../utils/format';
 import { addSignal } from '../utils/signalJournal';
+import { loadRiskSettings, saveRiskSettings, RISK_LIMITS } from '../utils/risk_settings';
 import { isValidSymbol } from '../utils/validation';
 import { describeNetworkError } from '../utils/http';
+import type { RiskSettings } from '../api/types';
+
+/** Аудит №10: панель ввода капитала и риска на сделку (значения нормализуются saveRiskSettings). */
+function RiskSettingsPanel({ settings, onApply }: {
+  settings: RiskSettings;
+  onApply: (capitalUsd: number, riskPct: number) => void;
+}) {
+  const [capital, setCapital] = useState(String(settings.capitalUsd));
+  const [risk, setRisk] = useState((settings.riskPct * 100).toFixed(1));
+  return (
+    <div className="mb-4 p-3 rounded-lg bg-gray-800/40 border border-gray-700/50 flex flex-wrap items-end gap-3 text-sm">
+      <label className="flex flex-col gap-1">
+        <span className="text-xs text-gray-500">Капитал, $ ({RISK_LIMITS.minCapital}–{RISK_LIMITS.maxCapital.toLocaleString('ru-RU')})</span>
+        <input
+          type="number" min={RISK_LIMITS.minCapital} max={RISK_LIMITS.maxCapital} value={capital}
+          onChange={(e) => setCapital(e.target.value)}
+          className="w-36 px-2 py-1 rounded bg-gray-900/60 border border-gray-700 text-white font-mono"
+        />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-xs text-gray-500">Риск на сделку, % ({RISK_LIMITS.minRiskPct * 100}–{RISK_LIMITS.maxRiskPct * 100})</span>
+        <input
+          type="number" step="0.1" min={RISK_LIMITS.minRiskPct * 100} max={RISK_LIMITS.maxRiskPct * 100} value={risk}
+          onChange={(e) => setRisk(e.target.value)}
+          className="w-24 px-2 py-1 rounded bg-gray-900/60 border border-gray-700 text-white font-mono"
+        />
+      </label>
+      <button
+        onClick={() => onApply(Number(capital), Number(risk) / 100)}
+        className="px-3 py-1.5 rounded bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 text-xs font-medium"
+      >
+        Применить
+      </button>
+      <span className="text-[11px] text-gray-500">Планы позиций пересчитаются для всех сигналов.</span>
+    </div>
+  );
+}
 
 export default function Analysis() {
   const rawSymbol = useParams<{ symbol: string }>().symbol;
@@ -16,6 +54,24 @@ export default function Analysis() {
   const [report, setReport] = useState<AnalysisReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Аудит №10: риск-настройки пользователя (капитал/риск на сделку) — localStorage
+  const [riskSettings, setRiskSettings] = useState(loadRiskSettings);
+  const [showRiskPanel, setShowRiskPanel] = useState(false);
+
+  const applyRiskSettings = (capitalUsd: number, riskPct: number) => {
+    const clean = saveRiskSettings({ capitalUsd, riskPct });
+    setRiskSettings(clean);
+    // Пересчитываем планы позиций уже загруженных сигналов без нового сетевого запроса
+    setReport((prev) => prev && ({
+      ...prev,
+      signals: prev.signals.map((s) => {
+        const plan = api.planForSignal(s, clean);
+        const next = { ...s };
+        delete next.position_plan;
+        return plan ? { ...next, position_plan: plan } : next;
+      }),
+    }));
+  };
 
   const loadAnalysis = async () => {
     if (!symbol) return;
@@ -358,7 +414,17 @@ export default function Analysis() {
             <span className="text-xs text-gray-500 font-normal ml-2">
               ({report.signals.filter((s) => s.confirmed).length} из {report.signals.length})
             </span>
+            {/* Аудит №10: редактор риск-настроек для расчёта размера позиции */}
+            <button
+              onClick={() => setShowRiskPanel((v) => !v)}
+              className="ml-auto px-2 py-1 rounded text-xs font-medium bg-gray-800/60 text-gray-300 hover:text-white border border-gray-700/50"
+            >
+              Риск: {(riskSettings.riskPct * 100).toFixed(1)}% · {riskSettings.capitalUsd.toLocaleString('ru-RU')} $
+            </button>
           </h3>
+          {showRiskPanel && (
+            <RiskSettingsPanel settings={riskSettings} onApply={applyRiskSettings} />
+          )}
           <div className="space-y-3">
             {report.signals.filter((signal) => signal.confirmed).map((signal, idx: number) => (
               <div
@@ -426,12 +492,56 @@ export default function Analysis() {
                     <span className="text-gray-500">Риск </span>
                     <span className="text-white font-mono">{(signal.risk * 100).toFixed(2)}%</span>
                   </div>
+                  {signal.htf && (
+                    <div title={`Тренд старшего ТФ (${signal.htf.timeframe}): ${signal.htf.trend}`}>
+                      <span className="text-gray-500">HTF {signal.htf.timeframe} </span>
+                      <span className={signal.htf.aligned ? 'text-green-400' : 'text-orange-400'}>
+                        {signal.htf.aligned ? '✓ согласован' : '⚠ против'}
+                      </span>
+                    </div>
+                  )}
                   {signal.confirmed && (
                     <span className="px-2 py-1 rounded bg-green-500/10 text-green-400">
                       ✓ Подтверждён
                     </span>
                   )}
                 </div>
+
+                {/* Аудит №10: план размера позиции по правилу фиксированного риска */}
+                {signal.position_plan && (
+                  <div className="mt-3 p-3 rounded-lg bg-gray-800/30 border border-gray-700/40">
+                    <div className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+                      <Activity className="w-3 h-3" />
+                      План позиции ({riskSettings.capitalUsd.toLocaleString('ru-RU')} $, риск {(riskSettings.riskPct * 100).toFixed(1)}%)
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                      <div>
+                        <div className="text-gray-500">Объём</div>
+                        <div className="font-mono text-white">{signal.position_plan.qty.toFixed(6)}</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-500">Номинал</div>
+                        <div className="font-mono text-white">{Math.round(signal.position_plan.notional_usd).toLocaleString('ru-RU')} $</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-500">Убыток по стопу</div>
+                        <div className="font-mono text-red-400">
+                          −{Math.round(signal.position_plan.worst_case_loss_usd).toLocaleString('ru-RU')} $
+                          {' '}({signal.position_plan.worst_case_loss_pct.toFixed(2)}%)
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-gray-500">Издержки цикла</div>
+                        <div className="font-mono text-yellow-400">{Math.round(signal.position_plan.cost_reserve_usd)} $</div>
+                      </div>
+                    </div>
+                    {signal.position_plan.capped_by_notional && (
+                      <div className="text-[11px] text-orange-400 mt-1">
+                        ⚠ Объём ограничен потолком номинала — фактический риск меньше заявленного.
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {signal.story && (
                   <div className="mt-3 p-3 rounded bg-gray-800/30 text-xs text-gray-400">

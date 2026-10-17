@@ -43,6 +43,20 @@ export interface SignalDTO {
   timestamp: number;
   confirmed: boolean;
   story: string;
+  /** Контекст старшего таймфрейма (аудит №9): тренд на HTF в момент сигнала */
+  htf?: {
+    timeframe: string;
+    trend: Regime;
+    aligned: boolean; // сигнал совпадает с трендом HTF (или HTF = БОКОВИК — нейтрально)
+  };
+  /** План размера позиции по правилу фиксированного риска (аудит №10, utils/position_sizing) */
+  position_plan?: PositionPlanDTO;
+}
+
+/** Настройки риск-менеджмента пользователя (localStorage «nison_risk_settings») */
+export interface RiskSettings {
+  capitalUsd: number; // депозит в USDT
+  riskPct: number;    // риск на сделку, доля капитала (0.01 = 1%)
 }
 
 /** План позиции по правилу фиксированного риска (utils/position_sizing) */
