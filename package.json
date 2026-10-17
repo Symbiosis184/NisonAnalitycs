@@ -1,0 +1,19 @@
+{
+  "name": "nison-analytics",
+  "version": "0.1.0",
+  "description": "SPA-дашборд крипто-трейдинга по методологии Стива Нисона: анализ, журнал, position sizing, учёт издержек, бэктест",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite-node scripts/preview.ts",
+    "preview:web": "vite --port 3000 --host 0.0.0.0 ."
+  },
+  "dependencies": {
+    "typescript": "5.6",
+    "vitest": "^2.1.9"
+  },
+  "type": "module"
+}
