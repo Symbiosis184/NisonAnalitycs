@@ -111,7 +111,7 @@ export class ApiClient {
         entryPrice: s.entryPrice,
         stopPrice: s.stopLoss,
       }));
-      const htf = htfTrend ? {
+      const htf = (htfTrend && htfTf) ? {
         timeframe: htfTf,
         trend: htfTrend,
         aligned: htfTrend === 'БОКОВИК'
