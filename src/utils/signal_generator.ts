@@ -64,11 +64,19 @@ export class SignalGenerator {
     candle: Candle,
     closedCandles: Candle[],
     tf: string,
-    quality: number = 1.0
+    quality: number = 1.0,
+    boundsOverride?: { patternLow: number; patternHigh: number; patternCandlesCount?: number; patternStartIdx?: number; patternEndIdx?: number }
   ): Signal | null {
-    // Книжные границы формации
+    // Книжные границы формации (FIX аудита №4: берём ГРАНИЦЫ ПАТТЕРНА, а не одной свечи)
     const endIdx = closedCandles.length - 1;
     const bounds = PatternDetector.getFormationBounds(pattern, closedCandles, endIdx);
+    if (boundsOverride) {
+      bounds.patternLow = boundsOverride.patternLow;
+      bounds.patternHigh = boundsOverride.patternHigh;
+      if (boundsOverride.patternCandlesCount !== undefined) bounds.patternCandlesCount = boundsOverride.patternCandlesCount;
+      if (boundsOverride.patternStartIdx !== undefined) bounds.patternStartIdx = boundsOverride.patternStartIdx;
+      if (boundsOverride.patternEndIdx !== undefined) bounds.patternEndIdx = boundsOverride.patternEndIdx;
+    }
     const bookStop = direction === 'long' ? bounds.patternLow : bounds.patternHigh;
 
     // Проверка реалистичности стопа
@@ -80,44 +88,47 @@ export class SignalGenerator {
       return null; // Сигнал нереалистичен
     }
 
+    // FIX аудита №6: ATR-пол — минимальная дистанция цели от шума.
+    // Зона S/R ближе половины ATR к цене входа игнорируется как «не цель, а шум».
+    const atrValue = atr(closedCandles, 14);
+    const minReward = Math.max(candle.close * 0.01, atrValue * 1.0);
+    const maxReward = candle.close * 0.20;
+
     // Расчёт цели по зонам Нисона с улучшенной логикой
     const zones = ZoneVoter.collect(candle.close, closedCandles);
     let target: number;
     
     if (direction === 'long') {
-      // Ищем сильную зону сопротивления выше цены входа
+      // Ищем сильную зону сопротивления выше цены входа (с АТR-полом)
       const candidates = zones.resistance
-        .filter((z) => z.level > candle.close && z.strong)
+        .filter((z) => z.level - candle.close >= minReward && z.level - candle.close <= maxReward && z.strong)
         .sort((a, b) => a.level - b.level); // Ближайшая сильная зона
       
       if (candidates.length > 0) {
         target = candidates[0].level;
       } else {
         // Если сильных зон нет, используем ATR для расчёта цели
-        const atrValue = atr(closedCandles, 14);
         target = candle.close + (atrValue * 3); // Цель = 3 ATR
       }
     } else {
-      // Ищем сильную зону поддержки ниже цены входа
+      // Ищем сильную зону поддержки ниже цены входа (с АТR-полом)
       const candidates = zones.support
-        .filter((z) => z.level < candle.close && z.strong)
+        .filter((z) => candle.close - z.level >= minReward && candle.close - z.level <= maxReward && z.strong)
         .sort((a, b) => b.level - a.level); // Ближайшая сильная зона
       
       if (candidates.length > 0) {
         target = candidates[0].level;
       } else {
         // Если сильных зон нет, используем ATR для расчёта цели
-        const atrValue = atr(closedCandles, 14);
         target = candle.close - (atrValue * 3); // Цель = 3 ATR
       }
     }
 
     // Проверка реалистичности цели
     const reward = Math.abs(target - candle.close);
-    const rewardPercent = reward / candle.close;
     
-    // Цель не должна быть слишком близко (< 1%) или слишком далеко (> 20%)
-    if (rewardPercent < 0.01 || rewardPercent > 0.20) {
+    // Цель должна быть в разумном диапазоне относительно входа и стопа
+    if (reward < minReward || reward > maxReward) {
       return null; // Сигнал нереалистичен
     }
 
@@ -144,7 +155,12 @@ export class SignalGenerator {
     };
   }
 
-  // Проверка подтверждения паттерна следующей свечой (методология Нисона)
+  // Проверка подтверждения паттерна следующей свечой (методология Нисона).
+  // FIX аудита №3: раньше требовалось закрытие ВЫШЕ максимума всей формации для лонга —
+  // это отсекало почти все бычьи развороты (утренняя звезда закрывается ниже хая первой свечи).
+  // Канон Нисона: подтверждение = продолжение движения в сторону сигнала
+  // (бычья свеча, закрывшаяся выше close сигнальной свечи для лонга; зеркально для шорта)
+  // ИЛИ пробой «шеи» формации. Плюс стоп-уровень формации не должен быть пробит.
   private checkConfirmation(
     direction: 'long' | 'short',
     patternCandle: Candle,
@@ -152,11 +168,19 @@ export class SignalGenerator {
     bounds: { patternLow: number; patternHigh: number }
   ): boolean {
     if (direction === 'long') {
-      // Для бычьего паттерна: следующая свеча должна быть бычьей и закрыться выше максимума всей формации
-      return confirmationCandle.isBullish && confirmationCandle.close > bounds.patternHigh;
+      // Бычье подтверждение: свеча бычья, закрылась выше close сигнальной свечи
+      // (или выше максимума формации — усиленный вариант), и стоп формации не пробит.
+      const heldStop = confirmationCandle.low > bounds.patternLow;
+      const progressed =
+        confirmationCandle.isBullish && confirmationCandle.close > patternCandle.close;
+      const breakout = confirmationCandle.close > bounds.patternHigh;
+      return heldStop && (progressed || breakout);
     } else {
-      // Для медвежьего паттерна: следующая свеча должна быть медвежьей и закрыться ниже минимума всей формации
-      return confirmationCandle.isBearish && confirmationCandle.close < bounds.patternLow;
+      const heldStop = confirmationCandle.high < bounds.patternHigh;
+      const progressed =
+        confirmationCandle.isBearish && confirmationCandle.close < patternCandle.close;
+      const breakdown = confirmationCandle.close < bounds.patternLow;
+      return heldStop && (progressed || breakdown);
     }
   }
 
@@ -215,17 +239,23 @@ export class SignalGenerator {
             if (direction === 'long' && patternTrend === 'НИСХОДЯЩИЙ') continue;
             if (direction === 'short' && patternTrend === 'ВОСХОДЯЩИЙ') continue;
           }
+
+          // FIX аудита №4/№5: границы формации считаем ОДИН раз — на полном массиве
+          // candles со смещением endIdx=i (для многокомпонентных паттернов это срез
+          // closed, поэтому endIdx = i корректно только при вызове на candles).
+          const bounds = PatternDetector.getFormationBounds(check.name, candles, i);
           
-          const signal = this.makeSignal(direction, check.name, patternCandle, closed, tf);
+          const signal = this.makeSignal(direction, check.name, patternCandle, closed, tf, 1.0, bounds);
           
           // Пропускаем если сигнал нереалистичен
           if (!signal) continue;
           
-          // Правильный расчёт границ формации для многокомпонентных паттернов
-          const bounds = PatternDetector.getFormationBounds(check.name, candles, i);
+          // FIX аудита №3: подтверждение следующей свечой (канон Нисона)
           signal.confirmed = this.checkConfirmation(direction, patternCandle, nextCandle, bounds);
           
-          if (signal.confirmed && signal.rr >= 2) {
+          // FIX аудита №7: раньше неподтверждённые сигналы молча выбрасывались —
+          // пользователь не видел «почти-сигналов». Теперь они возвращаются с confirmed=false.
+          if (signal.rr >= 2) {
             signals.push(signal);
           }
         }
@@ -262,18 +292,20 @@ export class SignalGenerator {
               if (direction === 'long' && patternTrend === 'НИСХОДЯЩИЙ') continue;
               if (direction === 'short' && patternTrend === 'ВОСХОДЯЩИЙ') continue;
             }
+
+            // FIX аудита №4/№5: единые границы формации для стопа, мета и подтверждения
+            const bounds = PatternDetector.getFormationBounds(check.name, candles, i);
             
-            const signal = this.makeSignal(direction, check.name, patternCandle, closed, tf);
+            const signal = this.makeSignal(direction, check.name, patternCandle, closed, tf, 1.0, bounds);
             
             // Пропускаем если сигнал нереалистичен
             if (!signal) continue;
             
-            // Правильный расчёт границ формации
-            // Для двухсвечного паттерна: prevCandle (i-1) и patternCandle (i)
-            const bounds = PatternDetector.getFormationBounds(check.name, candles, i);
+            // FIX аудита №3: подтверждение следующей свечой (канон Нисона)
             signal.confirmed = this.checkConfirmation(direction, patternCandle, nextCandle, bounds);
             
-            if (signal.confirmed && signal.rr >= 2) {
+            // FIX аудита №7: неподтверждённые сигналы возвращаются с confirmed=false
+            if (signal.rr >= 2) {
               signals.push(signal);
             }
           }
@@ -300,26 +332,34 @@ export class SignalGenerator {
             if (direction === 'long' && patternTrend === 'НИСХОДЯЩИЙ') continue;
             if (direction === 'short' && patternTrend === 'ВОСХОДЯЩИЙ') continue;
           }
+
+          // FIX аудита №4/№5: единые границы формации (для односвечных = high/low самой свечи)
+          const bounds = PatternDetector.getFormationBounds(check.name, candles, i);
           
-          const signal = this.makeSignal(direction, check.name, patternCandle, closed, tf);
+          const signal = this.makeSignal(direction, check.name, patternCandle, closed, tf, 1.0, bounds);
           
           // Пропускаем если сигнал нереалистичен
           if (!signal) continue;
           
-          // Правильный расчёт границ формации для односвечных паттернов
-          const bounds = PatternDetector.getFormationBounds(check.name, candles, i);
+          // FIX аудита №3: подтверждение следующей свечой (канон Нисона)
           signal.confirmed = this.checkConfirmation(direction, patternCandle, nextCandle, bounds);
           
-          if (signal.confirmed && signal.rr >= 2) {
+          // FIX аудита №7: неподтверждённые сигналы возвращаются с confirmed=false
+          if (signal.rr >= 2) {
             signals.push(signal);
           }
         }
       }
     }
 
-    // Сортируем по качеству и возвращаем топ-5
+    // FIX аудита №8: детерминированная сортировка — сначала подтверждённые,
+    // затем по качеству, затем по RR (стабильный порядок для UI и бэктеста).
     return signals
-      .sort((a, b) => b.quality - a.quality)
+      .sort((a, b) =>
+        Number(b.confirmed) - Number(a.confirmed) ||
+        b.quality - a.quality ||
+        b.rr - a.rr
+      )
       .slice(0, 5);
   }
 

@@ -27,25 +27,17 @@ export class ZoneVoter {
   private static readonly STRONG_ZONE_MIN_VOTES = 3;
 
   /**
-   * Сбор всех зон с голосованием
+   * Сбор всех зон с голосованием.
+   * FIX аудита №1: уровни классифицируются как поддержка/сопротивление ОТНОСИТЕЛЬНО
+   * каждой последующей свечи (касание), а не по положению относительно текущей цены.
+   * Это даёт реальные касания (touches) вместо «все свинги ниже цены = поддержка».
    */
   static collect(price: number, candles: Candle[]): { support: Zone[]; resistance: Zone[] } {
     const supMap = new Map<number, ZoneClusterData>();
     const resMap = new Map<number, ZoneClusterData>();
 
-    // П.7: кластеризация уровней — общая реализация из levels.ts (см. addLevelToMap),
-    // идентичная той, что использует SupportResistance через тот же модуль.
-    const addZone = (
-      map: Map<number, ZoneClusterData>,
-      level: number,
-      reason: string,
-      touchTime: number = candles[candles.length - 1].time
-    ) => {
-      addLevelToMap(map, level, reason, touchTime, this.CLUSTER_TOLERANCE);
-    };
-
-    // 1. Свинг-минимумы и максимумы (главный источник по Нисону)
-    this.addSwingLevels(candles, supMap, resMap);
+    // 1. Касательная классификация: уровень + число касаний ценой после его образования
+    this.addTouchBasedLevels(price, candles, supMap, resMap);
 
     // 2. Полярность: пробитые уровни меняют роль
     this.addPolarityLevels(price, candles, supMap, resMap);
@@ -75,28 +67,77 @@ export class ZoneVoter {
   }
 
   /**
-   * 1. Свинг-минимумы и максимумы
-   * По Нисону: локальные экстремумы - основные уровни S/R
+   * 1+2. Касательная классификация свинг-уровней (FIX аудита №1/№2).
+   * По Нисону уровень — это ЗОНА, многократно оттестированная ценой. Поэтому:
+   *  • берём свинги из единого детектора levels.ts;
+   *  • для каждого уровня смотрим только свечи ПОСЛЕ его образования (без lookahead);
+   *  • касание поддержки: low <= zone*(1+tol) и close > zone (цена отскочила снизу вверх);
+   *  • касание сопротивления: high >= zone*(1-tol) и close < zone (отбой сверху вниз);
+   *  • если зона была пробита ЗАКРЫТИЕМ (≥0.3% за уровнем) — срабатывает полярность
+   *    (гл. 11): пробитое сопротивление становится поддержкой и наоборот.
    */
-  private static addSwingLevels(
+  private static addTouchBasedLevels(
+    price: number,
     candles: Candle[],
     supMap: Map<number, ZoneClusterData>,
     resMap: Map<number, ZoneClusterData>
   ) {
-    // П.7: единый свинг-детектор из levels.ts (тот же, что у SupportResistance)
-    const lookback = Math.min(100, candles.length);
+    const lookback = Math.min(150, candles.length);
+    const tol = this.CLUSTER_TOLERANCE;
+
+    // Сначала группируем свинги в зоны (кластеризация), помня самый ранний индекс каждой зоны.
+    // В одну зону сливаются и свинг-минимумы, и свинг-максимумы: касания считаются отдельно.
+    const zoneDefs: Array<{ level: number; firstIndex: number }> = [];
     for (const swing of findSwings(candles, lookback)) {
-      if (swing.type === 'low') {
-        addLevelToMap(supMap, swing.level, 'свинг-минимум', swing.time, this.CLUSTER_TOLERANCE);
+      const hit = zoneDefs.find((z) => Math.abs(swing.level - z.level) / z.level <= tol);
+      if (hit) {
+        hit.firstIndex = Math.min(hit.firstIndex, swing.index);
       } else {
-        addLevelToMap(resMap, swing.level, 'свинг-максимум', swing.time, this.CLUSTER_TOLERANCE);
+        zoneDefs.push({ level: swing.level, firstIndex: swing.index });
+      }
+    }
+
+    for (const zone of zoneDefs) {
+      let supTouches = 0;
+      let resTouches = 0;
+      let lastSupTime = 0;
+      let lastResTime = 0;
+
+      for (let j = zone.firstIndex + 1; j < candles.length; j++) {
+        const c = candles[j];
+        // Поддержка: коснулась зоны и закрылась ВЫШЕ уровня
+        if (c.low <= zone.level * (1 + tol) && c.close > zone.level) {
+          supTouches++;
+          lastSupTime = c.time;
+        }
+        // Сопротивление: коснулась зоны и закрылась НИЖЕ уровня
+        // (проверяется независимо — свеча может дать оба сигнала на разных участках)
+        if (c.high >= zone.level * (1 - tol) && c.close < zone.level) {
+          resTouches++;
+          lastResTime = c.time;
+        }
+      }
+
+      // Классификация относительно ТЕКУЩЕЙ цены для финального отображения:
+      // зона остаётся поддержкой, если она ниже цены ИЛИ имеет больше касаний-поддержки;
+      // аналогично для сопротивления. Уровни без касаний после образования не голосуются.
+      const asSupport = supTouches > 0 && (zone.level <= price || supTouches > resTouches);
+      const asResistance = resTouches > 0 && (zone.level >= price || resTouches > supTouches);
+
+      if (asSupport) {
+        addLevelToMap(supMap, zone.level, `свинг-зона: ${supTouches} касание(й) поддержки`, lastSupTime, tol);
+      }
+      if (asResistance) {
+        addLevelToMap(resMap, zone.level, `свинг-зона: ${resTouches} касание(й) сопротивления`, lastResTime, tol);
       }
     }
   }
 
   /**
    * 2. Полярность: пробитые уровни меняют роль
-   * По Нисону (глава 11): "Пробитое сопротивление становится поддержкой"
+   * По Нисону (глава 11): "Пробитое сопротивление становится поддержкой".
+   * FIX аудита №2: пробой подтверждается ЗАКРЫТИЕМ свечи за уровнем (≥0.3%),
+   * а не тенью/мигом; учитывается только закрытие последней свечи против зоны.
    */
   private static addPolarityLevels(
     price: number,
@@ -104,20 +145,30 @@ export class ZoneVoter {
     supMap: Map<number, ZoneClusterData>,
     resMap: Map<number, ZoneClusterData>
   ) {
-    // П.7: единый свинг-детектор из levels.ts
-    const lookback = Math.min(100, candles.length);
+    if (candles.length < 6) return;
+    const lookback = Math.min(150, candles.length);
     const swings = findSwings(candles, lookback);
+    const last = candles[candles.length - 1];
+    const BREAK_PCT = 0.003;
 
-    // Проверяем полярность
     for (const swing of swings) {
-      if (swing.type === 'high' && price > swing.level) {
-        // Пробитое сопротивление -> поддержка
-        addLevelToMap(supMap, swing.level, 'полярность: пробитое сопротивление → поддержка', swing.time, this.CLUSTER_TOLERANCE);
-      }
-
-      if (swing.type === 'low' && price < swing.level) {
-        // Пробитая поддержка -> сопротивление
-        addLevelToMap(resMap, swing.level, 'полярность: пробитая поддержка → сопротивление', swing.time, this.CLUSTER_TOLERANCE);
+      // Индекс свинга +2 — минимум подтверждений экстремума; проверяем закрытия после него
+      const fromIdx = Math.max(swing.index + 1, candles.length - 40);
+      if (swing.type === 'high') {
+        const brokeUp = candles.slice(fromIdx).some(
+          (c) => c.close > swing.level * (1 + BREAK_PCT) && last.close > swing.level * (1 + BREAK_PCT)
+        );
+        if (brokeUp && last.close > swing.level) {
+          // Пробитое сопротивление -> поддержка (только если цена УВЕРЕННО выше)
+          addLevelToMap(supMap, swing.level, 'полярность: пробитое сопротивление → поддержка', last.time, this.CLUSTER_TOLERANCE);
+        }
+      } else {
+        const brokeDown = candles.slice(fromIdx).some(
+          (c) => c.close < swing.level * (1 - BREAK_PCT) && last.close < swing.level * (1 - BREAK_PCT)
+        );
+        if (brokeDown && last.close < swing.level) {
+          addLevelToMap(resMap, swing.level, 'полярность: пробитая поддержка → сопротивление', last.time, this.CLUSTER_TOLERANCE);
+        }
       }
     }
   }
