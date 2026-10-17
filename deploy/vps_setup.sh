@@ -8,37 +8,47 @@ REPO="https://github.com/Symbiosis184/NisonAnalitycs.git"
 WEB_ROOT="/var/www/nison-analytics"
 BUILD_DIR="/opt/nison-build"
 
-echo "==> 1/5 Установка пакетов (nginx, git)"
+echo "==> 1/6 Установка пакетов (nginx, git, curl)"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-if ! command -v nginx >/dev/null 2>&1; then
-    apt-get install -y -qq nginx git curl ca-certificates || {
-        echo "Установка nginx прервалась — донастраиваем dpkg"; 
-        dpkg --configure -a; apt-get install -y -qq nginx git curl ca-certificates; }
-else
-    apt-get install -y -qq git curl ca-certificates
-fi
+apt-get install -y -qq nginx git curl ca-certificates gnupg || {
+    echo "Установка прервалась — донастраиваем dpkg и повторяем";
+    dpkg --configure -a; apt-get install -y -qq nginx git curl ca-certificates gnupg; }
 
-echo "==> 2/5 Фикс IPv6 в типовом конфиге nginx (если IPv6 не поддерживается)"
+echo "==> 2/6 Node.js 22 LTS (нужен для сборки фронтенда)"
+if ! command -v npm >/dev/null 2>&1; then
+    if [ ! -f /etc/apt/sources.list.d/nodesource.list ]; then
+        mkdir -p /etc/apt/keyrings
+        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+            | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+        echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
+            > /etc/apt/sources.list.d/nodesource.list
+    fi
+    apt-get update -qq
+    apt-get install -y -qq nodejs
+fi
+echo "    node $(node -v), npm $(npm -v)"
+
+echo "==> 3/6 Фикс IPv6 в типовом конфиге nginx (если IPv6 не поддерживается)"
 if ! ip -6 addr show lo >/dev/null 2>&1 || [ ! -e /proc/net/if_inet6 ]; then
     sed -ri 's/^(\s*)listen\s+\[::\]:80.*;/\1# disabled (no IPv6): &/' /etc/nginx/sites-available/default 2>/dev/null || true
 fi
 dpkg --configure -a 2>/dev/null || true
 
-echo "==> 3/5 Сборка фронтенда из GitHub (main)"
+echo "==> 4/6 Сборка фронтенда из GitHub (main)"
 rm -rf "$BUILD_DIR"
 git clone --depth 50 "$REPO" -b main "$BUILD_DIR"
 cd "$BUILD_DIR"
 npm ci --silent --no-audit --no-fund
 npm run build
 
-echo "==> 4/5 Публикация статики в $WEB_ROOT"
+echo "==> 5/6 Публикация статики в $WEB_ROOT"
 mkdir -p "$WEB_ROOT"
 rm -rf "${WEB_ROOT:?}/"*
 cp -r dist/* "$WEB_ROOT/"
 chown -R www-data:www-data "$WEB_ROOT" && chmod -R a+rX "$WEB_ROOT"
 
-echo "==> 5/5 Конфиг сайта nginx + запуск"
+echo "==> 6/6 Конфиг сайта nginx + запуск"
 cat > /etc/nginx/sites-available/nison <<'EOF'
 server {
     listen 80 default_server;
