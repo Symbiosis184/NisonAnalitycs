@@ -1,7 +1,9 @@
 node_modules/
-.next/
-dist/
-build/
+
+# артефакты сборки/деплоя
+/dist/
+/nison-dist.tar.gz
+dev-server.log
 *.log
 
 # OS/editor
