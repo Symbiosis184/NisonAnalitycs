@@ -9,10 +9,13 @@ import { planPosition, toPlanDTO } from '../utils/position_sizing';
 import { loadRiskSettings } from '../utils/risk_settings';
 import { detectPhase } from '../utils/wyckoff';
 import { buildVolumeProfile, summarizeDelta } from '../utils/volume_profile';
+import { runBacktest, type FormationBounds } from '../utils/backtest';
+import { tagTradesByRegime, detectDegradation, statsByRegime, edgeVerdict } from '../utils/edge_verification';
 import type {
   AnalysisReport,
   CandleDTO,
   ConsensusDTO,
+  EdgeReportDTO,
   MarketOverviewItem,
   PatternDTO,
   PatternDirection,
@@ -29,6 +32,87 @@ const toRegime = (trend: 'бычий' | 'медвежий' | 'нейтральн
 
 const toPatternDirection = (type: 'бычий' | 'медвежий' | 'нейтральный'): PatternDirection =>
   type === 'бычий' ? 'bullish' : type === 'медвежий' ? 'bearish' : 'neutral';
+
+/**
+ * Верификация преимущества (edge) на истории инструмента (запрос пользователя, пункт 3):
+ * one-at-a-time прогон генератора по закрытым свечам → эмпирический бэктест →
+ * когорты по режимам рынка + мониторинг деградации за последние 90 дней.
+ * Только данные до момента каждой сделки — без lookahead. Возвращает null, если
+ * наблюдений слишком мало для честного вывода (UI покажет статус ожидания).
+ */
+function computeEdgeReport(candles: Candle[], timeframe: string): EdgeReportDTO | null {
+  const MIN_EVENTS = 5; // минимум срабатываний для запуска тяжёлого прогона
+  try {
+    // 1) Собираем «свежие» срабатывания детектора (signal formed at candle i).
+    const events: Array<{ i: number; pattern: string; direction: 'long' | 'short'; bounds: FormationBounds }> = [];
+    for (let i = 60; i < candles.length; i++) {
+      const sigs = signalGenerator.findSignals(candles.slice(0, i + 1), timeframe);
+      for (const s of sigs) {
+        if (s.meta.patternEndIdx !== i) continue;
+        events.push({
+          i,
+          pattern: s.pattern,
+          direction: s.direction,
+          bounds: { patternLow: s.meta.patternLow, patternHigh: s.meta.patternHigh },
+        });
+      }
+      if (events.length > 400) break; // страховка от quadratic-стоимости на длинных окнах
+    }
+    if (events.length < MIN_EVENTS) return null;
+
+    // 2) Один общий прогон: детектор возвращает границы того события, чья свеча — текущая.
+    const detect = (_hist: Candle[], idx: number): FormationBounds | null => {
+      const hit = events.find((e) => e.i === idx);
+      return hit ? hit.bounds : null;
+    };
+    const res = runBacktest(candles, { detect, direction: 'long', maxHoldingBars: 60 });
+    if (res.trades.length < MIN_EVENTS) return null;
+
+    // 3) Режим рынка на момент входа каждой сделки (только история ДО входа).
+    const tagged = tagTradesByRegime(candles, res.trades);
+    const cohorts = statsByRegime(tagged);
+    // entryTime в бэктесте наследует candle.time — в миллисекундах (bybit openTime), isMs=true
+    const degradation = detectDegradation(res.trades.map((t) => ({ entryTime: t.entryTime, netR: t.netR })), Date.now(), true);
+    const verdict = edgeVerdict(cohorts, degradation);
+
+    return {
+      verdict: verdict.verdict,
+      summary: verdict.summary,
+      best_cohort: verdict.bestCohort ? verdict.bestCohort.label : null,
+      cohorts: cohorts.map((c) => ({
+        cohort: c.cohort,
+        label: c.label,
+        trades: c.trades,
+        wins: c.wins,
+        win_rate: c.winRate,
+        ci_low: c.ciLow,
+        ci_high: c.ciHigh,
+        avg_net_r: c.avgNetR,
+        total_net_r: c.totalNetR,
+        exp_ci_low: c.expectancy.ciLow,
+        exp_ci_high: c.expectancy.ciHigh,
+        has_edge: c.hasEdge,
+      })),
+      degradation: {
+        window_days: degradation.windowDays,
+        recent_trades: degradation.recentTrades,
+        history_trades: degradation.historyTrades,
+        recent_expectancy: degradation.recentExpectancy,
+        history_expectancy: degradation.historyExpectancy,
+        delta: degradation.delta,
+        z_score: degradation.zScore,
+        p_value: degradation.pValue,
+        degraded: degradation.degraded,
+        insufficient_data: degradation.insufficientData,
+        note: degradation.note,
+      },
+      source: 'backtest',
+      sample_trades: res.trades.length,
+    };
+  } catch {
+    return null; // edge-статистика не должна ронять основной отчёт
+  }
+}
 
 /** Старший таймфрейм для контекста (аудит №9). Неизвестные ТФ → null (без HTF-слоя). */
 export function higherTimeframe(tf: string): string | null {
@@ -91,6 +175,10 @@ export class ApiClient {
     // свечам до текущего момента — без lookahead.
     const vprofile = buildVolumeProfile(candles, 120);
     const deltaSummary = summarizeDelta(candles, 60);
+
+    // Верификация преимущества (пункт 3 запроса): когорты по режимам + деградация 90д.
+    // Считается на той же истории без lookahead; при нехватке наблюдений — null.
+    const edgeReport = computeEdgeReport(candles, timeframe);
 
     // Генерация торговых сигналов через SignalGenerator
     // opts.context включает «путь цены» (S/R-зоны + HVN) и фазы Вайкоффа в фильтрацию RR.
@@ -224,12 +312,14 @@ export class ApiClient {
         val: vprofile.val,
         hvn: vprofile.hvn.map((b) => ({ low: b.low, high: b.high, volume: b.volume })),
         lvn: vprofile.lvn.map((b) => ({ low: b.low, high: b.high, volume: b.volume })),
+        bins: vprofile.bins.map((b) => ({ low: b.low, high: b.high, volume: b.volume, share: b.share })),
       },
       delta_summary: {
         cumulative_delta: deltaSummary.cumulativeDelta,
         buy_pressure_share: deltaSummary.buyPressureShare,
         avg_clv: deltaSummary.avgClv,
         delta_trend: deltaSummary.deltaTrend,
+        points: deltaSummary.points.map((p) => ({ time: p.time, delta: p.delta, clv: p.clv, imbalance: p.imbalance })),
       },
       consensus: {
         score: confidence / 20,
@@ -241,6 +331,7 @@ export class ApiClient {
         trendStart: detectTrendStart(candles, currentPrice),
         bookTrend: regime,
       },
+      ...(edgeReport ? { edge: edgeReport } : {}),
       generated: Date.now(),
     };
   }

@@ -3,6 +3,8 @@ import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, TrendingUp, TrendingDown, Activity, AlertTriangle, RefreshCw, Target, Shield, BarChart2 } from 'lucide-react';
 import { api, type AnalysisReport } from '../api/client';
 import CandlestickChart from '../components/CandlestickChart';
+import { VolumeProfileChart, DeltaChart } from '../components/VolumeProfilePanel';
+import { WyckoffPhasePanel, PricePathCard, EdgeVerificationPanel } from '../components/MarketContextPanels';
 import { formatPrice } from '../utils/format';
 import { addSignal } from '../utils/signalJournal';
 import { STATUS_LABEL } from '../utils/signal_lifecycle';
@@ -64,6 +66,8 @@ export default function Analysis() {
   const [report, setReport] = useState<AnalysisReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Визуализация: активный сигнал, чей «путь цены» оверлеем на профиле объёма
+  const [activePathSignalIdx, setActivePathSignalIdx] = useState(0);
   // Аудит №10: риск-настройки пользователя (капитал/риск на сделку) — localStorage
   const [riskSettings, setRiskSettings] = useState(loadRiskSettings);
   const [showRiskPanel, setShowRiskPanel] = useState(false);
@@ -165,6 +169,11 @@ export default function Analysis() {
     if (score >= 2) return 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20';
     return 'text-red-400 bg-red-500/10 border-red-500/20';
   };
+
+  // Сигналы с рассчитанным «путём цены» — для selectable-оверлея на профиле объёма
+  const pathSignals = report.signals.filter((s) => s.path);
+  const activePathSignal =
+    activePathSignalIdx >= 0 ? pathSignals[Math.min(activePathSignalIdx, pathSignals.length - 1)] : undefined;
 
   return (
     <div className="space-y-6">
@@ -278,6 +287,71 @@ export default function Analysis() {
           height={chartHeight}
         />
       </div>
+
+      {/* 2.5 КОНТЕКСТ РЫНКА: фазы Вайкоффа + профиль объёма с «путём цены» + дельта */}
+      {(report.wyckoff || report.volume_profile || report.delta_summary) && (
+        <div className="space-y-4">
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            🧭 Контекст рынка и объёма
+          </h2>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {report.volume_profile && (
+              <div className="lg:col-span-2 p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                  <h3 className="text-sm font-semibold text-gray-400 flex items-center gap-2">
+                    <BarChart2 className="w-4 h-4" />
+                    Профиль объёма · HVN/LVN · Value Area
+                  </h3>
+                  {pathSignals.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      <button
+                        onClick={() => setActivePathSignalIdx(-1)}
+                        className={`px-2 py-0.5 rounded text-[11px] ${activePathSignalIdx === -1 ? 'bg-gray-700 text-white' : 'bg-gray-800/50 text-gray-400 hover:text-white'}`}
+                      >
+                        без сигнала
+                      </button>
+                      {pathSignals.map((s, i) => (
+                        <button
+                          key={i}
+                          onClick={() => setActivePathSignalIdx(i)}
+                          className={`px-2 py-0.5 rounded text-[11px] ${
+                            activePathSignalIdx === i
+                              ? (s.direction === 'long' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400')
+                              : 'bg-gray-800/50 text-gray-400 hover:text-white'
+                          }`}
+                          title={`Показать путь цены: ${s.pattern}`}
+                        >
+                          {s.direction === 'long' ? '▲' : '▼'} {s.pattern}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <VolumeProfileChart
+                  profile={report.volume_profile}
+                  price={report.price}
+                  signal={activePathSignal}
+                />
+                {activePathSignal?.path && (
+                  <div className="mt-2 text-xs text-gray-400 leading-relaxed border-t border-gray-800/50 pt-2">
+                    🛤️ {activePathSignal.path.description}
+                  </div>
+                )}
+              </div>
+            )}
+            {report.wyckoff && <WyckoffPhasePanel wyckoff={report.wyckoff} />}
+          </div>
+          {report.delta_summary && (
+            <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+              <h3 className="text-sm font-semibold text-gray-400 mb-2 flex items-center gap-2">
+                <Activity className="w-4 h-4" />
+                Дельта агрессии (покупатели − продавцы)
+              </h3>
+              <DeltaChart summary={report.delta_summary} />
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 3. КЛЮЧЕВЫЕ УРОВНИ S/R ПО МЕТОДОЛОГИИ НИСОНА */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -418,6 +492,9 @@ export default function Analysis() {
           </div>
         </div>
       )}
+
+      {/* 4.5 ВЕРИФИКАЦИЯ ПРЕИМУЩЕСТВА: когорты по режимам + деградация 90 дней */}
+      {report.edge && <EdgeVerificationPanel edge={report.edge} />}
 
       {/* 5. ТОРГОВЫЕ СИГНАЛЫ — аудит №11: живой список со статусами жизненного цикла */}
       {report.signals.filter((s) => (s.lifecycle_status ?? (s.confirmed ? 'confirmed' : 'pending')) !== 'invalidated').length > 0 && (
