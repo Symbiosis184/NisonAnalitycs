@@ -67,6 +67,30 @@ export function getPatternTimeframe(): TimeframeKey {
   return PATTERN_TF_KEY;
 }
 
+/**
+ * Рыночный контекст: 'crypto' (по умолчанию) | 'stocks'.
+ * Нисон писал преимущественно по акциям и фьючерсам, где гэпы — обычное явление.
+ * Криптовалюты торгуются 24/7, поэтому разрывов между закрытием и следующим
+ * открытием практически нет: чисто гэповые модели (гл. 7: гэп смежных белых,
+ * тасуки гэповых направлений, гэп на максимумах/минимумах, покинутый младенец)
+ * на крипте детектировать нельзя — они отключены до расширения дашборда до
+ * акций. В звёздах/татнами гэп остаётся необязательным усилением для обоих
+ * рынков (см. isMorningStar/isEveningStar/isMatHold).
+ */
+type MarketKind = 'crypto' | 'stocks';
+let CURRENT_MARKET: MarketKind = 'crypto';
+/** Переключить рынок (при добавлении акций вызвать setMarket('stocks')). */
+export function setMarket(market: MarketKind): void {
+  CURRENT_MARKET = market;
+}
+export function getMarket(): MarketKind {
+  return CURRENT_MARKET;
+}
+/** Гэповые модели активны только для фондового рынка. */
+function GAP_PATTERNS_ENABLED(): boolean {
+  return CURRENT_MARKET === 'stocks';
+}
+
 export class PatternDetector {
   static getFormationBounds(patternName: string, candles: Candle[], endIdx: number) {
     if (endIdx < 0 || endIdx >= candles.length) {
@@ -354,6 +378,22 @@ export class PatternDetector {
     return candles.slice(Math.max(0, beforeIdx - 20), beforeIdx);
   }
 
+  /**
+   * КАНОН Нисона (гл. 2/5): small body / star — это тело, МАЛОЕ ПО ОТНОШЕНИЮ
+   * К ПРЕДШЕСТВУЮЩИМ свечам, а не обязательно к собственному диапазону
+   * (звёзды с длинными тенями имеют тело <10% своего range, но доji-подобные
+   * «короткие» свечи могут иметь тело 40–50% диапазона). Прежнее абсолютное
+   * правило body < 0.3×range отбрасывало настоящие звёзды крипты. Теперь:
+   * тело ≤ 40% медианы тел окна ИЛИ классическое узкотелое свечение.
+   */
+  private static isSmallRelative(candle: Candle, window: Candle[]): boolean {
+    if (candle.isShortCandle || candle.isDoji) return true;
+    if (window.length < 3) return false;
+    const bodies = window.map(c => c.body).sort((a, b) => a - b);
+    const med = bodies[Math.floor(bodies.length / 2)];
+    return med > 0 && candle.body <= med * 0.4;
+  }
+
   static isMorningStar(candles: Candle[]): { found: boolean; name: string } {
     if (candles.length < 3) return { found: false, name: '' };
     const c1 = candles[candles.length - 3];
@@ -371,7 +411,8 @@ export class PatternDetector {
       if (ctxHi > ctxLo && c1.close > ctxLo + (ctxHi - ctxLo) * 0.34) return { found: false, name: '' };
     }
     if (!(c1.isBearish && this.isLongRelative(c1, winMS))) return { found: false, name: '' };
-    if (!c2.isShortCandle) return { found: false, name: '' };
+    // FIX канона (гл. 2/5): «звезда» — малое тело ОТНОСИТЕЛЬНО предшествующих свечей.
+    if (!this.isSmallRelative(c2, winMS)) return { found: false, name: '' };
     // FIX канон-аудита (гл. 5): третья свеча открывается ВЫШЕ закрытия второй
     // (гэп вверх от малой свечи — решимость покупателей с открытия) и закрывается
     // в верхней половине тела первой свечи; длина — относительная.
@@ -421,7 +462,8 @@ export class PatternDetector {
       if (ctxHi > ctxLo && c1.close < ctxHi - (ctxHi - ctxLo) * 0.34) return { found: false, name: '' };
     }
     if (!(c1.isBullish && this.isLongRelative(c1, winES))) return { found: false, name: '' };
-    if (!c2.isShortCandle) return { found: false, name: '' };
+    // FIX канона (гл. 2/5): «звезда» — малое тело ОТНОСИТЕЛЬНО предшествующих свечей.
+    if (!this.isSmallRelative(c2, winES)) return { found: false, name: '' };
     // FIX канон-аудита (гл. 5): зеркально утренней — третья открывается НИЖЕ
     // закрытия второй (гэп вниз), закрытие — в нижней половине тела первой свечи.
     if (!(c3.isBearish && this.isLongRelative(c3, winES))) return { found: false, name: '' };
@@ -701,7 +743,11 @@ export class PatternDetector {
   }
 
   static isCounterattack(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
-    // Канон (гл. 6): обе свечи длинные, закрытия ОДИНАКОВЫЕ (доля ATR), гэпы противоположны.
+    // Канон Нисона (гл. 6): контратака — ГЭПОВАЯ модель: обе свечи открываются
+    // гэпом против тренда и закрываются на одном уровне. На крипте гэпов нет →
+    // паттерн отключён (активен только для акций, см. setMarket). Совпадение
+    // закрытий без встречных гэпов сигналом не является.
+    if (!GAP_PATTERNS_ENABLED()) return { found: false, name: '' };
     const closeTol = Math.max(c1.close * 0.001, ((c1.totalRange + c2.totalRange) / 2) * 0.1);
     if (Math.abs(c1.close - c2.close) > closeTol) return { found: false, name: '' };
     if (!(c1.isLongCandle && c2.isLongCandle)) return { found: false, name: '' };
@@ -775,13 +821,17 @@ export class PatternDetector {
   }
 
   static isGappingSideBySide(candles: Candle[]): { found: boolean; name: string } {
+    // Гэповые модели (гл. 7): на крипте гэпы практически отсутствуют (рынок 24/7),
+    // поэтому включаются только при расширении дашборда до акций (market='stocks').
+    if (!GAP_PATTERNS_ENABLED()) return { found: false, name: '' };
     if (candles.length < 3) return { found: false, name: '' };
     const c0 = candles[candles.length - 3];
     const c1 = candles[candles.length - 2];
     const c2 = candles[candles.length - 1];
     
-    // Канон (гл. 7): после медвежьей свечи гэп вверх, две СХОДНЫЕ бычьи свечи на одном уровне.
-    if (c0.isBearish && c1.low > c0.high && c1.isBullish && c2.isBullish) {
+    // Канон (гл. 7): после медвежьей свечи ГЭП ВВЕРХ (открытие второй выше
+    // МАКСИМУМА первой — разрыв по всему диапазону), две СХОДНЫЕ бычьи свечи.
+    if (c0.isBearish && c1.open > c0.high && c1.isBullish && c2.isBullish) {
       if (Math.abs(c1.open - c2.open) / c1.open <= 0.005 && 
           Math.abs(c1.body - c2.body) <= Math.max(c1.body, c2.body) * 0.3) {
         return { found: true, name: 'ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ' };
@@ -897,6 +947,8 @@ export class PatternDetector {
   }
 
   static isAbandonedBaby(candles: Candle[]): { found: boolean; name: string } {
+    // Гэповая модель (гл. 7): на крипте отключена, активна только для акций.
+    if (!GAP_PATTERNS_ENABLED()) return { found: false, name: '' };
     if (candles.length < 3) return { found: false, name: '' };
     const c1 = candles[candles.length - 3];
     const c2 = candles[candles.length - 2];
@@ -915,6 +967,8 @@ export class PatternDetector {
   }
 
   static isTasuki(candles: Candle[]): { found: boolean; name: string } {
+    // Гэповые тасуки (гл. 7): на крипте отключены, активны только для акций.
+    if (!GAP_PATTERNS_ENABLED()) return { found: false, name: '' };
     if (candles.length < 3) return { found: false, name: '' };
     const c1 = candles[candles.length - 3];
     const c2 = candles[candles.length - 2];
@@ -931,11 +985,16 @@ export class PatternDetector {
   }
 
   static isGappingPlay(candles: Candle[]): { found: boolean; name: string } {
-    if (candles.length < 6) return { found: false, name: '' };
+    // Гэп на максимумах/минимумах (гл. 7): на крипте отключён, активен только для акций.
+    if (!GAP_PATTERNS_ENABLED()) return { found: false, name: '' };
+    if (candles.length < 7) return { found: false, name: '' };
     const last = candles[candles.length - 1];
-    const cons = candles.slice(-5, -1);
+    const cons = candles.slice(-6, -1);
     
-    if (!cons.every(c => c.isShortCandle)) return { found: false, name: '' };
+    // Канон гл. 7: консолидация из узкотелых свечей (body < 30% диапазона).
+    // Не полагаемся на isShortCandle (абсолютный порог тела) — фикстура с
+    // микротелью должна проходить и при малом ATR серии.
+    if (!cons.every(c => c.totalRange > 0 && c.body <= c.totalRange * 0.3)) return { found: false, name: '' };
     
     const consTop = Math.max(...cons.map(c => c.high));
     const consBot = Math.min(...cons.map(c => c.low));
