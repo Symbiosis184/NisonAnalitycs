@@ -185,21 +185,44 @@ export function detectPhase(candles: Candle[], lookback = 90): PhaseInfo {
   };
 }
 
-/** Множитель доверия к сигналу в зависимости от фазы и направления сделки. */
+/**
+ * Множитель доверия к сигналу в зависимости от фазы и направления сделки.
+ *
+ * ВАЖНО (аудит совместимости с методом Стива Нисона): фаза по умолчанию НЕ
+ * влияет на качество сигнала (нейтральна, 1.0). В каноне Нисона решение
+ * принимает паттерн + объём + уровень S/R, а не «ярлык» фазы цикла.
+ * Корректировка включается только при УВЕРЕННОЙ классификации фазы
+ * (confidence >= 0.55) и ограничена ±10% — чтобы контекст мог лишь слегка
+ * подсвечивать/ослаблять сигнал, но не переопределять его суть.
+ * При низкой уверенности или фазе «переход» множитель строго 1.0 —
+ * анализ остаётся чисто нисоновским.
+ */
+export const PHASE_CONFIDENCE_THRESHOLD = 0.55;
+
 export function phaseMultiplier(direction: 'long' | 'short', info: PhaseInfo): number {
+  // Низкая уверенность классификации → фаза не имеет права искажать сигнал.
+  if (info.confidence < PHASE_CONFIDENCE_THRESHOLD) return 1.0;
+  let m: number;
   switch (info.phase) {
     case 'markup':
-      return direction === 'long' ? 1.1 : 0.8;
+      m = direction === 'long' ? 1.1 : 0.9;
+      break;
     case 'markdown':
-      return direction === 'short' ? 1.1 : 0.8;
+      m = direction === 'short' ? 1.1 : 0.9;
+      break;
     case 'accumulation':
-      // разворотные лонги у низа диапазона — «по месту»; шорт против цикла — штраф
-      return direction === 'long' ? (info.positionInRange <= 0.35 ? 1.1 : 0.95) : 0.85;
+      // разворотные лонги у низа диапазона — «по месту»; шорт против цикла — лёгкий штраф
+      m = direction === 'long' ? (info.positionInRange <= 0.35 ? 1.1 : 1.0) : 0.9;
+      break;
     case 'distribution':
-      return direction === 'short' ? (info.positionInRange >= 0.65 ? 1.1 : 0.95) : 0.85;
+      m = direction === 'short' ? (info.positionInRange >= 0.65 ? 1.1 : 1.0) : 0.9;
+      break;
     default:
-      return 1.0;
+      m = 1.0;
   }
+  // Полупропорционально уверенности: conf=0.55 → ~±5%, conf=1 → ±10%.
+  const w = Math.min(1, (info.confidence - PHASE_CONFIDENCE_THRESHOLD) / (1 - PHASE_CONFIDENCE_THRESHOLD));
+  return Math.round((1 + (m - 1) * w) * 100) / 100;
 }
 
 /** Человекочитаемая метка фазы для бейджа в UI. */
