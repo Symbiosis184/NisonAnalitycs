@@ -9,6 +9,7 @@
 import { AlertTriangle, CheckCircle2, TrendingDown, TrendingUp } from 'lucide-react';
 import type { AnalysisReport, EdgeCohortDTO, SignalDTO } from '../api/types';
 import { formatPrice } from '../utils/format';
+import { Collapsible } from '../components/Collapsible';
 
 type Phase = NonNullable<AnalysisReport['wyckoff']>['phase'];
 
@@ -216,11 +217,20 @@ export function EdgeVerificationPanel({ edge }: EProps) {
   const d = edge.degradation;
 
   return (
-    <div className="p-6 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
-      <h3 className="text-lg font-semibold text-white mb-1 flex items-center gap-2">
-        <TrendingUp className="w-5 h-5 text-amber-400" />
-        Верификация преимущества (edge)
-      </h3>
+    <Collapsible
+      storageKey="edge"
+      icon={<TrendingUp className="w-5 h-5 text-amber-400" />}
+      title="Верификация преимущества (edge)"
+      badge={
+        <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${v.cls}`}>
+          {v.label}
+          {d.recent_expectancy != null && (
+            <> · {(d.recent_expectancy >= 0 ? '+' : '') + d.recent_expectancy.toFixed(2)} R/сд за 90д</>
+          )}
+        </span>
+      }
+    >
+      <div>
       <p className="text-xs text-gray-500 mb-4">
         Эмпирический бэктест детектора на истории инструмента ({edge.sample_trades} сделок, без lookahead).
         Cлева — где преимущество реально, справа — не деградирует ли оно сейчас.
@@ -310,6 +320,7 @@ export function EdgeVerificationPanel({ edge }: EProps) {
           </p>
         </div>
       </div>
-    </div>
+      </div>
+    </Collapsible>
   );
 }

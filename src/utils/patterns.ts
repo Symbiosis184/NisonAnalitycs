@@ -1,6 +1,6 @@
 import { Candle } from './candle';
-import { PatternDetector, SupportResistance } from './pattern_engine';
-import { ZoneVoter } from './zone_voter';
+import { PatternDetector, SupportResistance, setPatternTimeframe } from './pattern_engine';
+import { ZoneVoter, timeframeKey } from './zone_voter';
 
 export interface PatternResult {
   name: string;
@@ -12,7 +12,11 @@ export interface PatternResult {
   atLevel: boolean;
 }
 
-export function detectPatterns(candles: Candle[]): PatternResult[] {
+export function detectPatterns(candles: Candle[], timeframe: string = 'D'): PatternResult[] {
+  try {
+  // ТФ-калибровка зон: вся цепочка isNearSupport/isNearResistance внутри детекторов
+  // будет использовать параметры масштаба выбранного интервала.
+  setPatternTimeframe(timeframe);
   const patterns: PatternResult[] = [];
   
   // По Нисону: проверяем все свечи, а не только последние 20
@@ -246,9 +250,9 @@ export function detectPatterns(candles: Candle[]): PatternResult[] {
       
       // Проверка близости к уровню поддержки/сопротивления
       const atLevel = check.type === 'бычий' 
-        ? ZoneVoter.isNearSupport(candle.close, prev, 0.015)
+        ? ZoneVoter.isNearSupport(candle.close, prev, 0.015, timeframeKey(timeframe))
         : check.type === 'медвежий'
-        ? ZoneVoter.isNearResistance(candle.close, prev, 0.015)
+        ? ZoneVoter.isNearResistance(candle.close, prev, 0.015, timeframeKey(timeframe))
         : false;
       
       if (confirmed) confidence += 15;
@@ -280,6 +284,11 @@ export function detectPatterns(candles: Candle[]): PatternResult[] {
     .sort((a, b) => b.confidence - a.confidence);
   
   return filtered.slice(0, 10);
+  } finally {
+    // Не оставляем глобальный ТФ-контекст «загрязнённым»: прямые вызовы
+    // PatternDetector.isXxx вне detectPatterns должны видеть нейтральный дефолт.
+    setPatternTimeframe('D');
+  }
 }
 
 export function patternStory(pattern: string): string {

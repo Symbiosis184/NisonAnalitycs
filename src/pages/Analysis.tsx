@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, TrendingUp, TrendingDown, Activity, AlertTriangle, RefreshCw, Target, Shield, BarChart2 } from 'lucide-react';
+import { ArrowLeft, TrendingUp, TrendingDown, Activity, AlertTriangle, RefreshCw, Target, Shield, BarChart2, CandlestickChart as ChartIcon } from 'lucide-react';
 import { api, type AnalysisReport } from '../api/client';
 import type { MultiTFZonesDTO } from '../api/types';
 import CandlestickChart from '../components/CandlestickChart';
 import { VolumeProfileChart, DeltaChart } from '../components/VolumeProfilePanel';
 import { WyckoffPhasePanel, PricePathCard, EdgeVerificationPanel } from '../components/MarketContextPanels';
+import { Collapsible } from '../components/Collapsible';
 import { formatPrice } from '../utils/format';
 import { addSignal } from '../utils/signalJournal';
 import { STATUS_LABEL } from '../utils/signal_lifecycle';
@@ -26,16 +27,26 @@ const TF_LABEL: Record<string, string> = {
   '15': '15м', '30': '30м', '60': '1ч', '1H': '1ч', '2H': '2ч', '4H': '4ч', D: '1Д', W: '1Н',
 };
 
+/** Краткие названия фаз Вайкоффа для бейджа свёрнутой секции */
+const PHASE_SHORT: Record<string, string> = {
+  accumulation: 'Накопление', markup: 'Рост', distribution: 'Распределение', markdown: 'Падение', transition: 'Переход',
+};
+
 function MultiTFZonesPanel({ rows, activeTf }: { rows: MultiTFZonesDTO[]; activeTf: string }) {
   if (!rows.length) return null;
   return (
-    <div className="mb-4 p-3 rounded-lg bg-gray-800/40 border border-gray-700/50">
-      <h3 className="text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2">
-        🗺 Мульти-ТФ карта уровней S/R
-        <span className="text-[10px] font-normal text-gray-500">
-          каждый ТФ — со своей калибровкой (толеранс / окно свингов / порог пробоя)
-        </span>
-      </h3>
+    <Collapsible
+      storageKey="multitf"
+      icon={<Shield className="w-5 h-5 text-purple-400" />}
+      title="Мульти-ТФ карта уровней S/R"
+      badge={
+        <>
+          <span className="text-xs text-gray-500">{rows.length} ТФ</span>
+          <span className="text-[10px] text-gray-600 hidden sm:inline">каждый ТФ — со своей калибровкой</span>
+        </>
+      }
+    >
+    <div className="p-3 rounded-lg bg-gray-800/40 border border-gray-700/50">
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
@@ -87,6 +98,7 @@ function MultiTFZonesPanel({ rows, activeTf }: { rows: MultiTFZonesDTO[]; active
       </div>
       <p className="mt-2 text-[10px] text-gray-600">★ — сильная зона (≥3 голосов); ± — полуширина зоны (ATR-калиброванная, Нисон: уровень это полоса, а не линия).</p>
     </div>
+    </Collapsible>
   );
 }
 function RiskSettingsPanel({ settings, onApply }: {
@@ -313,6 +325,19 @@ export default function Analysis() {
       </div>
 
       {/* 1. КОНТЕКСТ РЫНКА (по Нисону - сначала контекст) */}
+      <Collapsible
+        storageKey="context"
+        icon={<Activity className="w-5 h-5 text-sky-400" />}
+        title="Контекст рынка"
+        badge={
+          <>
+            <span className={`text-xs font-semibold ${
+              report.regime === 'ВОСХОДЯЩИЙ' ? 'text-green-400' : report.regime === 'НИСХОДЯЩИЙ' ? 'text-red-400' : 'text-yellow-400'
+            }`}>{report.regime}</span>
+            <span className="text-xs text-gray-500">Consensus {report.consensus.score.toFixed(1)}/5 · Объём {volumeRatio.toFixed(2)}x</span>
+          </>
+        }
+      >
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Режим рынка */}
         <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
@@ -365,9 +390,15 @@ export default function Analysis() {
           </div>
         </div>
       </div>
+      </Collapsible>
 
       {/* 2. ГРАФИК */}
-      <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+      <Collapsible
+        storageKey="chart"
+        icon={<ChartIcon className="w-5 h-5 text-amber-400" />}
+        title={`График ${baseAsset}/USDT · ${timeframe}`}
+        badge={<span className="text-xs text-gray-500">{report.patterns.length} паттернов · {report.support.length + report.resistance.length} зон</span>}
+      >
         <CandlestickChart
           candles={report.candles}
           patterns={report.patterns}
@@ -375,14 +406,30 @@ export default function Analysis() {
           resistance={report.resistance}
           height={chartHeight}
         />
-      </div>
+      </Collapsible>
 
       {/* 2.5 КОНТЕКСТ РЫНКА: фазы Вайкоффа + профиль объёма с «путём цены» + дельта */}
       {(report.wyckoff || report.volume_profile || report.delta_summary) && (
+        <Collapsible
+          storageKey="vprofile"
+          icon={<BarChart2 className="w-5 h-5 text-blue-400" />}
+          title="Контекст рынка и объёма"
+          badge={
+            <>
+              {report.wyckoff && (
+                <span className="text-xs text-gray-500">
+                  Вайкофф: {PHASE_SHORT[report.wyckoff.phase]} · {(report.wyckoff.confidence * 100).toFixed(0)}%
+                </span>
+              )}
+              {report.delta_summary && (
+                <span className={`text-xs font-mono ${report.delta_summary.cumulative_delta >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  ΣΔ {report.delta_summary.cumulative_delta >= 0 ? '+' : ''}{Math.round(report.delta_summary.cumulative_delta).toLocaleString('ru-RU')}
+                </span>
+              )}
+            </>
+          }
+        >
         <div className="space-y-4">
-          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-            🧭 Контекст рынка и объёма
-          </h2>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {report.volume_profile && (
               <div className="lg:col-span-2 p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
@@ -440,10 +487,23 @@ export default function Analysis() {
             </div>
           )}
         </div>
+        </Collapsible>
       )}
 
       {/* 3. КЛЮЧЕВЫЕ УРОВНИ S/R ПО МЕТОДОЛОГИИ НИСОНА */}
       <MultiTFZonesPanel rows={multiZones} activeTf={timeframe} />
+      <Collapsible
+        storageKey="zones"
+        icon={<Shield className="w-5 h-5 text-green-400" />}
+        title={`Зоны поддержки и сопротивления · ${timeframe}`}
+        badge={
+          <>
+            <span className="text-xs text-green-400">↓ {report.support.length}</span>
+            <span className="text-xs text-red-400">↑ {report.resistance.length}</span>
+            <span className="text-xs text-gray-500">кластеризация + сила по касаниям (Нисон)</span>
+          </>
+        }
+      >
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Поддержка */}
         <div className="p-4 rounded-xl border border-green-500/20 bg-green-500/5">
@@ -515,9 +575,16 @@ export default function Analysis() {
           </div>
         </div>
       </div>
+      </Collapsible>
 
       {/* 4. ТОЛЬКО ПОДТВЕРЖДЁННЫЕ ПАТТЕРНЫ (по Нисону) */}
       {confirmedPatterns.length > 0 && (
+        <Collapsible
+          storageKey="patterns"
+          icon={<ChartIcon className="w-5 h-5 text-amber-400" />}
+          title="Подтверждённые паттерны"
+          badge={<span className="text-xs text-gray-500">{confirmedPatterns.length} из {report.patterns.length} · подтверждены объёмом/уровнем</span>}
+        >
         <div className="p-6 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
           <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
             🕯️ Подтверждённые паттерны
@@ -581,6 +648,7 @@ export default function Analysis() {
             ))}
           </div>
         </div>
+        </Collapsible>
       )}
 
       {/* 4.5 ВЕРИФИКАЦИЯ ПРЕИМУЩЕСТВА: когорты по режимам + деградация 90 дней */}
@@ -588,6 +656,17 @@ export default function Analysis() {
 
       {/* 5. ТОРГОВЫЕ СИГНАЛЫ — аудит №11: живой список со статусами жизненного цикла */}
       {report.signals.filter((s) => (s.lifecycle_status ?? (s.confirmed ? 'confirmed' : 'pending')) !== 'invalidated').length > 0 && (
+        <Collapsible
+          storageKey="signals"
+          icon={<Target className="w-5 h-5 text-amber-400" />}
+          title="Торговые сигналы (Нисон: ожидание → подтверждение)"
+          badge={
+            <>
+              <span className="text-xs text-green-400">✓ {report.signals.filter((s) => s.lifecycle_status === 'confirmed').length}</span>
+              <span className="text-xs text-yellow-400">⏳ {report.signals.filter((s) => (s.lifecycle_status ?? 'pending') === 'pending').length}</span>
+            </>
+          }
+        >
         <div className="p-6 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
           <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
             <Target className="w-5 h-5 text-amber-400" />
@@ -750,9 +829,22 @@ export default function Analysis() {
             ))}
           </div>
         </div>
+        </Collapsible>
       )}
 
       {/* Индикаторы */}
+      <Collapsible
+        storageKey="indicators"
+        icon={<Activity className="w-5 h-5 text-sky-400" />}
+        title="Индикаторы"
+        badge={
+          <>
+            <span className="text-xs text-gray-500">RSI {report.rsi.toFixed(1)}</span>
+            <span className="text-xs text-gray-500">MACD {report.macd.histogram.toFixed(2)}</span>
+            <span className="text-xs text-gray-500">Тренд {report.trend_strength.toFixed(0)}%</span>
+          </>
+        }
+      >
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
           <h3 className="text-sm font-semibold text-gray-400 mb-2">RSI (14)</h3>
@@ -793,6 +885,7 @@ export default function Analysis() {
           </div>
         </div>
       </div>
+      </Collapsible>
 
       {/* Дисклеймер */}
       <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-500/5 border border-amber-500/10">

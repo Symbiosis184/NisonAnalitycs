@@ -53,9 +53,13 @@ export type TimeframeKey = 'scalp' | 'intraday' | 'swing' | 'position';
  * но на 5-минутке шумят, а на недельном — слишком мелки.
  */
 export function timeframeKey(tf: string): TimeframeKey {
-  if (['1', '3', '5', '15'].includes(tf)) return 'scalp';
-  if (['30', '60', '1H', '2H', '4H'].includes(tf)) return 'intraday';
-  if (['D', '1D'].includes(tf)) return 'swing';
+  const t = tf.trim().toUpperCase();
+  if (['1', '3', '5', '15'].includes(t)) return 'scalp';
+  if (['30', '60', '1H', '2H', '4H'].includes(t)) return 'intraday';
+  if (['D', '1D'].includes(t)) return 'swing';
+  // Формы с минутным/часовым суффиксом в нижнем регистре ('15m', '1h', '4h')
+  if (/^(1|3|5|15)(M|min)?$/.test(t)) return 'scalp';
+  if (/^(30|60|1|2|4)(H|h)$/.test(t) || ['30M', '60M'].includes(t)) return 'intraday';
   return 'position'; // W и всё нестандартное
 }
 

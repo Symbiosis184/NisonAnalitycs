@@ -1,6 +1,6 @@
 import { Candle } from './candle';
 import { ema } from './indicators';
-import { ZoneVoter } from './zone_voter';
+import { ZoneVoter, timeframeKey, type TimeframeKey } from './zone_voter';
 import { findSwings } from './levels';
 
 export class SupportResistance {
@@ -36,6 +36,21 @@ export class VolumeAnalyzer {
     const avg = this.getAverageVolume(prevCandles);
     return avg > 0 && candle.volume > avg * multiplier;
   }
+}
+
+/**
+* ТФ-контекст детектора (дефолт — 'D', чтобы существующие тесты не изменились).
+* Нисон: уровень — это зона, а ширина зоны и толеранс зависят от таймфрейма.
+* Без проброса ТФ молот на 15м проверялся бы «у поддержки» с дневным масштабом.
+*/
+let PATTERN_TF_KEY: TimeframeKey = 'swing';
+/** Установить временнóй масштаб для всех проверок близости к зонам S/R. */
+export function setPatternTimeframe(tf: string): void {
+  PATTERN_TF_KEY = timeframeKey(tf);
+}
+/** Текущий ТФ-ключ детектора (для тестов/отладки). */
+export function getPatternTimeframe(): TimeframeKey {
+  return PATTERN_TF_KEY;
 }
 
 export class PatternDetector {
@@ -107,7 +122,7 @@ export class PatternDetector {
     const m20Arr = ema(closes, 20);
     const m20 = m20Arr.length > 0 ? m20Arr[m20Arr.length - 1] : null;
     
-    const zoneOk = ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01) ||
+    const zoneOk = ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01, PATTERN_TF_KEY) ||
                    VolumeAnalyzer.isHighVolume(candle, prevCandles, 1.3) ||
                    (m20 !== null && Math.abs(candle.low - m20) <= m20 * 0.01);
     
@@ -116,7 +131,7 @@ export class PatternDetector {
     if (candle.upperWick > candle.lowerWick * (zoneOk ? 0.6 : 0.3)) return { found: false, name: '' };
     
     let name = 'МОЛОТ';
-    if (ZoneVoter.isNearSupport(candle.close, prevCandles)) name += ' (У ПОДДЕРЖКИ)';
+    if (ZoneVoter.isNearSupport(candle.close, prevCandles, 0.015, PATTERN_TF_KEY)) name += ' (У ПОДДЕРЖКИ)';
     if (VolumeAnalyzer.isHighVolume(candle, prevCandles, 1.3)) name += ' (ОБЪЁМ)';
     
     return { found: true, name };
@@ -132,7 +147,7 @@ export class PatternDetector {
     const m20Arr = ema(closes, 20);
     const m20 = m20Arr.length > 0 ? m20Arr[m20Arr.length - 1] : null;
     
-    const zoneOk = ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01) ||
+    const zoneOk = ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01, PATTERN_TF_KEY) ||
                    VolumeAnalyzer.isHighVolume(candle, prevCandles, 1.3) ||
                    (m20 !== null && Math.abs(candle.low - m20) <= m20 * 0.01);
     
@@ -149,7 +164,7 @@ export class PatternDetector {
     const m20Arr = ema(closes, 20);
     const m20 = m20Arr.length > 0 ? m20Arr[m20Arr.length - 1] : null;
     
-    const zoneOk = ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01) ||
+    const zoneOk = ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01, PATTERN_TF_KEY) ||
                    VolumeAnalyzer.isHighVolume(candle, prevCandles, 1.3) ||
                    (m20 !== null && Math.abs(candle.low - m20) <= m20 * 0.01);
     
@@ -158,7 +173,7 @@ export class PatternDetector {
     if (candle.lowerWick > candle.upperWick * (zoneOk ? 0.6 : 0.3)) return { found: false, name: '' };
     
     let name = 'ПЕРЕВЁРНУТЫЙ МОЛОТ';
-    if (ZoneVoter.isNearSupport(candle.close, prevCandles)) name += ' (У ПОДДЕРЖКИ)';
+    if (ZoneVoter.isNearSupport(candle.close, prevCandles, 0.015, PATTERN_TF_KEY)) name += ' (У ПОДДЕРЖКИ)';
     
     return { found: true, name };
   }
@@ -170,7 +185,7 @@ export class PatternDetector {
     if (candle.upperWick > candle.lowerWick * 0.3) return { found: false, name: '' };
     
     let name = 'ПОВЕШЕННЫЙ';
-    if (ZoneVoter.isNearResistance(candle.close, prevCandles)) name += ' (У СОПРОТИВЛЕНИЯ)';
+    if (ZoneVoter.isNearResistance(candle.close, prevCandles, 0.015, PATTERN_TF_KEY)) name += ' (У СОПРОТИВЛЕНИЯ)';
     
     return { found: true, name };
   }
@@ -182,7 +197,7 @@ export class PatternDetector {
     if (candle.lowerWick > candle.upperWick * 0.3) return { found: false, name: '' };
     
     let name = 'ПАДАЮЩАЯ ЗВЕЗДА';
-    if (ZoneVoter.isNearResistance(candle.close, prevCandles)) name += ' (У СОПРОТИВЛЕНИЯ)';
+    if (ZoneVoter.isNearResistance(candle.close, prevCandles, 0.015, PATTERN_TF_KEY)) name += ' (У СОПРОТИВЛЕНИЯ)';
     if (VolumeAnalyzer.isHighVolume(candle, prevCandles, 1.3)) name += ' (ОБЪЁМ)';
     
     return { found: true, name };
@@ -193,7 +208,7 @@ export class PatternDetector {
     if (!c2.isBullish || !c2.isEngulfing(c1)) return { found: false, name: '' };
     
     let name = 'БЫЧЬЕ ПОГЛОЩЕНИЕ';
-    if (ZoneVoter.isNearSupport(c2.close, prev)) name += ' (У ПОДДЕРЖКИ)';
+    if (ZoneVoter.isNearSupport(c2.close, prev, 0.015, PATTERN_TF_KEY)) name += ' (У ПОДДЕРЖКИ)';
     if (VolumeAnalyzer.isHighVolume(c2, prev, 1.5)) name += ' (ОБЪЁМ)';
     
     return { found: true, name };
@@ -204,7 +219,7 @@ export class PatternDetector {
     if (!c2.isBearish || !c2.isEngulfing(c1)) return { found: false, name: '' };
     
     let name = 'МЕДВЕЖЬЕ ПОГЛОЩЕНИЕ';
-    if (ZoneVoter.isNearResistance(c2.close, prev)) name += ' (У СОПРОТИВЛЕНИЯ)';
+    if (ZoneVoter.isNearResistance(c2.close, prev, 0.015, PATTERN_TF_KEY)) name += ' (У СОПРОТИВЛЕНИЯ)';
     if (VolumeAnalyzer.isHighVolume(c2, prev, 1.5)) name += ' (ОБЪЁМ)';
     
     return { found: true, name };
@@ -403,7 +418,7 @@ export class PatternDetector {
     if (c2.close >= c1.bodyMid || c2.close <= c1.open) return { found: false, name: '' };
     
     let name = 'ЗАВЕСА ИЗ ТЁМНЫХ ОБЛАКОВ';
-    if (ZoneVoter.isNearResistance(c2.close, prev)) name += ' (У СОПРОТИВЛЕНИЯ)';
+    if (ZoneVoter.isNearResistance(c2.close, prev, 0.015, PATTERN_TF_KEY)) name += ' (У СОПРОТИВЛЕНИЯ)';
     
     return { found: true, name };
   }
@@ -415,7 +430,7 @@ export class PatternDetector {
     if (c2.close <= c1.bodyMid || c2.close >= c1.open) return { found: false, name: '' };
     
     let name = 'ПРОСВЕТ В ОБЛАКАХ';
-    if (ZoneVoter.isNearSupport(c2.close, prev)) name += ' (У ПОДДЕРЖКИ)';
+    if (ZoneVoter.isNearSupport(c2.close, prev, 0.015, PATTERN_TF_KEY)) name += ' (У ПОДДЕРЖКИ)';
     
     return { found: true, name };
   }
@@ -757,11 +772,11 @@ export class PatternDetector {
     
     const supHold = (m20Val !== null && last.low <= m20Val * 1.005 && last.close > m20Val) ||
                     (m65Val !== null && last.low <= m65Val * 1.005 && last.close > m65Val) ||
-                    (ZoneVoter.isNearSupport(last.close, pre, 0.01) && last.close > last.open);
+                    (ZoneVoter.isNearSupport(last.close, pre, 0.01, PATTERN_TF_KEY) && last.close > last.open);
     
     const resHold = (m20Val !== null && last.high >= m20Val * 0.995 && last.close < m20Val) ||
                     (m65Val !== null && last.high >= m65Val * 0.995 && last.close < m65Val) ||
-                    (ZoneVoter.isNearResistance(last.close, pre, 0.01) && last.close < last.open);
+                    (ZoneVoter.isNearResistance(last.close, pre, 0.01, PATTERN_TF_KEY) && last.close < last.open);
     
     if (supHold && (last.isBullish || last.close > mid)) {
       return { found: true, name: 'ТЕСТ ПОДДЕРЖКИ (БЫЧИЙ)' };

@@ -159,7 +159,7 @@ export class ApiClient {
     const zones = ZoneVoter.collect(currentPrice, candles, timeframeKey(timeframe));
     
     // Детекция паттернов по Нисону
-    const detectedPatterns = detectPatterns(candles);
+    const detectedPatterns = detectPatterns(candles, timeframe);
     const apiPatterns: PatternDTO[] = detectedPatterns.map(p => ({
       name: p.name,
       type: toPatternDirection(p.type),
