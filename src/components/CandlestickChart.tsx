@@ -115,40 +115,57 @@ export default function CandlestickChart({
 
     volumeSeries.setData(volumeData);
 
-    // Добавляем только СИЛЬНЫЕ уровни поддержки (зелёные)
-    const strongSupport = support.filter(zone => zone.strong);
-    strongSupport.forEach((zone, idx) => {
-      const line = candlestickSeries.createPriceLine({
-        price: zone.level,
-        color: '#22c55e',
-        lineWidth: 2,
-        lineStyle: 0, // solid
-        axisLabelVisible: true,
-        title: `П${idx + 1} (${zone.votes}гол)`,
+    // ── Уровни S/R: тонкие линии, без зашумлённых подписей на полотне ────
+    // Сильные поддержки — зелёные сплошные 1px, сопротивления — красные;
+    // слабые (если попадут в список) — полупрозрачные штриховые.
+    // axisLabel показывает короткую метку прямо на ценовой оси — так подписи
+    // не перекрывают свечи и не наезжают друг на друга.
+    const addZoneLines = (zones: Zone[], kind: 'support' | 'resistance') => {
+      zones.forEach((zone, idx) => {
+        candlestickSeries.createPriceLine({
+          price: zone.level,
+          color: kind === 'support'
+            ? (zone.strong ? 'rgba(34,197,94,0.8)' : 'rgba(34,197,94,0.4)')
+            : (zone.strong ? 'rgba(239,68,68,0.8)' : 'rgba(239,68,68,0.4)'),
+          lineWidth: 1,
+          lineStyle: zone.strong ? 0 : 2, // сильные сплошные, остальные штрих-пунктир
+          axisLabelVisible: true,
+          title: `${kind === 'support' ? 'S' : 'R'}${idx + 1}`,
+        });
       });
-    });
+    };
+    addZoneLines(support.filter(z => z.strong), 'support');
+    addZoneLines(resistance.filter(z => z.strong), 'resistance');
 
-    // Добавляем только СИЛЬНЫЕ уровни сопротивления (красные)
-    const strongResistance = resistance.filter(zone => zone.strong);
-    strongResistance.forEach((zone, idx) => {
-      const line = candlestickSeries.createPriceLine({
-        price: zone.level,
-        color: '#ef4444',
-        lineWidth: 2,
-        lineStyle: 0, // solid
-        axisLabelVisible: true,
-        title: `С${idx + 1} (${zone.votes}гол)`,
-      });
-    });
+    // ── Паттерны: компактные маркеры БЕЗ текста, название — в tooltip ─────
+    // Стрелки уменьшены (size 1), текст убран с canvas. При наведении мыши
+    // (или касании на мобильных) рядом с маркером всплывает тёмная плашка
+    // с названием паттерна и уверенностью.
+    let hideTimer: ReturnType<typeof setTimeout> | null = null;
 
-    // Добавляем маркеры ВСЕХ подтверждённых паттернов
     if (patterns.length > 0) {
-      // Фильтруем только подтверждённые паттерны
       const confirmedPatterns = patterns
         .filter(p => p.confirmed && p.candleIndex >= 0 && p.candleIndex < candles.length)
         .sort((a, b) => b.confidence - a.confidence);
-      
+
       if (confirmedPatterns.length > 0) {
+        const container = chartContainerRef.current!;
+        const tipEl = document.createElement('div');
+        Object.assign(tipEl.style, {
+          position: 'absolute', display: 'none', zIndex: '30', pointerEvents: 'none',
+          padding: '4px 8px', borderRadius: '6px', fontSize: '11px', lineHeight: '1.3',
+          background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(148,163,184,0.35)',
+          color: '#e2e8f0', boxShadow: '0 2px 10px rgba(0,0,0,0.5)', whiteSpace: 'nowrap',
+          transform: 'translate(-50%, -100%)', transition: 'opacity .1s',
+        } as Partial<CSSStyleDeclaration>);
+        container.style.position = 'relative';
+        container.appendChild(tipEl);
+
+        const scheduleHide = () => {
+          if (hideTimer) clearTimeout(hideTimer);
+          hideTimer = setTimeout(() => { tipEl.style.display = 'none'; }, 120);
+        };
+
         const markers = confirmedPatterns.map(pattern => {
           const candle = candles[pattern.candleIndex];
           return {
@@ -156,12 +173,46 @@ export default function CandlestickChart({
             position: pattern.type === 'bullish' ? 'belowBar' as const : 'aboveBar' as const,
             color: pattern.type === 'bullish' ? '#22c55e' : pattern.type === 'bearish' ? '#ef4444' : '#94a3b8',
             shape: pattern.type === 'bullish' ? 'arrowUp' as const : pattern.type === 'bearish' ? 'arrowDown' as const : 'circle' as const,
-            text: `✓ ${pattern.name}`,
-            size: 2,
+            text: '', // название только в tooltip — чистый график без наложений
+            size: 1,
           };
         });
 
         createSeriesMarkers(candlestickSeries, markers);
+
+        // lightweight-charts рисует маркеры на canvas — ловим mousemove по
+        // контейнеру и находим ближайший маркер по X-координате.
+        const onMove = (ev: MouseEvent) => {
+          const rect = container.getBoundingClientRect();
+          const x = ev.clientX - rect.left;
+          const y = ev.clientY - rect.top;
+          let bestIdx = -1;
+          let bestDist = 14; // px радиус «попадания» по маркеру
+          for (let i = 0; i < markers.length; i++) {
+            const px = chart.timeScale().timeToCoordinate(markers[i].time as any);
+            if (px === null) continue;
+            const dist = Math.abs(px - x);
+            if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+          }
+          if (bestIdx >= 0) {
+            const p = confirmedPatterns[bestIdx];
+            const m = markers[bestIdx];
+            const cx = chart.timeScale().timeToCoordinate(m.time as any) ?? x;
+            const anchorPrice = p.type === 'bullish'
+              ? candles[p.candleIndex].low
+              : candles[p.candleIndex].high;
+            const cy = candlestickSeries.priceToCoordinate(anchorPrice) ?? y;
+            tipEl.innerHTML = `<b>${p.name}</b><span style="color:#94a3b8"> · ${Math.round(p.confidence * 100)}%</span>`;
+            tipEl.style.left = `${cx}px`;
+            tipEl.style.top = p.type === 'bullish' ? `${cy + 36}px` : `${Math.max(4, cy - 10)}px`;
+            if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+            tipEl.style.display = 'block';
+          } else {
+            scheduleHide();
+          }
+        };
+        container.addEventListener('mousemove', onMove);
+        (chartRef.current as any).__cleanupMarkerHover = () => container.removeEventListener('mousemove', onMove);
       }
     }
 
@@ -178,6 +229,9 @@ export default function CandlestickChart({
 
     return () => {
       ro.disconnect();
+      if (hideTimer) clearTimeout(hideTimer);
+      const cleanup = (chartRef.current as any)?.__cleanupMarkerHover;
+      if (typeof cleanup === 'function') cleanup();
       if (chartRef.current) {
         chartRef.current.remove();
         chartRef.current = null;
