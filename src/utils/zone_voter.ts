@@ -211,11 +211,16 @@ export class ZoneVoter {
         }
       }
 
-      // Классификация относительно ТЕКУЩЕЙ цены для финального отображения:
-      // зона остаётся поддержкой, если она ниже цены ИЛИ имеет больше касаний-поддержки;
-      // аналогично для сопротивления. Уровни без касаний после образования не голосуются.
-      const asSupport = supTouches > 0 && (zone.level <= price || supTouches > resTouches);
-      const asResistance = resTouches > 0 && (zone.level >= price || resTouches > supTouches);
+      // Уровни без касаний после образования не голосуются (Нисон: уровень
+      // значим ровно настолько, насколько его тестировала цена).
+      // FIX канон-аудита: роль зоны определяется ПОЗИЦИЕЙ ОТНОСИТЕЛЬНО ЦЕНЫ, а не
+      // счётчиком касаний. По Нисону (гл. 11) уровень НИЖЕ цены — это поддержка,
+      // ВЫШЕ — сопротивление; «смена полярности» происходит только через ПРОБОЙ
+      // закрытием (addPolarityLevels), а не потому что касаний-отбоев было больше.
+      // Прежнее условие (supTouches > resTouches без проверки цены) могло показать
+      // «поддержку» НАД ценой и исказить голосование источников в кластере.
+      const asSupport = supTouches > 0 && zone.level <= price;
+      const asResistance = resTouches > 0 && zone.level >= price;
 
       if (asSupport) {
         addLevelToMap(supMap, zone.level, `свинг-зона: ${supTouches} касание(й) поддержки`, lastSupTime, tol, supTouches);
@@ -419,16 +424,18 @@ export class ZoneVoter {
   static isNearSupport(
     price: number,
     candles: Candle[],
-    tolerance: number = 0.015,
+    _tolerance: number = 0.015,
     tfKey: TimeframeKey = 'swing'
   ): boolean {
+    // FIX канон-аудита: раньше порог был max(tol*price, halfWidth) — на дневном
+    // ТФ это 1.5% от цены, т.е. свеча попадала «у поддержки», находясь на
+    // расстоянии полутора ПРОЦЕНТОВ от зоны, которая по Нисону и так не шире
+    // ATR. Канон (гл. 11): уровень — это ЗОНА [level − halfWidth … level + halfWidth];
+    // «у поддержки» = ЦЕНА ВНУТРИ полосы (допускается вхождение тенью: low ≤ верхний край).
     const { support } = this.collect(price, candles, tfKey);
-    // Зона — это полоса [level ± halfWidth]; считаем расстояние до БЛИЖАЙШЕГО КРАЯ,
-    // а не до средней линии (Нисон: цена «в зоне», ещё не коснувшись её центра).
-    return support.some(zone => {
-      const dist = Math.abs(price - zone.level) - zone.halfWidth;
-      return dist <= Math.max(tolerance * price, zone.halfWidth);
-    });
+    return support.some(zone =>
+      price <= zone.level + zone.halfWidth && price >= zone.level - zone.halfWidth
+    );
   }
 
   /**
@@ -437,13 +444,12 @@ export class ZoneVoter {
   static isNearResistance(
     price: number,
     candles: Candle[],
-    tolerance: number = 0.015,
+    _tolerance: number = 0.015,
     tfKey: TimeframeKey = 'swing'
   ): boolean {
     const { resistance } = this.collect(price, candles, tfKey);
-    return resistance.some(zone => {
-      const dist = Math.abs(price - zone.level) - zone.halfWidth;
-      return dist <= Math.max(tolerance * price, zone.halfWidth);
-    });
+    return resistance.some(zone =>
+      price <= zone.level + zone.halfWidth && price >= zone.level - zone.halfWidth
+    );
   }
 }

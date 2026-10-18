@@ -22,7 +22,17 @@ describe('Candle — базовые геттеры', () => {
 });
 
 describe('PatternDetector.isHammer', () => {
-  const prev = flat(25, 100);
+  // Канон Нисона (гл. 4): молот — разворот ПОСЛЕ СНИЖЕНИЯ. История с падающими
+  // закрытиями и повышенным объёмом даёт и локальное дно, и объёмную опору.
+  const decliningFlat = (n: number, start: number, step: number, vol = 200) => {
+    const arr: Candle[] = [];
+    for (let i = 0; i < n; i++) {
+      const close = start - i * step;
+      arr.push(new Candle({ time: 1000 + i, open: close + 0.05, high: close + 0.3, low: close - 0.3, close, volume: vol }));
+    }
+    return arr;
+  };
+  const prev = decliningFlat(25, 108, 0.35); // closes 108 → ~99.6
   // Молот: маленькое тело вверху, длинная нижняя тень
   const hammer = c(100, 100.6, 94, 100.5);
 
@@ -109,7 +119,7 @@ describe('PatternDetector.isMorningStar / isEveningStar', () => {
   it('утренняя звезда: длинная медвежья + короткая + длинная бычья выше середины первого тела', () => {
     const candles = [
       c(110, 110.5, 100, 100.5), // long bearish (body/range 0.905)
-      c(100, 100.4, 98.6, 99.5), // short: body/range = 0.167 < 0.3 (почти доджи)
+      c(99.5, 100.4, 98.6, 99.5), // короткая с ГЭПОМ ВНИЗ: high 100.4 < close1 100.5
       c(99.5, 110, 99, 109),     // long bullish, close > bodyMid(105.25)
     ];
     const res = PatternDetector.isMorningStar(candles);
@@ -120,7 +130,7 @@ describe('PatternDetector.isMorningStar / isEveningStar', () => {
   it('вечерняя звезда', () => {
     const candles = [
       c(100, 109.5, 99.5, 109), // long bullish
-      c(109.2, 111, 108.5, 109.5), // short: body/range = 0.14 < 0.3 (почти доджи)
+      c(109.2, 111, 109.1, 109.5), // короткая с ГЭПОМ ВВЕРХ: low 109.1 > close1 109
       c(110, 110.5, 100, 100.5), // long bearish, close < bodyMid(104.5)
     ];
     const res = PatternDetector.isEveningStar(candles);

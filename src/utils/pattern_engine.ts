@@ -114,25 +114,71 @@ export class PatternDetector {
     };
   }
 
+  /**
+   * Бычий контекст для молота/звезды по Нисону (гл. 4-5): свеча — часть
+   * ЛОКАЛЬНОГО МИНИМУМА: её ДНО (low) — новый минимальный уровень окна ~8 свечей,
+   * а закрытие ОТСКАКИВАЕТ от него вверх (не ниже середины диапазона).
+   * Прежняя оценка «close в нижней трети» отвергалась самими же корректными
+   * молотами: у них close как раз высоко после отскока (гл. 4: молот = отказ
+   * у дна с возвратом покупателей).
+   */
+  private static atLocalLow(candle: Candle, prevCandles: Candle[]): boolean {
+    if (prevCandles.length < 5) return true; // нехватка данных - не штрафуем
+    const seg = [...prevCandles.slice(-8), candle];
+    const lo = Math.min(...seg.map(c => c.low));
+    const hi = Math.max(...seg.map(c => c.high));
+    if (hi <= lo) return true;
+    const isBottom = candle.low <= lo * 1.001; // дно свечи = дно диапазона
+    const bounced = candle.close >= (lo + hi) / 2; // и закрытие отскочило вверх
+    return isBottom && bounced;
+  }
+
+  /**
+   * Медвежий аналог (гл. 4-5): вершина свечи — максимум окна, закрытие
+   * откатилось вниз (падающая звезда/повешенный = отказ у потолка).
+   */
+  private static atLocalHigh(candle: Candle, prevCandles: Candle[]): boolean {
+    if (prevCandles.length < 5) return true;
+    const seg = [...prevCandles.slice(-8), candle];
+    const lo = Math.min(...seg.map(c => c.low));
+    const hi = Math.max(...seg.map(c => c.high));
+    if (hi <= lo) return true;
+    const isTop = candle.high >= hi * 0.999;
+    const rejected = candle.close <= (lo + hi) / 2;
+    return isTop && rejected;
+  }
+
   static isHammer(candle: Candle, prevCandles: Candle[]): { found: boolean; name: string } {
     if (candle.totalRange === 0) return { found: false, name: '' };
     if (candle.body > candle.totalRange * 0.45) return { found: false, name: '' };
+    // Канон (рис. 4.7): нижняя тень НЕ МЕНЕЕ двух тел; верхняя тень отсутствует
+    // или несущественна; тело в ВЕРХНЕЙ части свечи.
+    if (candle.lowerWick < candle.body * 2) return { found: false, name: '' };
+    if (candle.upperWick > candle.totalRange * 0.2) return { found: false, name: '' };
+    // FIX канон-аудита: молот по Нисону — тело в ВЕРХНЕЙ части диапазона.
+    // Прежнее условие (низ тела выше середины) отбрасывало классические бычьи
+    // молоты; корректная проверка: close не ниже середины свечи.
+    if (candle.close < candle.bodyMid) return { found: false, name: '' };
+    // Молот - РАЗВОРОТНАЯ свеча: требует дна (локальный минимум + опора).
+    if (!this.atLocalLow(candle, prevCandles)) return { found: false, name: '' };
     
     const closes = prevCandles.map(c => c.close);
     const m20Arr = ema(closes, 20);
     const m20 = m20Arr.length > 0 ? m20Arr[m20Arr.length - 1] : null;
     
-    const zoneOk = ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01, PATTERN_TF_KEY) ||
-                   VolumeAnalyzer.isHighVolume(candle, prevCandles, 1.3) ||
-                   (m20 !== null && Math.abs(candle.low - m20) <= m20 * 0.01);
-    
-    const minRatio = zoneOk ? 1.0 : 1.5;
-    if (candle.lowerWick < candle.body * minRatio) return { found: false, name: '' };
-    if (candle.upperWick > candle.lowerWick * (zoneOk ? 0.6 : 0.3)) return { found: false, name: '' };
+    // ГЛАВНОЕ ПОДТВЕРЖДЕНИЕ ПО КАНОНУ (гл. 4): молот — это ОТКАЗ У ЗОНЫ ПОДДЕРЖКИ.
+    // Тень сама по себе не сигнал; без опоры это просто длинная нижняя тень.
+    // Допускается касание зоны тенью (low), а не только телом (close).
+    const nearSupport = ZoneVoter.isNearSupport(candle.low, prevCandles, 0.01, PATTERN_TF_KEY) ||
+                        ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01, PATTERN_TF_KEY);
+    if (!nearSupport) return { found: false, name: '' };
+    // Объём/MA20 — дополнительные подтверждения (усиливают имя, но не заменяют зону).
+    const volumeOk = VolumeAnalyzer.isHighVolume(candle, prevCandles, 1.3);
+    const maOk = m20 !== null && Math.abs(candle.low - m20) <= m20 * 0.01;
     
     let name = 'МОЛОТ';
     if (ZoneVoter.isNearSupport(candle.close, prevCandles, 0.015, PATTERN_TF_KEY)) name += ' (У ПОДДЕРЖКИ)';
-    if (VolumeAnalyzer.isHighVolume(candle, prevCandles, 1.3)) name += ' (ОБЪЁМ)';
+    if (volumeOk) name += ' (ОБЪЁМ)'; else if (maOk) name += ' (MA20)';
     
     return { found: true, name };
   }
@@ -142,16 +188,17 @@ export class PatternDetector {
     if (candle.body > candle.totalRange * 0.5) return { found: false, name: '' };
     if (candle.lowerWick < candle.body * 0.9) return { found: false, name: '' };
     if (candle.close < (candle.high + candle.low) / 2) return { found: false, name: '' };
+    // Несовершенный молот (рис. 4.8-4.9) всё равно молот: только у дна.
+    if (!this.atLocalLow(candle, prevCandles)) return { found: false, name: '' };
     
     const closes = prevCandles.map(c => c.close);
     const m20Arr = ema(closes, 20);
     const m20 = m20Arr.length > 0 ? m20Arr[m20Arr.length - 1] : null;
     
-    const zoneOk = ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01, PATTERN_TF_KEY) ||
-                   VolumeAnalyzer.isHighVolume(candle, prevCandles, 1.3) ||
-                   (m20 !== null && Math.abs(candle.low - m20) <= m20 * 0.01);
+    const nearSupport = ZoneVoter.isNearSupport(candle.low, prevCandles, 0.01, PATTERN_TF_KEY) ||
+                        ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01, PATTERN_TF_KEY);
     
-    if (!zoneOk) return { found: false, name: '' };
+    if (!nearSupport) return { found: false, name: '' };
     
     return { found: true, name: 'МОЛОТ (НЕСОВЕРШЕННЫЙ)' };
   }
@@ -164,13 +211,17 @@ export class PatternDetector {
     const m20Arr = ema(closes, 20);
     const m20 = m20Arr.length > 0 ? m20Arr[m20Arr.length - 1] : null;
     
-    const zoneOk = ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01, PATTERN_TF_KEY) ||
-                   VolumeAnalyzer.isHighVolume(candle, prevCandles, 1.3) ||
-                   (m20 !== null && Math.abs(candle.low - m20) <= m20 * 0.01);
+    const nearSupport = ZoneVoter.isNearSupport(candle.low, prevCandles, 0.01, PATTERN_TF_KEY) ||
+                        ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01, PATTERN_TF_KEY);
     
-    const minRatio = zoneOk ? 1.0 : 1.5;
-    if (candle.upperWick < candle.body * minRatio) return { found: false, name: '' };
-    if (candle.lowerWick > candle.upperWick * (zoneOk ? 0.6 : 0.3)) return { found: false, name: '' };
+    // Канон (гл. 5): верхняя тень не менее двух тел, нижняя несущественна,
+    // тело в НИЖНЕЙ части свечи; свеча стоит у локального дна.
+    if (candle.upperWick < candle.body * 2) return { found: false, name: '' };
+    if (candle.lowerWick > candle.totalRange * 0.2) return { found: false, name: '' };
+    if (candle.close > candle.bodyMid) return { found: false, name: '' };
+    if (!this.atLocalLow(candle, prevCandles)) return { found: false, name: '' };
+    // Без опоры это просто свеча с длинной верхней тенью, не сигнал Нисона.
+    if (!nearSupport) return { found: false, name: '' };
     
     let name = 'ПЕРЕВЁРНУТЫЙ МОЛОТ';
     if (ZoneVoter.isNearSupport(candle.close, prevCandles, 0.015, PATTERN_TF_KEY)) name += ' (У ПОДДЕРЖКИ)';
@@ -181,8 +232,12 @@ export class PatternDetector {
   static isHangingMan(candle: Candle, prevCandles: Candle[]): { found: boolean; name: string } {
     if (candle.totalRange === 0) return { found: false, name: '' };
     if (candle.body > candle.totalRange * 0.45) return { found: false, name: '' };
-    if (candle.lowerWick < candle.body * 1.5) return { found: false, name: '' };
-    if (candle.upperWick > candle.lowerWick * 0.3) return { found: false, name: '' };
+    if (candle.lowerWick < candle.body * 2) return { found: false, name: '' };
+    if (candle.upperWick > candle.totalRange * 0.2) return { found: false, name: '' };
+    if (candle.close < candle.bodyMid) return { found: false, name: '' };
+    // Повешенный = форма молота, но на ВЕРШИНЕ роста (гл. 4). Вне вершины
+    // это просто свеча с длинной тенью — по Нисону сигнала нет.
+    if (!this.atLocalHigh(candle, prevCandles)) return { found: false, name: '' };
     
     let name = 'ПОВЕШЕННЫЙ';
     if (ZoneVoter.isNearResistance(candle.close, prevCandles, 0.015, PATTERN_TF_KEY)) name += ' (У СОПРОТИВЛЕНИЯ)';
@@ -193,8 +248,11 @@ export class PatternDetector {
   static isShootingStar(candle: Candle, prevCandles: Candle[]): { found: boolean; name: string } {
     if (candle.totalRange === 0) return { found: false, name: '' };
     if (candle.body > candle.totalRange * 0.45) return { found: false, name: '' };
-    if (candle.upperWick < candle.body * 1.5) return { found: false, name: '' };
-    if (candle.lowerWick > candle.upperWick * 0.3) return { found: false, name: '' };
+    if (candle.upperWick < candle.body * 2) return { found: false, name: '' };
+    if (candle.lowerWick > candle.totalRange * 0.2) return { found: false, name: '' };
+    if (candle.close > candle.bodyMid) return { found: false, name: '' };
+    // Падающая звезда — разворот ПОСЛЕ РОСТА: требует локального максимума (гл. 5).
+    if (!this.atLocalHigh(candle, prevCandles)) return { found: false, name: '' };
     
     let name = 'ПАДАЮЩАЯ ЗВЕЗДА';
     if (ZoneVoter.isNearResistance(candle.close, prevCandles, 0.015, PATTERN_TF_KEY)) name += ' (У СОПРОТИВЛЕНИЯ)';
@@ -235,9 +293,25 @@ export class PatternDetector {
     if (!c2.isShortCandle) return { found: false, name: '' };
     if (!(c3.isBullish && c3.isLongCandle)) return { found: false, name: '' };
     if (c3.close <= c1.bodyMid) return { found: false, name: '' };
+    // Канон (гл. 5): вторая свеча — small-свеча со ДНЕМ ниже тела первой
+    // (не обязательно строгий гэп: Нисон говорит о «нижнем уровне» второй свечи),
+    // третья закрывается в верхней половине тела первой.
+    if (c2.low >= c1.bodyBottom) return { found: false, name: '' };
     
+    // Утренняя звезда — разворот ПОСЛЕ СПАДА (гл. 5): минимум второй свечи —
+    // новый локальный дно окна, а третья свеча закрывается ВЫШЕ середины первой
+    // (уже проверено) и выше дна — покупатели вернули контроль.
+    {
+      const seg = candles.slice(Math.max(0, candles.length - 11), candles.length - 2);
+      const lo = Math.min(...seg.map(cc => cc.low));
+      if (!(c2.low <= lo * 1.001)) return { found: false, name: '' };
+    }
+
     let name = c2.isDoji ? 'УТРЕННЯЯ ДОДЖИ-ЗВЕЗДА' : 'УТРЕННЯЯ ЗВЕЗДА';
-    if (c2.gapDownFrom(c1) && c3.gapUpFrom(c2)) name += ' (С ГЭПАМИ)';
+    // Гэп по Нисону усиливает паттерн, но не является обязательным условием
+    // (на крипте гэпы редки) — отмечаем его как доп. силу (FIX канон-аудита).
+    if (c2.gapDownFrom(c1)) name += ' (ГЭП ВНИЗ)';
+    else if (c3.gapUpFrom(c2)) name += ' (ГЭП ВВЕРХ)';
     if (VolumeAnalyzer.isHighVolume(c3, candles.slice(0, -1), 1.3)) name += ' (ОБЪЁМ)';
     
     return { found: true, name };
@@ -253,6 +327,16 @@ export class PatternDetector {
     if (!c2.isShortCandle) return { found: false, name: '' };
     if (!(c3.isBearish && c3.isLongCandle)) return { found: false, name: '' };
     if (c3.close >= c1.bodyMid) return { found: false, name: '' };
+    // Канон (гл. 5): small-свеча с ВЕРХНИМ уровнем выше тела первой свечи;
+    // строгий гэп не обязателен (Нисон: «нижний/верхний уровень», гэп — редкость).
+    if (c2.high <= c1.bodyTop) return { found: false, name: '' };
+    // Вечерняя звезда — разворот ПОСЛЕ РОСТА (гл. 5): максимум второй свечи —
+    // новый локальный потолок окна, третья свеча уводит цену вниз от него.
+    {
+      const seg = candles.slice(Math.max(0, candles.length - 11), candles.length - 2);
+      const hi = Math.max(...seg.map(cc => cc.high));
+      if (!(c2.high >= hi * 0.999)) return { found: false, name: '' };
+    }
     
     let name = c2.isDoji ? 'ВЕЧЕРНЯЯ ДОДЖИ-ЗВЕЗДА' : 'ВЕЧЕРНЯЯ ЗВЕЗДА';
     if (VolumeAnalyzer.isHighVolume(c3, candles.slice(0, -1), 1.3)) name += ' (ОБЪЁМ)';
@@ -268,6 +352,9 @@ export class PatternDetector {
     
     if (!([c1, c2, c3].every(c => c.isBullish && c.isLongCandle))) return { found: false, name: '' };
     if (!(c2.close > c1.close && c3.close > c2.close)) return { found: false, name: '' };
+    // Канон (гл. 7): каждое открытие — внутри предыдущего тела (без гэпа).
+    if (!(c2.open >= c1.bodyBottom && c2.open <= c1.bodyTop)) return { found: false, name: '' };
+    if (!(c3.open >= c2.bodyBottom && c3.open <= c2.bodyTop)) return { found: false, name: '' };
     
     return { found: true, name: 'ТРИ БЕЛЫХ СОЛДАТА' };
   }
@@ -280,6 +367,9 @@ export class PatternDetector {
     
     if (!([c1, c2, c3].every(c => c.isBearish && c.isLongCandle))) return { found: false, name: '' };
     if (!(c2.close < c1.close && c3.close < c2.close)) return { found: false, name: '' };
+    // Симметрично солдатам (гл. 7): открытия внутри предыдущих тел.
+    if (!(c2.open >= c1.bodyBottom && c2.open <= c1.bodyTop)) return { found: false, name: '' };
+    if (!(c3.open >= c2.bodyBottom && c3.open <= c2.bodyTop)) return { found: false, name: '' };
     
     return { found: true, name: 'ТРИ ЧЁРНЫХ ВОРОНЫ' };
   }
@@ -380,7 +470,8 @@ export class PatternDetector {
   static isHarami(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
     if (!c1.isLongCandle) return { found: false, name: '' };
     if (c2.body > c1.body * 0.4) return { found: false, name: '' };
-    if (!c2.isInside(c1)) return { found: false, name: '' };
+    // Канон (гл. 6): малое тело целиком ВНУТРИ ТЕЛА первой свечи (не диапазона).
+    if (!(c2.bodyTop <= c1.bodyTop && c2.bodyBottom >= c1.bodyBottom)) return { found: false, name: '' };
     
     if (c1.isBearish) return { found: true, name: 'БЫЧИЙ ХАРАМИ' };
     if (c1.isBullish) return { found: true, name: 'МЕДВЕЖИЙ ХАРАМИ' };
@@ -389,7 +480,8 @@ export class PatternDetector {
   }
 
   static isHaramiCross(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
-    if (!c1.isLongCandle || !c2.isDoji || !c2.isInside(c1)) return { found: false, name: '' };
+    if (!c1.isLongCandle || !c2.isDoji) return { found: false, name: '' };
+    if (!(c2.bodyTop <= c1.bodyTop && c2.bodyBottom >= c1.bodyBottom)) return { found: false, name: '' };
     
     if (c1.isBearish) return { found: true, name: 'БЫЧИЙ ХАРАМИ-КРЕСТ' };
     if (c1.isBullish) return { found: true, name: 'МЕДВЕЖИЙ ХАРАМИ-КРЕСТ' };
@@ -400,6 +492,8 @@ export class PatternDetector {
   static isTweezerBottom(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
     if (!(c1.isBearish && c2.isBullish)) return { found: false, name: '' };
     if (Math.abs(c1.low - c2.low) / c1.low > 0.004) return { found: false, name: '' };
+    // Пинцет-низ по Нисону — отказ на ОДНОМ уровне дважды: без зоны S это шум.
+    if (!ZoneVoter.isNearSupport(c2.low, prev, 0.01, PATTERN_TF_KEY)) return { found: false, name: '' };
     
     return { found: true, name: 'ПИНЦЕТ (НИЗ)' };
   }
@@ -407,6 +501,7 @@ export class PatternDetector {
   static isTweezerTop(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
     if (!(c1.isBullish && c2.isBearish)) return { found: false, name: '' };
     if (Math.abs(c1.high - c2.high) / c1.high > 0.004) return { found: false, name: '' };
+    if (!ZoneVoter.isNearResistance(c2.high, prev, 0.01, PATTERN_TF_KEY)) return { found: false, name: '' };
     
     return { found: true, name: 'ПИНЦЕТ (ВЕРХ)' };
   }
@@ -621,7 +716,7 @@ export class PatternDetector {
     if (!(c3.open > c2.open && c3.close < c2.close && c3.close > c1.close)) return { found: false, name: '' };
     
     let name = 'ДВЕ ВЗЛЕТЁВШИЕ ВОРОНЫ';
-    if (ZoneVoter.isNearResistance(c3.close, candles.slice(0, -3))) name += ' (У СОПРОТИВЛЕНИЯ)';
+    if (ZoneVoter.isNearResistance(c3.close, candles.slice(0, -3), 0.015, PATTERN_TF_KEY)) name += ' (У СОПРОТИВЛЕНИЯ)';
     
     return { found: true, name };
   }
