@@ -100,6 +100,17 @@ export interface ZoneDTO {
   reasons: string[];
   touches: number;
   lastTouch?: number;
+  /** Полуширина зоны (Нисон: уровень — это полоса [level ± halfWidth], а не линия) */
+  halfWidth?: number;
+}
+
+/** Зоны S/R на одном временнóм масштабе (мульти-ТФ анализ, getMultiTimeframeZones) */
+export interface MultiTFZonesDTO {
+  timeframe: string;
+  scale: 'scalp' | 'intraday' | 'swing' | 'position';
+  price: number;
+  support: ZoneDTO[];
+  resistance: ZoneDTO[];
 }
 
 /** Консенсус-оценка направления */

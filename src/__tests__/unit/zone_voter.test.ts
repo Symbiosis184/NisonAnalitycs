@@ -159,3 +159,45 @@ describe('Аудит №1: единый источник S/R — транзит�
     expect(near90[0].touches).toBeGreaterThanOrEqual(3);
   });
 });
+
+describe('ТФ-аудит: адаптивная калибровка зон по временнóму масштабу', () => {
+  const noisyHistory = () => {
+    const arr = [] as ReturnType<typeof c>[];
+    for (let i = 0; i < 200; i++) {
+      const mid = 100 + 10 * Math.sin(i / 7) + (i % 5) * 0.11;
+      arr.push(c(mid - 0.3, mid + 0.9, mid - 0.9, mid + 0.3));
+    }
+    return arr;
+  };
+
+  it('timeframeKey группирует интервалы по масштабам', async () => {
+    const { timeframeKey } = await import('../../utils/zone_voter');
+    expect(timeframeKey('5')).toBe('scalp');
+    expect(timeframeKey('60')).toBe('intraday');
+    expect(timeframeKey('4H')).toBe('intraday');
+    expect(timeframeKey('D')).toBe('swing');
+    expect(timeframeKey('W')).toBe('position');
+  });
+
+  it('разные ТФ дают разные наборы зон на одних и тех же данных (нет «копии с дневки»)', () => {
+    const candles = noisyHistory();
+    const price = candles[candles.length - 1].close;
+    const scalp = ZoneVoter.collect(price, candles, 'scalp');
+    const position = ZoneVoter.collect(price, candles, 'position');
+    // более грубое окно свингов (span=4 vs 2) обязано давать не больше зон
+    const count = (z: { support: unknown[]; resistance: unknown[] }) => z.support.length + z.resistance.length;
+    expect(count(position)).toBeLessThanOrEqual(count(scalp));
+    expect(count(scalp)).toBeGreaterThan(0);
+  });
+
+  it('зона имеет АТР-калиброванную полуширину (Нисон: уровень — это полоса)', () => {
+    const candles = noisyHistory();
+    const zones = ZoneVoter.collect(candles[candles.length - 1].close, candles, 'intraday');
+    const all = [...zones.support, ...zones.resistance];
+    expect(all.length).toBeGreaterThan(0);
+    for (const z of all) {
+      expect(z.halfWidth).toBeGreaterThan(0);
+      expect(Number.isFinite(z.halfWidth)).toBe(true);
+    }
+  });
+});

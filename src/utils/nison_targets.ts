@@ -15,7 +15,7 @@
 
 import { Candle } from './candle';
 import { atr } from './indicators';
-import { ZoneVoter } from './zone_voter';
+import { ZoneVoter, timeframeKey } from './zone_voter';
 
 export interface StructuralTarget {
   level: number;      // цена цели
@@ -58,12 +58,14 @@ export function nearestStructuralTarget(
   entryPrice: number,
   direction: 'long' | 'short',
   closedCandles: Candle[],
-  opts?: { noiseFloor?: number; maxReward?: number },
+  opts?: { noiseFloor?: number; maxReward?: number; timeframe?: string },
 ): StructuralTarget | null {
   const noiseFloor = opts?.noiseFloor ?? Math.max(entryPrice * 0.01, atr(closedCandles, 14));
   const maxReward = opts?.maxReward ?? entryPrice * 0.20;
 
-  const zones = ZoneVoter.collect(entryPrice, closedCandles);
+  // FIX ТФ-аудита: зоны собираются с параметрами того таймфрейма, на котором
+  // строится цель (раньше всегда использовались дневные настройки).
+  const zones = ZoneVoter.collect(entryPrice, closedCandles, timeframeKey(opts?.timeframe ?? 'D'));
   const zoneLevels =
     direction === 'long' ? zones.resistance.filter((z) => z.strong) : zones.support.filter((z) => z.strong);
 
