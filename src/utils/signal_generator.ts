@@ -9,6 +9,10 @@ import { matchesPatternId, PatternId } from './pattern_ids';
 import { nearestStructuralTarget } from './nison_targets';
 import { resolveSignalStatus, SignalStatus } from './signal_lifecycle';
 import { computeSignalQuality } from './signal_quality';
+import type { Zone } from './zone_voter';
+import { evaluatePricePath, type PricePathInfo } from './price_path';
+import { detectPhase, phaseMultiplier, type PhaseInfo } from './wyckoff';
+import { buildVolumeProfile, type VolumeProfile } from './volume_profile';
 
 // Константы
 const TIMEOUT_H1 = 10800; // 3 часа в секундах
@@ -27,6 +31,14 @@ export const SELF_CONFIRMING: readonly PatternId[] = [
   'ADVANCE_BLOCK', 'RETREAT_BLOCK', 'THRUSTING', 'DOUBLE_THRUSTING_BULL',
 ];
 
+/** Рыночный контекст для «путь-осознанной» фильтрации (запрос: контекст рынка). */
+export interface MarketContext {
+  /** Зоны S/R, собранные ZoneVoter относительно текущей цены */
+  zones: { support: Zone[]; resistance: Zone[] };
+  /** Опционально: профиль объёма (HVN/LVN bands) из volume_profile.buildVolumeProfile */
+  volumeBands?: Array<{ low: number; high: number; weight: number }>;
+}
+
 export interface Signal {
   direction: 'long' | 'short';
   pattern: string;
@@ -41,6 +53,10 @@ export interface Signal {
   // Аудит №11: полноценный жизненный цикл по Нисону вместо булева «раз и навсегда».
   status?: SignalStatus;
   story: string;
+  // Контекст рынка (запрос: фазы Вайкоффа + путь цены). Заполняются, только если
+  // вызывающий передал marketContext в findSignals — обратная совместимость сохранена.
+  path?: PricePathInfo;
+  phase?: PhaseInfo;
   meta: {
     patternCandlesCount: number;
     patternStartIdx: number;
@@ -149,6 +165,8 @@ export class SignalGenerator {
     candles: Candle[],
     i: number,
     closedCount: number,
+    ctx?: MarketContext | null,
+    phase?: PhaseInfo | null,
   ): void {
     const status = resolveSignalStatus(candles, i, direction, patternCandle.close, bounds, closedCount);
     signal.status = status;
@@ -163,11 +181,41 @@ export class SignalGenerator {
       priorCandles: candles.slice(0, i),
       status,
     });
+
+    // Контекст рынка (запрос пользователя): фаза Вайкоффа + «путь цены» до цели.
+    // quality корректируется множителем фазы; adjustedRR учитывает препятствия
+    // на транзите — фильтр в findSignals использует его вместо формального rr.
+    if (phase) {
+      signal.phase = phase;
+      signal.quality = Math.min(1, Math.round(signal.quality * phaseMultiplier(direction, phase) * 100) / 100);
+    }
+    if (ctx) {
+      const path = evaluatePricePath({
+        direction,
+        entry: signal.entryPrice,
+        target: signal.target,
+        stop: signal.stopLoss,
+        zones: ctx.zones,
+        volumeBands: ctx.volumeBands,
+      });
+      signal.path = path;
+      signal.story += ` | путь: ${path.description}`;
+    }
   }
 
-  // Главный метод поиска всех сигналов с жизненным циклом по Нисону
-  findSignals(candles: Candle[], tf: string = 'D'): Signal[] {
+  // Главный метод поиска всех сигналов с жизненным циклом по Нисону.
+  // opts.context — рыночный контекст (зоны S/R, фазы Вайкоффа, профиль объёма).
+  // Без него поведение идентично прежнему (обратная совместимость тестов/UI).
+  findSignals(
+    candles: Candle[],
+    tf: string = 'D',
+    opts?: { context?: MarketContext },
+  ): Signal[] {
     if (candles.length < 6) return [];
+
+    const ctx = opts?.context ?? null;
+    // Фаза Вайкоффа вычисляется один раз на полном массиве (контекст «здесь и сейчас»)
+    const phase: PhaseInfo | null = ctx ? detectPhase(candles) : null;
 
     // Аудит №11: live-последняя свеча Bybit формируется — не учитывать её
     // как подтверждающую. Исторический прогон (все свечи закрыты) передаёт
@@ -241,11 +289,13 @@ export class SignalGenerator {
           if (!signal) continue;
           
           // Аудит №11: жизненный цикл по ЗАКРЫТЫМ свечам (pending/confirmed/invalidated/expired)
-          this.applyLifecycle(signal, direction, patternCandle, bounds, candles, i, closedCount);
+          this.applyLifecycle(signal, direction, patternCandle, bounds, candles, i, closedCount, ctx, phase);
           
           // FIX аудита №7: раньше неподтверждённые сигналы молча выбрасывались —
           // пользователь не видел «почти-сигналов». Теперь они возвращаются с confirmed=false.
-          if (signal.rr >= 2) {
+          // Запрос «контекст рынка»: порог RR считается по СКОРРЕКТИРОВАННОМУ пути
+          // adjustedRR (если передан контекст) — формальный RR больше не самоцель.
+          if ((signal.path?.adjustedRR ?? signal.rr) >= 2) {
             signals.push(signal);
           }
         }
@@ -292,10 +342,11 @@ export class SignalGenerator {
             if (!signal) continue;
             
             // Аудит №11: жизненный цикл по закрытым свечам
-            this.applyLifecycle(signal, direction, patternCandle, bounds, candles, i, closedCount);
+            this.applyLifecycle(signal, direction, patternCandle, bounds, candles, i, closedCount, ctx, phase);
             
             // FIX аудита №7: неподтверждённые сигналы возвращаются с confirmed=false
-            if (signal.rr >= 2) {
+            // Порог — по path-aware adjustedRR при наличии рыночного контекста.
+            if ((signal.path?.adjustedRR ?? signal.rr) >= 2) {
               signals.push(signal);
             }
           }
@@ -332,10 +383,11 @@ export class SignalGenerator {
           if (!signal) continue;
           
           // Аудит №11: жизненный цикл по ЗАКРЫТЫМ свечам (pending/confirmed/invalidated/expired)
-          this.applyLifecycle(signal, direction, patternCandle, bounds, candles, i, closedCount);
+          this.applyLifecycle(signal, direction, patternCandle, bounds, candles, i, closedCount, ctx, phase);
           
           // FIX аудита №7: неподтверждённые сигналы возвращаются с confirmed=false
-          if (signal.rr >= 2) {
+          // Порог — по path-aware adjustedRR при наличии рыночного контекста.
+          if ((signal.path?.adjustedRR ?? signal.rr) >= 2) {
             signals.push(signal);
           }
         }

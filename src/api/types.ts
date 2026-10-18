@@ -53,6 +53,24 @@ export interface SignalDTO {
   };
   /** План размера позиции по правилу фиксированного риска (аудит №10, utils/position_sizing) */
   position_plan?: PositionPlanDTO;
+  /** «Путь цены» до цели (запрос: контекст рынка, utils/price_path) */
+  path?: {
+    distance_pct: number;
+    path_quality: number;      // 0..1 — чистота пути
+    adjusted_rr: number;       // RR с учётом препятствий на транзите
+    obstacles: Array<{ level: number; kind: 'zone' | 'hvn'; strength: number; detail: string }>;
+    first_obstacle_pct: number | null;
+    description: string;
+  };
+  /** Фаза цикла Вайкоффа (utils/wyckoff) */
+  phase?: {
+    phase: 'accumulation' | 'markup' | 'distribution' | 'markdown' | 'transition';
+    confidence: number;
+    position_in_range: number;
+    range_low: number;
+    range_high: number;
+    description: string;
+  };
 }
 
 /** Настройки риск-менеджмента пользователя (localStorage «nison_risk_settings») */
@@ -138,6 +156,32 @@ export interface AnalysisReport {
   resistance: ZoneDTO[];
   regime: Regime;
   regime_description: string;
+  /** Фаза цикла Вайкоффа по всему инструменту (запрос: контекст рынка, utils/wyckoff) */
+  wyckoff?: {
+    phase: 'accumulation' | 'markup' | 'distribution' | 'markdown' | 'transition';
+    confidence: number;
+    position_in_range: number;
+    range_low: number;
+    range_high: number;
+    range_width_atr: number;
+    vol_skew_high_low: number;
+    description: string;
+  };
+  /** Профиль объёма (utils/volume_profile): POC/VAH/VAL + узлы HVN/LVN */
+  volume_profile?: {
+    poc: number;
+    vah: number;
+    val: number;
+    hvn: Array<{ low: number; high: number; volume: number }>;
+    lvn: Array<{ low: number; high: number; volume: number }>;
+  };
+  /** Сводка дельты/агрессии за окно (proxy-оценка по OHLCV, utils/volume_profile) */
+  delta_summary?: {
+    cumulative_delta: number;
+    buy_pressure_share: number;
+    avg_clv: number;
+    delta_trend: 'rising' | 'falling' | 'flat';
+  };
   consensus: ConsensusDTO;
   trend_analysis: TrendAnalysisDTO;
   /** Бэктест-сводка по найденным сигналам (заглушка до подключения движка — П.3) */

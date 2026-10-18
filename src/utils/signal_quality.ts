@@ -17,6 +17,7 @@ import { VolumeAnalyzer } from './pattern_engine';
 import { getTrendContext, getTrendMacro } from './trend_detection';
 import { matchesPatternId, PatternId } from './pattern_ids';
 import type { SignalStatus } from './signal_lifecycle';
+import { candleDelta } from './volume_profile';
 
 export interface QualityInput {
   direction: 'long' | 'short';
@@ -80,7 +81,18 @@ export function computeSignalQuality(input: QualityInput): number {
     avgVol = priorCandles.reduce((s, cc) => s + cc.volume, 0) / priorCandles.length;
   }
   const volRatio = avgVol > 0 ? confirmCandle.volume / avgVol : 1;
-  const volumeScore = volRatio >= 1.5 ? 1.0 : volRatio >= 1.3 ? 0.9 : volRatio >= 1.0 ? 0.75 : 0.55;
+  let volumeScore = volRatio >= 1.5 ? 1.0 : volRatio >= 1.3 ? 0.9 : volRatio >= 1.0 ? 0.75 : 0.55;
+
+  // 2b) Многомерный объём подтверждения паттерна (запрос пользователя):
+  //     proxy-дельта и дисбаланс агрессии подтверждающей свечи. Всплеск объёма
+  //     без направления — нерешительность; объём + агрессивное закрытие «в нашу
+  //     сторону» — книжный признак участия крупных игроков (Нисон, гл. 3/8).
+  const { delta, imbalance } = candleDelta(confirmCandle);
+  if (volRatio >= 1.3) {
+    const agrees = direction === 'long' ? delta > 0 : delta < 0;
+    if (agrees && imbalance !== null) volumeScore = Math.min(1, volumeScore + 0.1);
+    else if (!agrees) volumeScore = Math.max(0.45, volumeScore - 0.15);
+  }
 
   // 3) Тело подтверждающей свечи: сильное тело = решимость, маленькое = нерешительность.
   //    Для односвечных ТЕНЕВЫХ моделей (молот/звезда/повешенный) маленькое тело —

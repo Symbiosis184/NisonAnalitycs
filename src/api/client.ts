@@ -7,6 +7,8 @@ import { ZoneVoter } from '../utils/zone_voter';
 import { detectTrendStart, getTrendMacro, type TrendContext } from '../utils/trend_detection';
 import { planPosition, toPlanDTO } from '../utils/position_sizing';
 import { loadRiskSettings } from '../utils/risk_settings';
+import { detectPhase } from '../utils/wyckoff';
+import { buildVolumeProfile, summarizeDelta } from '../utils/volume_profile';
 import type {
   AnalysisReport,
   CandleDTO,
@@ -84,8 +86,18 @@ export class ApiClient {
       story: patternStory(p.name),
     }));
     
+    // Многомерный объём + фазовый контекст (запрос пользователя): профиль объёма
+    // (POC/VA/HVN/LVN), proxy-дельта агрессии и фаза Вайкоффа. Считаются по закрытым
+    // свечам до текущего момента — без lookahead.
+    const vprofile = buildVolumeProfile(candles, 120);
+    const deltaSummary = summarizeDelta(candles, 60);
+
     // Генерация торговых сигналов через SignalGenerator
-    const detectedSignals = signalGenerator.findSignals(candles, timeframe);
+    // opts.context включает «путь цены» (S/R-зоны + HVN) и фазы Вайкоффа в фильтрацию RR.
+    const marketPhase = detectPhase(candles);
+    const detectedSignals = signalGenerator.findSignals(candles, timeframe, {
+      context: { zones, volumeBands: vprofile.bands },
+    });
 
     // Аудит №10: план размера позиции по правилу фиксированного риска.
     // Настройки (капитал/риск) берутся из localStorage; риск-расчёт учитывает издержки цикла.
@@ -133,6 +145,26 @@ export class ApiClient {
         story: s.story,
         ...(htf ? { htf } : {}),
         ...(plan ? { position_plan: plan } : {}),
+        ...(s.path ? {
+          path: {
+            distance_pct: s.path.distancePct,
+            path_quality: s.path.pathQuality,
+            adjusted_rr: s.path.adjustedRR,
+            obstacles: s.path.obstacles.map((o) => ({ level: o.level, kind: o.kind, strength: o.strength, detail: o.detail })),
+            first_obstacle_pct: s.path.toFirstObstaclePct,
+            description: s.path.description,
+          },
+        } : {}),
+        ...(s.phase ? {
+          phase: {
+            phase: s.phase.phase,
+            confidence: s.phase.confidence,
+            position_in_range: s.phase.positionInRange,
+            range_low: s.phase.rangeLow,
+            range_high: s.phase.rangeHigh,
+            description: s.phase.description,
+          },
+        } : {}),
       };
     });
     
@@ -176,6 +208,29 @@ export class ApiClient {
       resistance: zones.resistance,
       regime,
       regime_description: `Тренд: ${trend}`,
+      wyckoff: {
+        phase: marketPhase.phase,
+        confidence: marketPhase.confidence,
+        position_in_range: marketPhase.positionInRange,
+        range_low: marketPhase.rangeLow,
+        range_high: marketPhase.rangeHigh,
+        range_width_atr: marketPhase.rangeWidthAtr,
+        vol_skew_high_low: marketPhase.volSkewHighLow,
+        description: marketPhase.description,
+      },
+      volume_profile: {
+        poc: vprofile.poc,
+        vah: vprofile.vah,
+        val: vprofile.val,
+        hvn: vprofile.hvn.map((b) => ({ low: b.low, high: b.high, volume: b.volume })),
+        lvn: vprofile.lvn.map((b) => ({ low: b.low, high: b.high, volume: b.volume })),
+      },
+      delta_summary: {
+        cumulative_delta: deltaSummary.cumulativeDelta,
+        buy_pressure_share: deltaSummary.buyPressureShare,
+        avg_clv: deltaSummary.avgClv,
+        delta_trend: deltaSummary.deltaTrend,
+      },
       consensus: {
         score: confidence / 20,
         direction: consensusDirection,
