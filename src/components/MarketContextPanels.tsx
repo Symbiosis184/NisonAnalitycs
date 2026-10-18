@@ -6,7 +6,8 @@
 // 3) EdgeVerificationPanel — когорты эффективности по режимам рынка (тренд/флэт/
 //    волатильность) с CI expectancy + мониторинг деградации за последние 90 дней.
 
-import { AlertTriangle, CheckCircle2, TrendingDown, TrendingUp } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, TrendingDown, TrendingUp } from 'lucide-react';
+import { useState } from 'react';
 import type { AnalysisReport, EdgeCohortDTO, SignalDTO } from '../api/types';
 import { formatPrice } from '../utils/format';
 import { Collapsible } from '../components/Collapsible';
@@ -21,6 +22,45 @@ const PHASE_META: Record<Phase, { label: string; color: string }> = {
   transition: { label: 'Переход', color: '#94a3b8' },
 };
 
+/** Подробные описания фаз цикла Вайкоффа (по «Методу Уайкоффа» / классике цикла). */
+const PHASE_DETAILS: Record<Phase, { title: string; what: string; who: string; volume: string; action: string }> = {
+  accumulation: {
+    title: 'Фаза A — Накопление (Spring / Primary Support)',
+    what: 'Цена движется в горизонтальном диапазоне после долгого падения. Слабые продавцы выбрасывают остатки позиций, а «сильные руки» (крупный капитал) незаметно подбирают их на нижних границах диапазона. Характерны тесты дна: spring — ложный пробой вниз с быстрым возвратом в диапазон.',
+    who: 'Композитная операция (крупные игроки) покупает у уставших держателей. Обычным трейдерам движение кажется «скучным боковиком».',
+    volume: 'Объём на падении внутри диапазона высокий, но на отскоках к верхней границе растёт; на тестах дна объём снижается — предложение иссякает.',
+    action: 'Благоприятна для поиска разворотных сигналов Нисона (молот, утреннее утро/вечерняя звезда, бычье поглощение) у нижней границы диапазона — там рождается будущая поддержка.',
+  },
+  markup: {
+    title: 'Фаза B–C — Рост (Markup / Jump across the Ledge)',
+    what: 'Цена выходит из накопления вверх и формирует восходящую структуру: серия более высоких максимумов и минимумов. Откаты (back-up to the edge) возвращают цену к пробитому сопротивлению, которое стало поддержкой.',
+    who: 'За крупными игроками подтягивается толпа; спрос доминирует на каждом откате.',
+    volume: 'Объём расширяется на росте и усыхает на откатах — здоровый тренд. Резкий всплеск объёма без продолжения роста («усилие без результата») — первый предупреждающий сигнал.',
+    action: 'Приоритет — покупки на откатах к поддержке, а не погоня за ценой у вершин. Паттерны продолжения (три солдата, восходящее харами) здесь наиболее надёжны.',
+  },
+  distribution: {
+    title: 'Фаза D — Распределение (Distribution / Upthrust)',
+    what: 'После роста цена входит в верхний диапазон. Сильные руки продают накопленные позиции входящему спросу. Характерен upthrust — ложный пробой вверх за границу диапазона с возвратом внутрь.',
+    who: 'Крупный капитал распределяет позиции между эйфоричной толпой. Новость остаются «бычьими», но цена на них не реагирует.',
+    volume: 'Объём остаётся высоким, но перестаёт двигать цену вверх: много сделок на месте, рост остановлен — дисбаланс «усилие vs результат» в пользу предложения.',
+    action: 'Осторожно с лонгами. Медвежьи паттерны Нисона (падающая звезда, повешенный, вечерняя звезда, медвежье поглощение) у верхней границы диапазона — сигналы к сокращению позиций.',
+  },
+  markdown: {
+    title: 'Фаза E — Падение (Markdown / Back to the Edge)',
+    what: 'Цена пробивает нижнюю границу распределения и снижается серией более низких максимумов и минимумов. Каждый откат к пробитой поддержке (ставшей сопротивлением) встречает предложение («back to the edge» — возврат к краю).',
+    who: 'Держатели, купившие на распределении, фиксируют убытки; покупатели отсутствуют или паникуют.',
+    volume: 'Всплески объёма на новых минимумах и слабые отскоки. Постепенное исчерпание предложения внизу готовит новую фазу накопления.',
+    action: 'Приоритет — шорты от сопротивления. Разворотные бычьи паттерны без подтверждения объемом и без сформированного дна здесь ненадёжны — ранние ловли ножа против канона.',
+  },
+  transition: {
+    title: 'Переходная фаза (нет выраженного цикла)',
+    what: 'Ни один из четырёх режимов цикла не определяется уверенно: структура диапазона не сформирована или данные слишком коротки/противоречивы.',
+    who: 'Инициатива между крупными игроками и толпой не ясна.',
+    volume: 'Нет устойчивого объёмного перекоса ни вверх, ни вниз.',
+    action: 'Контекст нейтрален: качество сигналов не корректируется. Решения — только по самим паттернам Нисона и уровням S/R, с повышенным вниманием к подтверждению.',
+  },
+};
+
 /** Циклическая последовательность фаз для наглядной шкалы. */
 const CYCLE: Phase[] = ['accumulation', 'markup', 'distribution', 'markdown'];
 
@@ -32,6 +72,12 @@ export function WyckoffPhasePanel({ wyckoff }: WProps) {
   const meta = PHASE_META[wyckoff.phase];
   // Позиция цены в диапазоне: 0 = низ консолидации, 1 = верх
   const posPct = Math.round(wyckoff.position_in_range * 100);
+  // Подробное описание выбранной фазы под шкалой цикла
+  const [expanded, setExpanded] = useState(true);
+  const [selected, setSelected] = useState<Phase>(wyckoff.phase);
+  const shown = selected ?? wyckoff.phase;
+  const details = PHASE_DETAILS[shown];
+  const detailsMeta = PHASE_META[shown];
 
   return (
     <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
@@ -45,20 +91,25 @@ export function WyckoffPhasePanel({ wyckoff }: WProps) {
         </span>
       </h3>
 
-      {/* Шкала цикла: 4 сегмента, активный подсвечен */}
+      {/* Шкала цикла: 4 сегмента, активный подсвечен; клик — подробное описание фазы */}
       <div className="flex gap-1 mb-3">
         {CYCLE.map((ph) => {
           const m = PHASE_META[ph];
           const active = ph === wyckoff.phase;
           return (
-            <div
+            <button
               key={ph}
-              className={`flex-1 rounded-md px-1.5 py-1.5 text-center text-[10px] sm:text-xs font-medium transition-colors ${active ? '' : 'opacity-40'}`}
+              type="button"
+              onClick={() => {
+                setSelected(ph);
+                setExpanded(true);
+              }}
+              className={`flex-1 rounded-md px-1.5 py-1.5 text-center text-[10px] sm:text-xs font-medium transition-colors cursor-pointer ${active ? '' : 'opacity-40'}`}
               style={active ? { backgroundColor: `${m.color}25`, color: m.color, boxShadow: `inset 0 0 0 1px ${m.color}60` } : { color: m.color }}
-              title={PHASE_META[ph].label}
+              title={`${m.label}: показать подробное описание`}
             >
               {m.label}
-            </div>
+            </button>
           );
         })}
       </div>
@@ -87,6 +138,47 @@ export function WyckoffPhasePanel({ wyckoff }: WProps) {
         </span>
       </div>
       <p className="text-xs text-gray-400 mt-2 italic leading-relaxed">{wyckoff.description}</p>
+
+      {/* Подробное описание фазы (раскрывается под шкалой цикла) */}
+      <div className="mt-3 border-t border-gray-800/60 pt-2">
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
+          className="w-full flex items-center gap-1.5 text-[11px] font-medium text-gray-400 hover:text-gray-200 transition-colors cursor-pointer"
+        >
+          <ChevronDown size={13} className={`transition-transform ${expanded ? '' : '-rotate-90'}`} />
+          Подробное описание фазы
+          {shown !== wyckoff.phase && (
+            <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500">
+              просмотр: {detailsMeta.label} · активная: {meta.label}
+            </span>
+          )}
+        </button>
+        {expanded && (
+          <div className="mt-2 space-y-2 text-[11px] leading-relaxed">
+            <div className="font-semibold" style={{ color: detailsMeta.color }}>
+              {details.title}
+            </div>
+            <div>
+              <span className="text-gray-500 font-medium">Что происходит: </span>
+              <span className="text-gray-300">{details.what}</span>
+            </div>
+            <div>
+              <span className="text-gray-500 font-medium">Кто действует: </span>
+              <span className="text-gray-300">{details.who}</span>
+            </div>
+            <div>
+              <span className="text-gray-500 font-medium">Объём (усилие vs результат): </span>
+              <span className="text-gray-300">{details.volume}</span>
+            </div>
+            <div className="rounded-lg bg-gray-800/40 border border-gray-700/40 px-2.5 py-2">
+              <span className="text-gray-500 font-medium">Как использовать в анализе: </span>
+              <span className="text-gray-300">{details.action}</span>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
