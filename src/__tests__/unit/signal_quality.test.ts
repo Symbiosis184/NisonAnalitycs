@@ -30,8 +30,9 @@ describe('isReversalModel', () => {
 describe('computeSignalQuality — детерминированность и границы', () => {
   /** Нисходящий тренд из 80 свечей: EMA-стопка (10<20<50) подтверждена, close < EMA10 */
   const prior = downtrend(80);
-  /** Молот: тень 4 > 2×тела; верхняя тень мала; объём ×2 относительно базовой линии */
-  const hammer = mk(100, 100.8, 96, 100.5, 200);
+  /** Молот: тело ≤10% диапазона (книжное требование), нижняя тень ≥2×тела,
+   *  верхняя тень мала; объём ×2 относительно базовой линии */
+  const hammer = mk(100, 100.3, 96, 100.2, 200);
 
   it('сильный сигнал (тренд+объём+тень+подтверждение) = 1.0', () => {
     const q = computeSignalQuality({
@@ -80,18 +81,29 @@ describe('computeSignalQuality — детерминированность и г�
 
 describe('SignalGenerator: quality больше не константа 1.0', () => {
   it('сигналы получают оценку ∈ [0.2, 1.0], как минимум один < 1.0 на типовой серии', () => {
-    // Макро-нисходящий тренд из 80 свечей (≥65 — EMA-стопка определена),
-    // затем бычье поглощение с объёмом и вялое поглощение без объёма.
-    const candles: Candle[] = [...downtrend(80)];
-    const lastClose = candles[candles.length - 1].close;
-    // бычье поглощение с объёмом (сильное)
-    candles.push(mk(lastClose + 0.5, lastClose + 1.5, lastClose - 1, lastClose + 1, 40));
-    candles.push(mk(lastClose - 1, lastClose + 7, lastClose - 1.5, lastClose + 6.5, 300));
+    // Нисходящий тренд (80 свечей, ≥65 — EMA-стопка определена), затем
+    // бычье поглощение с объёмом (сильное) и вялое поглощение без объёма.
+    // Тело поглощающей свечи должно перекрывать тело предыдущей ПОЛНОСТЬЮ
+    // (канон Нисона): open ниже тела пред. медвежьей, close выше её тела.
+    const candles: Candle[] = [...downtrend(80, 150, 1)];
+    const lc = candles[candles.length - 1].close;
+    candles.push(mk(lc + 0.4, lc + 0.9, lc - 1.2, lc - 0.9, 40));   // медвежья предыдущая: тело [lc-0.9, lc+0.4]
+    candles.push(mk(lc - 1.4, lc + 3.2, lc - 1.6, lc + 1.2, 300));  // бычье поглощение: тело [lc-1.4, lc+1.2] ⊇ пред.
     // ещё нисходная волна и слабое поглощение (малое тело, малый объём)
-    for (let k = 0; k < 8; k++) { const o = lastClose - 2 - k; candles.push(mk(o, o + 0.4, o - 1.4, o - 1)); }
+    for (let k = 0; k < 8; k++) { const o = lc - 2 - k * 0.5; candles.push(mk(o, o + 0.4, o - 1.4, o - 1)); }
     const lc2 = candles[candles.length - 1].close;
-    candles.push(mk(lc2 - 0.2, lc2 + 0.6, lc2 - 0.6, lc2 + 0.2, 30));
-    candles.push(mk(lc2 + 0.1, lc2 + 1.6, lc2 - 0.2, lc2 + 1.4, 60));
+    candles.push(mk(lc2 + 0.2, lc2 + 0.6, lc2 - 0.6, lc2 - 0.2, 30));      // медвежья: тело [lc2-0.2, lc2+0.2]
+    candles.push(mk(lc2 - 0.4, lc2 + 1.7, lc2 - 0.6, lc2 + 0.4, 60));      // бычье поглощение малого тела (слабый объём)
+
+    // Разворот по Нисону требует структуры: после обвала рисуем V-отскок
+    // (быстрые бычьи свечи вверх), чтобы у long-сигнала появился явный
+    // структурный ориентир (экстремум/зона) в пределах maxReward.
+    let p = candles[candles.length - 1].close;
+    for (let k = 0; k < 6; k++) { p += 1.2; candles.push(mk(p - 1.2, p + 0.3, p - 1.4, p, 150)); }
+    // вершина отскока + спад на 2 шага (тоже закрытые свечи — не look-ahead)
+    const peak = p + 1.5; candles.push(mk(p, peak, p - 0.3, peak - 0.3, 100));
+    candles.push(mk(peak - 0.3, peak, peak - 1.5, peak - 1.4, 80));
+    candles.push(mk(peak - 1.4, peak - 1.3, peak - 2.6, peak - 2.5, 80));
 
     const signals = signalGenerator.findSignals(candles, 'D');
     expect(signals.length).toBeGreaterThan(0);

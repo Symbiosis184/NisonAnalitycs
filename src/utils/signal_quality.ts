@@ -83,13 +83,20 @@ export function computeSignalQuality(input: QualityInput): number {
   const volumeScore = volRatio >= 1.5 ? 1.0 : volRatio >= 1.3 ? 0.9 : volRatio >= 1.0 ? 0.75 : 0.55;
 
   // 3) Тело подтверждающей свечи: сильное тело = решимость, маленькое = нерешительность.
+  //    Для односвечных ТЕНЕВЫХ моделей (молот/звезда/повешенный) маленькое тело —
+  //    КНИЖНОЕ требование канона (Нисон: «small real body»), поэтому телесный штраф
+  //    к ним не применяется (иначе идеальная свеча наказывалась бы за свою природу).
+  const isShadowModel = matchesPatternId(pattern, SHADOW_MODELS);
   const range = Math.max(confirmCandle.high - confirmCandle.low, 1e-9);
   const bodyRatio = confirmCandle.body / range;
-  const bodyScore = bodyRatio >= 0.6 ? 1.0 : bodyRatio >= 0.4 ? 0.85 : bodyRatio >= 0.2 ? 0.7 : 0.55;
+  const bodyScore = isShadowModel
+    ? 1.0
+    : bodyRatio >= 0.6 ? 1.0 : bodyRatio >= 0.4 ? 0.85 : bodyRatio >= 0.2 ? 0.7 : 0.55;
 
-  // 4) Качество тени для теневых моделей (молот/звезда/повешенный).
+  // 4) Качество тени для теневых моделей (молот/звезда/повешенный):
+  //    тень ≥ 2×тела — сильный сигнал, ≥1.5× — умеренный (гл. 3).
   let shadowScore = 1.0;
-  if (matchesPatternId(pattern, SHADOW_MODELS)) {
+  if (isShadowModel) {
     const kind =
       matchesPatternId(pattern, ['HAMMER', 'IMPERFECT_HAMMER', 'INVERTED_HAMMER']) && direction === 'long'
         ? ('lower' as const)

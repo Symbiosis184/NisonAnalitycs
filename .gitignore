@@ -1,20 +1,5 @@
 node_modules/
-
-# артефакты сборки/деплоя
-/dist/
-/nison-dist.tar.gz
-dev-server.log
+dist/
 *.log
-
-# OS/editor
-.DS_Store
-Thumbs.db
-*.swp
-.idea/
-.vscode/
-
-# env (запрет коммита секретов)
-.env
-.env.*
-!.env.example
-nison-dist.tar.gz
+*.tar.gz
+.env*

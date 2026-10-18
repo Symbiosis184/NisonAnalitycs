@@ -6,6 +6,9 @@ import { Candle } from '../utils/candle';
 import { signalGenerator } from '../utils/signal_generator';
 import { runBacktest, type BacktestResult, type FormationBounds } from '../utils/backtest';
 import { cycleCostFraction, type CostModel } from '../utils/costs';
+import { wilsonWinRate, expectancyCI, hasEdge } from '../utils/stats';
+import { runWalkForward } from '../utils/walkforward';
+import { detectRegime, type RegimeInfo } from '../utils/regime';
 
 const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT'];
 // Значения проходят whitelist валидацию (validation.ALLOWED_TIMEFRAMES)
@@ -68,7 +71,7 @@ export default function BacktestPage() {
     }
     // Один прогон на уникальную пару (паттерн, направление)
     const keys = new Set(events.map((e) => `${e.pattern}|${e.direction}`));
-    const out: Array<{ key: string; res: BacktestResult }> = [];
+    const out: Array<{ key: string; res: BacktestResult; wf: ReturnType<typeof runWalkForward>; regime: RegimeInfo }> = [];
     for (const k of keys) {
       const [pattern, dirRaw] = k.split('|');
       const direction = dirRaw as 'long' | 'short';
@@ -78,7 +81,11 @@ export default function BacktestPage() {
       };
       const evCount = events.filter((e) => e.pattern === pattern && e.direction === direction).length;
       if (evCount < 3) continue; // слишком мало наблюдений — не показываем
-      out.push({ key: `${pattern} (${direction === 'long' ? 'лонг' : 'шорт'})`, res: runBacktest(candles, { detect, direction, costs }) });
+      const config = { detect, direction, costs };
+      const res = runBacktest(candles, config);
+      // v1.1beta: walk-forward (train 300 / test 100) и режим рынка на момент каждой сделки
+      const wf = runWalkForward(candles, config, { trainBars: 300, testBars: 100, warmup: 60 });
+      out.push({ key: `${pattern} (${direction === 'long' ? 'лонг' : 'шорт'})`, res, wf, regime: detectRegime(candles) });
     }
     return out.sort((a, b) => b.res.stats.avgNetR - a.res.stats.avgNetR);
   }, [candles, costs]);
@@ -135,28 +142,70 @@ export default function BacktestPage() {
             <Stat label="Худшая expectancy" value={overall.length ? `${fmt(Math.min(...overall.map(o => o.avgNetR)))} R` : '—'} good={false} />
           </div>
 
+          {/* v1.1beta: режим рынка */}
+          {candles.length >= 80 && (() => {
+            const rg = detectRegime(candles);
+            const labels: Record<string, string> = {
+              'trend-up': '📈 Тренд вверх', 'trend-down': '📉 Тренд вниз',
+              'range': '↔️ Боковик', 'volatile-breakout': '⚡ Волатильный пробой',
+            };
+            return (
+              <div className="bg-slate-900/60 border border-slate-800 rounded-lg p-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
+                <span className="text-slate-400">Режим рынка:</span>
+                <span className={`font-semibold ${rg.regime === 'range' || rg.regime === 'volatile-breakout' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                  {labels[rg.regime]}
+                </span>
+                <span className="text-slate-500">сила тренда {fmt(rg.trendStrength * 100, 0)}%</span>
+                <span className="text-slate-500">волатильность ×{fmt(rg.volatilityRatio)}</span>
+                <span className="text-slate-500" title="Множитель доверия к сигналам в текущем режиме">коэфф. сигналов ×{fmt(rg.multiplier)}</span>
+              </div>
+            );
+          })()}
+
           {/* Таблица результатов */}
           <table className="w-full text-sm border border-slate-800 rounded overflow-hidden">
             <thead className="bg-slate-900 text-slate-400 text-left">
               <tr>
-                <th className="p-2">Паттерн</th><th className="p-2">Сделок</th><th className="p-2">Win rate (net)</th>
-                <th className="p-2">Expectancy</th><th className="p-2">Σ net R</th><th className="p-2">PF</th><th className="p-2">Max DD (R)</th>
+                <th className="p-2">Паттерн</th><th className="p-2">Сделок</th>
+                <th className="p-2" title="Win rate с 95% доверительным интервалом Уилсона">WR (net) [95% CI]</th>
+                <th className="p-2" title="Expectancy с 95% CI; p-value против нуля">Exp. R [CI] · p</th>
+                <th className="p-2" title="Walk-forward OOS expectancy (train 300 / test 100)">WF OOS</th>
+                <th className="p-2">Edge</th>
+                <th className="p-2">Σ net R</th><th className="p-2">PF</th><th className="p-2">Max DD (R)</th>
               </tr>
             </thead>
             <tbody>
-              {results.map(({ key, res }) => (
+              {results.map(({ key, res, wf }) => {
+                const wins = Math.round((res.stats.winRate / 100) * res.stats.totalTrades);
+                const wr = wilsonWinRate(wins, res.stats.totalTrades);
+                const exp = expectancyCI(res.trades.map((t) => t.netR));
+                const edge = hasEdge(exp);
+                const oos = wf.oosExpectancy;
+                return (
                 <tr key={key} className="border-t border-slate-800 hover:bg-slate-900/50">
                   <td className="p-2 text-slate-200">{key}</td>
                   <td className="p-2">{res.stats.totalTrades}</td>
-                  <td className="p-2">{fmt(res.stats.winRate, 1)}%</td>
-                  <td className={`p-2 font-mono ${res.stats.avgNetR >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{res.stats.avgNetR >= 0 ? '+' : ''}{fmt(res.stats.avgNetR)} R</td>
+                  <td className="p-2 font-mono">{fmt(wr.p * 100, 1)}% <span className="text-slate-500">[{fmt(wr.ciLow * 100, 0)}–{fmt(wr.ciHigh * 100, 0)}]</span></td>
+                  <td className={`p-2 font-mono ${exp.meanR >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {exp.meanR >= 0 ? '+' : ''}{fmt(exp.meanR)} <span className="text-slate-500">[{fmt(exp.ciLow)}…{fmt(exp.ciHigh)}]</span>
+                    <span className="text-slate-500"> · p={fmt(exp.pValue, 3)}</span>
+                  </td>
+                  <td className={`p-2 font-mono ${oos === null ? 'text-slate-600' : oos >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
+                      title={wf.overfitSuspected ? 'OOS заметно хуже IS — возможен overfitting' : 'Out-of-sample expectancy'}>
+                    {oos === null ? 'нет данных' : `${oos >= 0 ? '+' : ''}${fmt(oos)} R`}
+                    {wf.overfitSuspected && <span className="ml-1 text-amber-400" title="OOS хуже IS более чем на 25%">⚠︎overfit?</span>}
+                  </td>
+                  <td className="p-2">{edge
+                    ? <span className="px-1.5 py-0.5 rounded bg-emerald-900/60 text-emerald-300 text-xs font-semibold">EDGE</span>
+                    : <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 text-xs">n/d</span>}</td>
                   <td className={`p-2 font-mono ${res.stats.totalNetR >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{res.stats.totalNetR >= 0 ? '+' : ''}{fmt(res.stats.totalNetR)} R</td>
                   <td className="p-2">{fmt(res.stats.profitFactor)}</td>
                   <td className="p-2 text-amber-400">{fmt(res.stats.maxDrawdownR)}</td>
                 </tr>
-              ))}
+                );
+              })}
               {results.length === 0 && (
-                <tr><td colSpan={7} className="p-3 text-slate-500">Недостаточно наблюдений (минимум 3 сигнала на паттерн) для статистики.</td></tr>
+                <tr><td colSpan={9} className="p-3 text-slate-500">Недостаточно наблюдений (минимум 3 сигнала на паттерн) для статистики.</td></tr>
               )}
             </tbody>
           </table>
