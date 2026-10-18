@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, TrendingUp, TrendingDown, Activity, AlertTriangle, RefreshCw, Target, Shield, BarChart2 } from 'lucide-react';
 import { api, type AnalysisReport } from '../api/client';
+import type { MultiTFZonesDTO } from '../api/types';
 import CandlestickChart from '../components/CandlestickChart';
 import { VolumeProfileChart, DeltaChart } from '../components/VolumeProfilePanel';
 import { WyckoffPhasePanel, PricePathCard, EdgeVerificationPanel } from '../components/MarketContextPanels';
@@ -14,6 +15,80 @@ import { describeNetworkError } from '../utils/http';
 import type { RiskSettings } from '../api/types';
 
 /** Аудит №10: панель ввода капитала и риска на сделку (значения нормализуются saveRiskSettings). */
+
+/**
+ * Зоны S/R на каждом таймфрейме (запрос: «зоны поддержки/сопротивления на каждом ТФ»).
+ * Для каждого интервала уровни собираются ZoneVoter'ом с собственными параметрами
+ * (толеранс, окно свингов, порог пробоя — см. ZONE_PARAMS), поэтому список зон
+ * различается между ТФ. Активный ТФ анализа помечен бейджем.
+ */
+const TF_LABEL: Record<string, string> = {
+  '15': '15м', '30': '30м', '60': '1ч', '1H': '1ч', '2H': '2ч', '4H': '4ч', D: '1Д', W: '1Н',
+};
+
+function MultiTFZonesPanel({ rows, activeTf }: { rows: MultiTFZonesDTO[]; activeTf: string }) {
+  if (!rows.length) return null;
+  return (
+    <div className="mb-4 p-3 rounded-lg bg-gray-800/40 border border-gray-700/50">
+      <h3 className="text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2">
+        🗺 Мульти-ТФ карта уровней S/R
+        <span className="text-[10px] font-normal text-gray-500">
+          каждый ТФ — со своей калибровкой (толеранс / окно свингов / порог пробоя)
+        </span>
+      </h3>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-gray-500 border-b border-gray-700/50">
+              <th className="py-1 pr-3 font-medium">ТФ</th>
+              <th className="py-1 pr-3 font-medium">Масштаб</th>
+              <th className="py-1 pr-3 font-medium">Сопротивления ↑</th>
+              <th className="py-1 pr-3 font-medium">Поддержки ↓</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.timeframe} className="border-b border-gray-800/60 align-top">
+                <td className="py-2 pr-3 whitespace-nowrap">
+                  <span className={`font-mono ${r.timeframe === activeTf ? 'text-amber-400 font-bold' : 'text-gray-300'}`}>
+                    {TF_LABEL[r.timeframe] ?? r.timeframe}
+                  </span>
+                  {r.timeframe === activeTf && (
+                    <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-400">активный</span>
+                  )}
+                </td>
+                <td className="py-2 pr-3 text-gray-500 whitespace-nowrap">{r.scale}</td>
+                <td className="py-2 pr-3">
+                  <div className="flex flex-wrap gap-1.5">
+                    {r.resistance.slice(0, 4).map((z) => (
+                      <span key={z.level} title={`${z.reasons.join(', ')} · ${z.touches} касаний`}
+                        className={`px-1.5 py-0.5 rounded font-mono border ${z.strong ? 'border-red-500/50 bg-red-500/10 text-red-400' : 'border-gray-700 bg-gray-800/40 text-gray-400'}`}>
+                        {formatPrice(z.level)}{z.halfWidth ? ` ±${formatPrice(z.halfWidth)}` : ''}{z.strong ? ' ★' : ''}
+                      </span>
+                    ))}
+                    {!r.resistance.length && <span className="text-gray-600">—</span>}
+                  </div>
+                </td>
+                <td className="py-2">
+                  <div className="flex flex-wrap gap-1.5">
+                    {r.support.slice(0, 4).map((z) => (
+                      <span key={z.level} title={`${z.reasons.join(', ')} · ${z.touches} касаний`}
+                        className={`px-1.5 py-0.5 rounded font-mono border ${z.strong ? 'border-green-500/50 bg-green-500/10 text-green-400' : 'border-gray-700 bg-gray-800/40 text-gray-400'}`}>
+                        {formatPrice(z.level)}{z.halfWidth ? ` ±${formatPrice(z.halfWidth)}` : ''}{z.strong ? ' ★' : ''}
+                      </span>
+                    ))}
+                    {!r.support.length && <span className="text-gray-600">—</span>}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 text-[10px] text-gray-600">★ — сильная зона (≥3 голосов); ± — полуширина зоны (ATR-калиброванная, Нисон: уровень это полоса, а не линия).</p>
+    </div>
+  );
+}
 function RiskSettingsPanel({ settings, onApply }: {
   settings: RiskSettings;
   onApply: (capitalUsd: number, riskPct: number) => void;
@@ -64,6 +139,8 @@ export default function Analysis() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
   const [report, setReport] = useState<AnalysisReport | null>(null);
+  // Мульти-ТФ карта зон S/R (загружается отдельно от основного анализа)
+  const [multiZones, setMultiZones] = useState<MultiTFZonesDTO[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // Визуализация: активный сигнал, чей «путь цены» оверлеем на профиле объёма
@@ -105,6 +182,18 @@ export default function Analysis() {
 
   useEffect(() => {
     loadAnalysis();
+  }, [symbol, timeframe]);
+
+  // Мульти-ТФ карта зон: грузится параллельно с основным анализом, ошибки не блокируют страницу
+  useEffect(() => {
+    if (!symbol) return;
+    let cancelled = false;
+    const tfs = ['15', '60', '4H', 'D', 'W'];
+    if (!tfs.includes(timeframe)) tfs.push(timeframe);
+    api.getMultiTimeframeZones(symbol, tfs)
+      .then((rows) => { if (!cancelled) setMultiZones(rows); })
+      .catch((err) => { console.error('Ошибка мульти-ТФ зон:', err); if (!cancelled) setMultiZones([]); });
+    return () => { cancelled = true; };
   }, [symbol, timeframe]);
 
   // Автоматическое сохранение обнаруженных сигналов в журнал
@@ -354,6 +443,7 @@ export default function Analysis() {
       )}
 
       {/* 3. КЛЮЧЕВЫЕ УРОВНИ S/R ПО МЕТОДОЛОГИИ НИСОНА */}
+      <MultiTFZonesPanel rows={multiZones} activeTf={timeframe} />
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Поддержка */}
         <div className="p-4 rounded-xl border border-green-500/20 bg-green-500/5">
@@ -367,7 +457,7 @@ export default function Analysis() {
                 zone.strong ? 'border-green-500/30 bg-green-500/5' : 'border-gray-700/30 bg-gray-800/20'
               }`}>
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-                  <span className="text-green-400 font-mono text-lg">${formatPrice(zone.level)}</span>
+                  <span className="text-green-400 font-mono text-lg">${formatPrice(zone.level)}{zone.halfWidth ? <span className="text-xs text-gray-500 ml-1">[{formatPrice(zone.level - zone.halfWidth)}–{formatPrice(zone.level + zone.halfWidth)}]</span> : null}</span>
                   <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                     <span className="text-xs text-gray-500">{zone.touches} касаний</span>
                     {zone.strong && (
@@ -402,7 +492,7 @@ export default function Analysis() {
                 zone.strong ? 'border-red-500/30 bg-red-500/5' : 'border-gray-700/30 bg-gray-800/20'
               }`}>
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-                  <span className="text-red-400 font-mono text-lg">${formatPrice(zone.level)}</span>
+                  <span className="text-red-400 font-mono text-lg">${formatPrice(zone.level)}{zone.halfWidth ? <span className="text-xs text-gray-500 ml-1">[{formatPrice(zone.level - zone.halfWidth)}–{formatPrice(zone.level + zone.halfWidth)}]</span> : null}</span>
                   <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                     <span className="text-xs text-gray-500">{zone.touches} касаний</span>
                     {zone.strong && (

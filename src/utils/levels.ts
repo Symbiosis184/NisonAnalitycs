@@ -14,26 +14,31 @@ export interface SwingPoint {
 }
 
 /**
- * Детектор свинг-экстремумов (окно ±2 свечи, строгие сравнения).
+ * Детектор свинг-экстремумов (окно ±span свечей, строгие сравнения).
  * Единая реализация для всех модулей анализа (SupportResistance, ZoneVoter).
+ *
+ * FIX ТФ-аудита: раньше окно было жёстко ±2 свечи — на младших ТФ такой критерий
+ * ловил рыночный шум. Теперь глубина окна задаётся параметром `span` и подбирается
+ * под временнóй масштаб (см. ZONE_PARAMS в zone_voter.ts): чем грубее ТФ, тем
+ * крупнее локальные экстремумы считаются значимыми.
  */
-export function findSwings(candles: Candle[], lookback: number = 50): SwingPoint[] {
+export function findSwings(candles: Candle[], lookback: number = 50, span: number = 2): SwingPoint[] {
   const recent = candles.slice(-lookback);
   const offset = candles.length - recent.length;
   const swings: SwingPoint[] = [];
 
-  for (let i = 2; i < recent.length - 2; i++) {
+  for (let i = span; i < recent.length - span; i++) {
     const c = recent[i];
 
-    if (c.low < recent[i - 1].low && c.low < recent[i - 2].low &&
-        c.low < recent[i + 1].low && c.low < recent[i + 2].low) {
-      swings.push({ level: c.low, type: 'low', time: c.time, index: offset + i });
+    let isLow = true;
+    let isHigh = true;
+    for (let k = 1; k <= span && (isLow || isHigh); k++) {
+      if (isLow && !(c.low < recent[i - k].low && c.low < recent[i + k].low)) isLow = false;
+      if (isHigh && !(c.high > recent[i - k].high && c.high > recent[i + k].high)) isHigh = false;
     }
 
-    if (c.high > recent[i - 1].high && c.high > recent[i - 2].high &&
-        c.high > recent[i + 1].high && c.high > recent[i + 2].high) {
-      swings.push({ level: c.high, type: 'high', time: c.time, index: offset + i });
-    }
+    if (isLow) swings.push({ level: c.low, type: 'low', time: c.time, index: offset + i });
+    if (isHigh) swings.push({ level: c.high, type: 'high', time: c.time, index: offset + i });
   }
 
   return swings;

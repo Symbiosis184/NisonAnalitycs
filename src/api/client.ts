@@ -3,7 +3,7 @@ import { Candle } from '../utils/candle';
 import { ema, rsi, macd, detectTrend, generateSignal } from '../utils/indicators';
 import { detectPatterns, patternStory } from '../utils/patterns';
 import { signalGenerator } from '../utils/signal_generator';
-import { ZoneVoter } from '../utils/zone_voter';
+import { ZoneVoter, timeframeKey } from '../utils/zone_voter';
 import { detectTrendStart, getTrendMacro, type TrendContext } from '../utils/trend_detection';
 import { planPosition, toPlanDTO } from '../utils/position_sizing';
 import { loadRiskSettings } from '../utils/risk_settings';
@@ -13,6 +13,7 @@ import { runBacktest, type FormationBounds } from '../utils/backtest';
 import { tagTradesByRegime, detectDegradation, statsByRegime, edgeVerdict } from '../utils/edge_verification';
 import type {
   AnalysisReport,
+  MultiTFZonesDTO,
   CandleDTO,
   ConsensusDTO,
   EdgeReportDTO,
@@ -155,7 +156,7 @@ export class ApiClient {
     const { signal, confidence } = generateSignal(currentPrice, rsiVal, histLast, ema20, ema50);
     
     // Определение зон поддержки/сопротивления по методологии Нисона
-    const zones = ZoneVoter.collect(currentPrice, candles);
+    const zones = ZoneVoter.collect(currentPrice, candles, timeframeKey(timeframe));
     
     // Детекция паттернов по Нисону
     const detectedPatterns = detectPatterns(candles);
@@ -336,6 +337,42 @@ export class ApiClient {
     };
   }
   
+  /**
+   * Зоны S/R на нескольких ТФ одновременно (запрос пользователя: «зоны поддержки/
+   * сопротивления на каждом ТФ»). Для каждого интервала зоны собираются своими
+   * параметрами (толеранс, окно свингов, порог пробоя — см. ZONE_PARAMS), поэтому
+   * список уровней различается между ТФ, а не копируется с дневного графика.
+   */
+  async getMultiTimeframeZones(
+    symbol: string,
+    timeframes: string[] = ['15', '1H', '4H', 'D', 'W']
+  ): Promise<MultiTFZonesDTO[]> {
+    const results = await Promise.all(
+      timeframes.map(async (tf): Promise<MultiTFZonesDTO | null> => {
+        try {
+          const klines = await fetchKlines(symbol, tf, 250);
+          const candles = klines.map((k) => new Candle({
+            time: k.openTime, open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume,
+          }));
+          if (candles.length < 30) return null;
+          const price = candles[candles.length - 1].close;
+          const zones = ZoneVoter.collect(price, candles, timeframeKey(tf));
+          return {
+            timeframe: tf,
+            scale: timeframeKey(tf),
+            price,
+            support: zones.support,
+            resistance: zones.resistance,
+          };
+        } catch (err) {
+          console.error(`Ошибка расчёта зон для ${symbol} ${tf}:`, err);
+          return null;
+        }
+      })
+    );
+    return results.filter((r): r is MultiTFZonesDTO => r !== null);
+  }
+
   async getMarketOverview(): Promise<MarketOverviewItem[]> {
     const symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT'];
     
