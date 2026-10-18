@@ -334,20 +334,54 @@ export class PatternDetector {
     return isLow ? value <= ref + tol : value >= ref - tol;
   }
 
+  /**
+   * Адаптивный критерий «длинной» свечи (FIX канон-аудита, гл. 2):
+   * Нисон определяет long candle как заметно бо́льшую по отношению к ПРЕДШЕСТВУЮЩИМ
+   * свечам, а не по абсолютной доле тела своего диапазона. Прежнее условие
+   * body > 0.6×range отбрасывало настоящие длинные свечи с умеренными тенями
+   * и принимало маленькие «болванки» на тихом рынке. Теперь: тело ≥ 1.5× медианы
+   * тел предшествующего окна И ≥ 45% собственного диапазона.
+   */
+  private static isLongRelative(candle: Candle, window: Candle[]): boolean {
+    if (window.length < 3) return candle.isLongCandle || candle.body > candle.totalRange * 0.45;
+    const bodies = window.map(c => c.body).sort((a, b) => a - b);
+    const med = bodies[Math.floor(bodies.length / 2)];
+    return candle.body > candle.totalRange * 0.45 && med > 0 && candle.body >= med * 1.5;
+  }
+
+  /** Окно предшественников для относительной оценки длины (до 20 закрытых свечей). */
+  private static relWindow(candles: Candle[], beforeIdx: number): Candle[] {
+    return candles.slice(Math.max(0, beforeIdx - 20), beforeIdx);
+  }
+
   static isMorningStar(candles: Candle[]): { found: boolean; name: string } {
     if (candles.length < 3) return { found: false, name: '' };
     const c1 = candles[candles.length - 3];
     const c2 = candles[candles.length - 2];
     const c3 = candles[candles.length - 1];
     
-    if (!(c1.isBearish && c1.isLongCandle)) return { found: false, name: '' };
+    const winMS = this.relWindow(candles, candles.length - 3);
+    // FIX канон-аудита (гл. 5): утренняя звезда — разворот ПОСЛЕ СПАДА: закрытие
+    // первой свечи обязано находиться в НИЖНЕЙ ТРЕТИ диапазона предшествующих
+    // ~10 свечей (контекст задаёт сама первая свеча паттерна, а не окно до неё).
+    const ctxMS = candles.slice(Math.max(0, candles.length - 13), candles.length - 2);
+    if (ctxMS.length >= 4) {
+      const ctxHi = Math.max(...ctxMS.map(x => x.high));
+      const ctxLo = Math.min(...ctxMS.map(x => x.low));
+      if (ctxHi > ctxLo && c1.close > ctxLo + (ctxHi - ctxLo) * 0.34) return { found: false, name: '' };
+    }
+    if (!(c1.isBearish && this.isLongRelative(c1, winMS))) return { found: false, name: '' };
     if (!c2.isShortCandle) return { found: false, name: '' };
-    if (!(c3.isBullish && c3.isLongCandle)) return { found: false, name: '' };
+    // FIX канон-аудита (гл. 5): третья свеча открывается ВЫШЕ закрытия второй
+    // (гэп вверх от малой свечи — решимость покупателей с открытия) и закрывается
+    // в верхней половине тела первой свечи; длина — относительная.
+    if (!(c3.isBullish && this.isLongRelative(c3, winMS))) return { found: false, name: '' };
+    if (c3.open <= c2.close) return { found: false, name: '' };
     if (c3.close <= c1.bodyMid) return { found: false, name: '' };
-    // Канон (гл. 5): вторая свеча — small-свеча со ДНЕМ ниже тела первой
-    // (не обязательно строгий гэп: Нисон говорит о «нижнем уровне» второй свечи),
-    // третья закрывается в верхней половине тела первой.
-    if (c2.low >= c1.bodyBottom) return { found: false, name: '' };
+    // Канон (гл. 5): вторая свеча — small-свеча НИЖЕ тела первой (её ЗАКРЫТИЕ
+    // под нижним уровнем медвежьей свечи — настоящий гэп по Нисону, рис. 5.1).
+    // Допуск 0.3% диапазона первой: на крипте строгие гэпы редки (см. имя с ГЭПОМ).
+    if (c2.close > c1.bodyBottom + c1.totalRange * 0.003) return { found: false, name: '' };
     
     // Утренняя звезда — разворот ПОСЛЕ СПАДА (гл. 5): минимум второй свечи —
     // новый локальный дно окна, а третья свеча закрывается ВЫШЕ середины первой
@@ -362,8 +396,10 @@ export class PatternDetector {
     let name = c2.isDoji ? 'УТРЕННЯЯ ДОДЖИ-ЗВЕЗДА' : 'УТРЕННЯЯ ЗВЕЗДА';
     // Гэп по Нисону усиливает паттерн, но не является обязательным условием
     // (на крипте гэпы редки) — отмечаем его как доп. силу (FIX канон-аудита).
-    if (c2.gapDownFrom(c1)) name += ' (ГЭП ВНИЗ)';
-    else if (c3.gapUpFrom(c2)) name += ' (ГЭП ВВЕРХ)';
+    // FIX канон-аудита: гэп Нисона измеряется по ТЕЛАМ/закрытиям, а не «open<close»
+    // первой пары; теперь строгий гэп — часть условия, метка ставится по факту.
+    if (c2.high < c1.bodyBottom) name += ' (ГЭП ВНИЗ)';
+    else if (c3.open > c2.close) name += ' (ГЭП ВВЕРХ)';
     if (VolumeAnalyzer.isHighVolume(c3, candles.slice(0, -1), 1.3)) name += ' (ОБЪЁМ)';
     
     return { found: true, name };
@@ -375,13 +411,25 @@ export class PatternDetector {
     const c2 = candles[candles.length - 2];
     const c3 = candles[candles.length - 1];
     
-    if (!(c1.isBullish && c1.isLongCandle)) return { found: false, name: '' };
+    const winES = this.relWindow(candles, candles.length - 3);
+    // FIX канон-аудита (гл. 5): вечерняя звезда — разворот ПОСЛЕ РОСТА: закрытие
+    // первой белой свечи — в ВЕРХНЕЙ ТРЕТИ диапазона предшествующих ~10 свечей.
+    const ctxES = candles.slice(Math.max(0, candles.length - 13), candles.length - 2);
+    if (ctxES.length >= 4) {
+      const ctxHi = Math.max(...ctxES.map(x => x.high));
+      const ctxLo = Math.min(...ctxES.map(x => x.low));
+      if (ctxHi > ctxLo && c1.close < ctxHi - (ctxHi - ctxLo) * 0.34) return { found: false, name: '' };
+    }
+    if (!(c1.isBullish && this.isLongRelative(c1, winES))) return { found: false, name: '' };
     if (!c2.isShortCandle) return { found: false, name: '' };
-    if (!(c3.isBearish && c3.isLongCandle)) return { found: false, name: '' };
+    // FIX канон-аудита (гл. 5): зеркально утренней — третья открывается НИЖЕ
+    // закрытия второй (гэп вниз), закрытие — в нижней половине тела первой свечи.
+    if (!(c3.isBearish && this.isLongRelative(c3, winES))) return { found: false, name: '' };
+    if (c3.open >= c2.close) return { found: false, name: '' };
     if (c3.close >= c1.bodyMid) return { found: false, name: '' };
-    // Канон (гл. 5): small-свеча с ВЕРХНИМ уровнем выше тела первой свечи;
-    // строгий гэп не обязателен (Нисон: «нижний/верхний уровень», гэп — редкость).
-    if (c2.high <= c1.bodyTop) return { found: false, name: '' };
+    // Канон (гл. 5): вторая свеча — small-свеча ВЫШЕ тела первой (закрытие над
+    // верхним уровнем белой свечи — гэп по Нисону, рис. 5.3), с тем же допуском.
+    if (c2.close < c1.bodyTop - c1.totalRange * 0.003) return { found: false, name: '' };
     // Вечерняя звезда — разворот ПОСЛЕ РОСТА (гл. 5): максимум второй свечи —
     // новый локальный потолок окна, третья свеча уводит цену вниз от него.
     // FIX канон-аудита: адаптивный допуск потолка (см. makesNewExtreme).
@@ -391,6 +439,8 @@ export class PatternDetector {
     }
     
     let name = c2.isDoji ? 'ВЕЧЕРНЯЯ ДОДЖИ-ЗВЕЗДА' : 'ВЕЧЕРНЯЯ ЗВЕЗДА';
+    if (c2.low > c1.bodyTop) name += ' (ГЭП ВВЕРХ)';
+    else if (c3.open < c2.close) name += ' (ГЭП ВНИЗ)';
     if (VolumeAnalyzer.isHighVolume(c3, candles.slice(0, -1), 1.3)) name += ' (ОБЪЁМ)';
     
     return { found: true, name };
@@ -402,10 +452,11 @@ export class PatternDetector {
     const c2 = candles[candles.length - 2];
     const c3 = candles[candles.length - 1];
     
-    if (!([c1, c2, c3].every(c => c.isBullish && c.isLongCandle))) return { found: false, name: '' };
-    // Канон (гл. 7): каждая свеча закрывается ВЫШЕ вершины предыдущей («покупатели
-    // не оглядываются»), верхние тени короткие (иначе это уже advance to a block).
-    if (!(c2.close > c1.high && c3.close > c2.high)) return { found: false, name: '' };
+    const winSW = this.relWindow(candles, candles.length - 3);
+    if (!([c1, c2, c3].every(c => c.isBullish && (this.isLongRelative(c, winSW) || c.isLongCandle)))) return { found: false, name: '' };
+    // FIX канон-аудита (гл. 7): солдаты — закрытие ВЫШЕ ЗАКРЫТИЯ предыдущей свечи
+    // (не обязательно выше её ВЕРШИНЫ: высокие тени отвергали настоящих солдат),
+    // верхние тени короткие (иначе это уже advance to a block).
     if ([c1, c2, c3].some(c => c.upperWick > c.totalRange * 0.3)) return { found: false, name: '' };
     // Каждое открытие — внутри предыдущего тела (без гэпа).
     if (!(c2.open >= c1.bodyBottom && c2.open <= c1.bodyTop)) return { found: false, name: '' };
@@ -420,9 +471,12 @@ export class PatternDetector {
     const c2 = candles[candles.length - 2];
     const c3 = candles[candles.length - 1];
     
-    if (!([c1, c2, c3].every(c => c.isBearish && c.isLongCandle))) return { found: false, name: '' };
-    // Симметрично воронам (гл. 7): закрытие ниже МИНИМУМА предыдущей, нижние тени коротки.
-    if (!(c2.close < c1.low && c3.close < c2.low)) return { found: false, name: '' };
+    const winBC = this.relWindow(candles, candles.length - 3);
+    if (!([c1, c2, c3].every(c => c.isBearish && (this.isLongRelative(c, winBC) || c.isLongCandle)))) return { found: false, name: '' };
+    // FIX канон-аудита (гл. 7): вороны — закрытие НИЖЕ ЗАКРЫТИЯ предыдущей свечи
+    // (зеркальноSoldiers: требование «ниже минимума» отвергало настоящих воронов
+    // с глубокими нижними тенями), нижние тени коротки.
+    if (!(c2.close < c1.close && c3.close < c2.close)) return { found: false, name: '' };
     if ([c1, c2, c3].some(c => c.lowerWick > c.totalRange * 0.3)) return { found: false, name: '' };
     // Открытия внутри предыдущих тел.
     if (!(c2.open >= c1.bodyBottom && c2.open <= c1.bodyTop)) return { found: false, name: '' };
@@ -472,7 +526,8 @@ export class PatternDetector {
     }
     
     const last = candles[candles.length - 1];
-    if (!(last.isBearish && last.isLongCandle)) return { found: false, name: '' };
+    // FIX канон-аудита (гл. 7): финальная свеча башни — заметно крупнее предшественниц.
+    if (!(last.isBearish && (this.isLongRelative(last, this.relWindow(candles, candles.length - 1)) || last.isLongCandle))) return { found: false, name: '' };
     if (last.close >= Math.min(candles[candles.length - 2].low, candles[candles.length - 3].low)) return { found: false, name: '' };
     
     return { found: true, name: 'БАШЕННАЯ ВЕРШИНА' };
@@ -494,7 +549,7 @@ export class PatternDetector {
     }
     
     const last = candles[candles.length - 1];
-    if (!(last.isBullish && last.isLongCandle)) return { found: false, name: '' };
+    if (!(last.isBullish && (this.isLongRelative(last, this.relWindow(candles, candles.length - 1)) || last.isLongCandle))) return { found: false, name: '' };
     if (last.close <= Math.max(candles[candles.length - 2].high, candles[candles.length - 3].high)) return { found: false, name: '' };
     
     return { found: true, name: 'БАШЕННОЕ ДНО' };
@@ -653,10 +708,13 @@ export class PatternDetector {
     const need = c1.totalRange * 0.5;
     const gap = c2.open - c1.close;
     
-    if (c1.isBearish && c2.isBullish && gap <= -need) {
+    // FIX канон-аудита (гл. 6): контратака — разворотная пауза ТРЕНДА: бычья
+    // только после спада, медвежья только после роста; вне контекста это
+    // случайное совпадение закрытий.
+    if (c1.isBearish && c2.isBullish && gap <= -need && this.precededByDecline(prev)) {
       return { found: true, name: 'КОНТРАТАКА (БЫЧЬЯ)' };
     }
-    if (c1.isBullish && c2.isBearish && gap >= need) {
+    if (c1.isBullish && c2.isBearish && gap >= need && this.precededByRally(prev)) {
       return { found: true, name: 'КОНТРАТАКА (МЕДВЕЖЬЯ)' };
     }
     
@@ -666,12 +724,15 @@ export class PatternDetector {
   static isSeparatingLines(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
     // Канон (гл. 6): ОБЕ свечи одного направления, вторая открывается по открытию первой.
     if (Math.abs(c1.open - c2.open) > Math.max(c1.open * 0.001, ((c1.totalRange + c2.totalRange) / 2) * 0.1)) return { found: false, name: '' };
-    if (!(c1.isLongCandle && c2.isLongCandle)) return { found: false, name: '' };
+    const winSL = this.relWindow(prev, prev.length - 1);
+    if (!(this.isLongRelative(c1, winSL) && this.isLongRelative(c2, [...winSL.slice(1), c1]))) return { found: false, name: '' };
     
-    if (c1.isBearish && c2.isBearish && c2.open <= c2.low + c2.totalRange * 0.05) {
+    // FIX канон-аудита (гл. 6): разделение — продолжение СУЩЕСТВУЮЩЕГО тренда:
+    // бычье после спада, медвежье после роста.
+    if (c1.isBearish && c2.isBearish && c2.open <= c2.low + c2.totalRange * 0.05 && this.precededByDecline(prev)) {
       return { found: true, name: 'РАЗДЕЛЕНИЕ (БЫЧЬЕ)' };
     }
-    if (c1.isBullish && c2.isBullish && c2.open >= c2.high - c2.totalRange * 0.05) {
+    if (c1.isBullish && c2.isBullish && c2.open >= c2.high - c2.totalRange * 0.05 && this.precededByRally(prev)) {
       return { found: true, name: 'РАЗДЕЛЕНИЕ (МЕДВЕЖЬЕ)' };
     }
     
@@ -679,6 +740,9 @@ export class PatternDetector {
   }
 
   static isNeckFamily(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
+    // FIX канон-аудита (гл. 6): «ниже шеи / на шее / толчок» — БЫЧЬИ модели
+    // продолжения нисходящего тренда (медвежья длинная, затем бычья отскок-свеча).
+    if (!this.precededByDecline(prev)) return { found: false, name: '' };
     if (!(c1.isBearish && c1.isLongCandle)) return { found: false, name: '' };
     if (!(c2.isBullish && c2.body <= c1.body * 0.5)) return { found: false, name: '' };
     
@@ -820,7 +884,7 @@ export class PatternDetector {
     const c2 = candles[candles.length - 2];
     const c3 = candles[candles.length - 1];
     
-    if (!(c1.isBullish && c1.isLongCandle)) return { found: false, name: '' };
+    if (!(c1.isBullish && (this.isLongRelative(c1, this.relWindow(candles, candles.length - 3)) || c1.isLongCandle))) return { found: false, name: '' };
     if (!(c2.isBearish && c3.isBearish)) return { found: false, name: '' };
     if (c2.open <= c1.close) return { found: false, name: '' };
     if (c2.close <= c1.close) return { found: false, name: '' };
@@ -911,7 +975,8 @@ export class PatternDetector {
 
   static isKeyReversal(candles: Candle[]): { found: boolean; name: string } {
     if (candles.length < 21) return { found: false, name: '' };
-    const last = candles[candles.length - 1];
+    const n = candles.length;
+    const last = candles[n - 1];
     const prev = candles[candles.length - 2];
     const seg = candles.slice(-21, -1);
     
@@ -923,12 +988,16 @@ export class PatternDetector {
       return { found: false, name: '' };
     }
     
-    // Канон (гл. 7): бычий key reversal закрывается ВЫШЕ ПРЕДЫДУЩЕГО ЗАКРЫТИЯ
-    // (не просто выше previous high), медвежий — НИЖЕ предыдущего закрытия.
-    if (last.isBullish && last.close > prev.close && last.low <= lo * 1.05) {
+    // Канон (гл. 4, 7): бычий key reversal — новый ЛОКАЛЬНЫЙ МИНИМУМ (low ниже
+    // min окна) и закрытие ВЫШЕ предыдущего максимума; медвежий — зеркально.
+    // FIX канон-аудита: прежнее допущение ±5% от экстремума превращало паттерн
+    // в «обычный день»; добавлены трендовый контекст и относительная длина свечи.
+    const winKR = this.relWindow(candles, n - 1);
+    if (!this.isLongRelative(last, winKR)) return { found: false, name: '' };
+    if (last.isBullish && last.low < lo && last.close > prev.high && this.precededByDecline(seg)) {
       return { found: true, name: 'КЛЮЧЕВОЙ РАЗВОРОТ (БЫЧИЙ)' };
     }
-    if (last.isBearish && last.close < prev.close && last.high >= hi * 0.95) {
+    if (last.isBearish && last.high > hi && last.close < prev.low && this.precededByRally(seg)) {
       return { found: true, name: 'КЛЮЧЕВОЙ РАЗВОРОТ (МЕДВЕЖИЙ)' };
     }
     
@@ -939,10 +1008,13 @@ export class PatternDetector {
     const eng = c2.bodyTop >= c1.bodyTop && c2.bodyBottom <= c1.bodyBottom && c2.body > c1.body;
     if (!eng) return { found: false, name: '' };
     
-    if (c1.isBullish && c2.isBearish) {
+    // FIX канон-аудита (гл. 6): у основания последняя атака ПОКУПАТЕЛЕЙ — т.е.
+    // чёрная затем поглощающая БЕЛАЯ в нисходящем тренде; у вершины — наоборот.
+    // Прежний код присваивал имена зеркально неверно и не требовал контекста.
+    if (c1.isBearish && c2.isBullish && this.precededByDecline(prev)) {
       return { found: true, name: 'ПОСЛЕДНЕЕ ПОГЛОЩЕНИЕ (ОСНОВАНИЕ)' };
     }
-    if (c1.isBearish && c2.isBullish) {
+    if (c1.isBullish && c2.isBearish && this.precededByRally(prev)) {
       return { found: true, name: 'ПОСЛЕДНЕЕ ПОГЛОЩЕНИЕ (ВЕРШИНА)' };
     }
     

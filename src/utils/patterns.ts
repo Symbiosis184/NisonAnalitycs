@@ -102,8 +102,10 @@ export function detectPatterns(candles: Candle[], timeframe: string = 'D'): Patt
         checks.push({ ...separating, patternCandles: 2, type });
       }
       
+      // FIX канон-аудита (гл. 6): «ниже шеи / на шее / толчок» — БЫЧЬИ модели
+      // продолжения после спада; прежняя маркировка «медвежий» противоречила Нисону.
       const neck = PatternDetector.isNeckFamily(c1, candle, prev);
-      if (neck.found) checks.push({ ...neck, patternCandles: 2, type: 'медвежий' });
+      if (neck.found) checks.push({ ...neck, patternCandles: 2, type: 'бычий' });
     }
     
     // Трёхсвечные

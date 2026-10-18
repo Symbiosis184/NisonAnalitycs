@@ -135,14 +135,19 @@ export class ZoneVoter {
       Math.max(atrVal * 2, params.tolerance * price)
     );
 
-    // Преобразуем в массивы Zone
+    // FIX канон-аудита (гл. 11): роль уровня определяется его ПОЗИЦИЕЙ ОТНОСИТЕЛЬНО
+    // ТЕКУЩЕЙ ЦЕНЫ, а не тем, из какой карты он собран. Пробитое сопротивление
+    // (полярность) живёт в supMap на уровне НИЖЕ цены — корректно; но свинг-хай
+    // над ценой мог попасть в «поддержку» (если цена касалась его снизу какSupport
+    // ложно срабатывал при level≈price), а круглое число ниже цены — в
+    // «сопротивление». Финальная инварианта: поддержка ≤ цена ≤ сопротивление.
     const support = this.mapToZones(supMap, halfWidthBase)
       .filter(z => z.level <= price)
-      .sort((a, b) => b.level - a.level); // Ближайшие к цене сверху
+      .sort((a, b) => b.level - a.level); // Ближайшие к цене — первыми
 
     const resistance = this.mapToZones(resMap, halfWidthBase)
       .filter(z => z.level >= price)
-      .sort((a, b) => a.level - b.level); // Ближайшие к цене снизу
+      .sort((a, b) => a.level - b.level); // Ближайшие к цене — первыми
 
     return { support, resistance };
   }
