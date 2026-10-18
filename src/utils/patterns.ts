@@ -12,6 +12,31 @@ export interface PatternResult {
   atLevel: boolean;
 }
 
+/**
+ * Окно отображения паттернов (последние N свечей). Раньше движок возвращал
+ * максимум 10 паттернов, отсортированных по уверенности ПО ВСЕЙ истории —
+ * из-за на графике «пропадали» свежие формации (старые срабатывания имели
+ * больше шансов накопить бонусы объёма/уровня) и возникало ощущение ложных
+ * меток в прошлом. Теперь: сначала отсекаем глубокую историю, затем
+ * ранжируем по свежести → подтверждению → уверенности.
+ */
+export const PATTERN_DISPLAY_WINDOW = 80;
+
+/** Сортировка для отображения: свежие → подтверждённые → уверенные. */
+export function sortPatternsForDisplay<T extends { candleIndex: number; confirmed: boolean; confidence: number }>(
+  patterns: T[],
+  totalCandles: number,
+): T[] {
+  return [...patterns]
+    .filter(p => p.candleIndex >= totalCandles - PATTERN_DISPLAY_WINDOW)
+    .sort(
+      (a, b) =>
+        b.candleIndex - a.candleIndex ||
+        Number(b.confirmed) - Number(a.confirmed) ||
+        b.confidence - a.confidence,
+    );
+}
+
 export function detectPatterns(candles: Candle[], timeframe: string = 'D'): PatternResult[] {
   try {
   // ТФ-калибровка зон: вся цепочка isNearSupport/isNearResistance внутри детекторов
@@ -281,11 +306,13 @@ export function detectPatterns(candles: Candle[], timeframe: string = 'D'): Patt
     arr.findIndex(x => x.name === p.name && x.candleIndex === p.candleIndex) === idx
   );
   
-  const filtered = unique
-    .filter(p => p.confidence >= 55)
-    .sort((a, b) => b.confidence - a.confidence);
-  
-  return filtered.slice(0, 10);
+  // FIX (жалоба «не все паттерны отображаются»): раньше бралось 10 лучших по
+  // уверенности ПО ВСЕЙ истории — свежие формации вытеснялись старыми с
+  // накопленными бонусами объёма/уровня. Теперь: окно последних свечей +
+  // ранжирование по свежести → подтверждению → уверенности, лимит 24.
+  const filtered = unique.filter(p => p.confidence >= 55);
+
+  return sortPatternsForDisplay(filtered, candles.length).slice(0, 24);
   } finally {
     // Не оставляем глобальный ТФ-контекст «загрязнённым»: прямые вызовы
     // PatternDetector.isXxx вне detectPatterns должны видеть нейтральный дефолт.

@@ -144,9 +144,19 @@ export default function CandlestickChart({
     let hideTimer: ReturnType<typeof setTimeout> | null = null;
 
     if (patterns.length > 0) {
+      // По Нисону паттерн считается валидным только ПОСЛЕ подтверждения
+      // следующей свечой — на графике рисуем исключительно подтверждённые
+      // маркеры (это защита от «ложных» стрелок: неподтверждённая формация
+      // может быть отменена следующей свечой). При равной уверенности выше
+      // ставится тот паттерн, который подкреплён объёмом или уровнем S/R.
       const confirmedPatterns = patterns
         .filter(p => p.confirmed && p.candleIndex >= 0 && p.candleIndex < candles.length)
-        .sort((a, b) => b.confidence - a.confidence);
+        .sort(
+          (a, b) =>
+            b.confidence - a.confidence ||
+            Number(Boolean((b as any).hasVolume)) - Number(Boolean((a as any).hasVolume)) ||
+            Number(Boolean((b as any).atLevel)) - Number(Boolean((a as any).atLevel)),
+        );
 
       if (confirmedPatterns.length > 0) {
         const container = chartContainerRef.current!;

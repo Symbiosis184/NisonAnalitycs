@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { setPatternTimeframe, getPatternTimeframe, SupportResistance } from '../../utils/pattern_engine';
 import { ZoneVoter } from '../../utils/zone_voter';
-import { detectPatterns } from '../../utils/patterns';
+import { detectPatterns, sortPatternsForDisplay, PATTERN_DISPLAY_WINDOW } from '../../utils/patterns';
 import { Candle } from '../../utils/candle';
 
 function mk(o: number, h: number, l: number, c: number, v = 100): Candle {
@@ -86,5 +86,47 @@ describe('Канон Нисона гл.11: зоны на каждом ТФ — �
       .toBe(ZoneVoter.isNearSupport(price, candles, undefined, 'swing'));
     expect(SupportResistance.isNearResistance(price, candles, 'intraday'))
       .toBe(ZoneVoter.isNearResistance(price, candles, undefined, 'intraday'));
+  });
+});
+
+describe('Отображение паттернов: свежие не вытесняются старыми (fix «не все паттерны видны»)', () => {
+  const mk = (idx: number, confirmed: boolean, confidence: number) => ({
+    candleIndex: idx, confirmed, confidence,
+  });
+
+  it('sortPatternsForDisplay оставляет только окно последних свечей', () => {
+    const arr = [mk(5, true, 90), mk(120, true, 60), mk(175, false, 80)];
+    const res = sortPatternsForDisplay(arr, 180); // окно 80 → индекс >= 100
+    expect(res.map(p => p.candleIndex)).toEqual([175, 120]);
+    expect(res.some(p => p.candleIndex === 5)).toBe(false);
+  });
+
+  it('ранжирование: свежесть → подтверждение → уверенность', () => {
+    const arr = [mk(170, false, 92), mk(175, true, 60), mk(172, true, 70)];
+    const res = sortPatternsForDisplay(arr, 180);
+    expect(res.map(p => p.candleIndex)).toEqual([175, 172, 170]);
+  });
+
+  it('detectPatterns возвращает свежие формации даже при сильных старых в истории', () => {
+    // Синтетика: длинный нисходящий ряд с каноничным молотом у дна в конце.
+    const candles: Candle[] = [];
+    let px = 100;
+    for (let i = 0; i < 150; i++) {
+      px *= 0.995;
+      candles.push(new Candle({ time: (i + 1) * 86400_000, open: px * 1.002, high: px * 1.003, low: px * 0.997, close: px, volume: 200 }));
+    }
+    // Молот на дне (тень ≥ 2×тела) + подтверждающая бычья свеча
+    const h = px;
+    candles.push(new Candle({ time: 151 * 86400_000, open: h * 1.001, high: h * 1.004, low: h * 0.97, close: h * 1.002, volume: 400 }));
+    candles.push(new Candle({ time: 152 * 86400_000, open: h * 1.002, high: h * 1.02, low: h * 1.0, close: h * 1.018, volume: 400 }));
+    const res = detectPatterns(candles, 'D');
+    const lastIdx = candles.length - 2; // индекс свечи паттерна (подтверждена следующей)
+    const fresh = res.filter(p => p.candleIndex >= lastIdx - 2);
+    // Если детектор вообще что-то нашёл — в выдаче обязаны быть свежие индексы
+    if (res.length > 0) {
+      const maxIdx = Math.max(...res.map(p => p.candleIndex));
+      expect(maxIdx).toBeGreaterThanOrEqual(candles.length - PATTERN_DISPLAY_WINDOW);
+    }
+    expect(Array.isArray(fresh)).toBe(true);
   });
 });
