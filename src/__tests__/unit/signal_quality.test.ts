@@ -21,15 +21,17 @@ const downtrend = (n: number, start = 120, step = 2): Candle[] => {
 
 describe('isReversalModel', () => {
   it('разворотные модели распознаны по стабильным ID (включая имя с бейджем объёма)', () => {
-    expect(isReversalModel('БУЛЬЕ ПОГЛОЩЕНИЕ')).toBe(true);
+    expect(isReversalModel('БЫЧЬЕ ПОГЛОЩЕНИЕ')).toBe(true);
     expect(isReversalModel('ПАДАЮЩАЯ ЗВЕЗДА (ОБЪЁМ)')).toBe(true);
-    expect(isReversalModel('ТРИ БЕЛЫХ ВОИНА')).toBe(false); // продолжение
+    expect(isReversalModel('ТРИ БЕЛЫХ СОЛДАТА')).toBe(false); // продолжение
   });
 });
 
 describe('computeSignalQuality — детерминированность и границы', () => {
-  const prior = downtrend(20);
-  const hammer = mk(100, 100.8, 96, 100.5, 200); // молот: тень ~4 > 2×тела, объём ×2
+  /** Нисходящий тренд из 80 свечей: EMA-стопка (10<20<50) подтверждена, close < EMA10 */
+  const prior = downtrend(80);
+  /** Молот: тень 4 > 2×тела; верхняя тень мала; объём ×2 относительно базовой линии */
+  const hammer = mk(100, 100.8, 96, 100.5, 200);
 
   it('сильный сигнал (тренд+объём+тень+подтверждение) = 1.0', () => {
     const q = computeSignalQuality({
@@ -78,15 +80,18 @@ describe('computeSignalQuality — детерминированность и г�
 
 describe('SignalGenerator: quality больше не константа 1.0', () => {
   it('сигналы получают оценку ∈ [0.2, 1.0], как минимум один < 1.0 на типовой серии', () => {
-    // строим серию с двумя поглощениями: одно сильное (объём), другое вялое
-    const candles: Candle[] = [...downtrend(30)];
-    // бычье поглощение с объёмом
-    candles.push(mk(60, 61, 59.5, 60.5, 50));
-    candles.push(mk(58, 66, 57.5, 65.5, 300));
+    // Макро-нисходящий тренд из 80 свечей (≥65 — EMA-стопка определена),
+    // затем бычье поглощение с объёмом и вялое поглощение без объёма.
+    const candles: Candle[] = [...downtrend(80)];
+    const lastClose = candles[candles.length - 1].close;
+    // бычье поглощение с объёмом (сильное)
+    candles.push(mk(lastClose + 0.5, lastClose + 1.5, lastClose - 1, lastClose + 1, 40));
+    candles.push(mk(lastClose - 1, lastClose + 7, lastClose - 1.5, lastClose + 6.5, 300));
     // ещё нисходная волна и слабое поглощение (малое тело, малый объём)
-    for (let k = 0; k < 8; k++) { const o = 65 - k; candles.push(mk(o, o + 0.4, o - 1.4, o - 1)); }
-    candles.push(mk(56, 56.6, 55.4, 55.8, 30));
-    candles.push(mk(55.6, 57.2, 55.2, 56.9, 60));
+    for (let k = 0; k < 8; k++) { const o = lastClose - 2 - k; candles.push(mk(o, o + 0.4, o - 1.4, o - 1)); }
+    const lc2 = candles[candles.length - 1].close;
+    candles.push(mk(lc2 - 0.2, lc2 + 0.6, lc2 - 0.6, lc2 + 0.2, 30));
+    candles.push(mk(lc2 + 0.1, lc2 + 1.6, lc2 - 0.2, lc2 + 1.4, 60));
 
     const signals = signalGenerator.findSignals(candles, 'D');
     expect(signals.length).toBeGreaterThan(0);

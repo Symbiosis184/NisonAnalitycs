@@ -14,8 +14,14 @@ export default function Layout() {
                 <BarChart3 className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h1 className="text-lg font-bold tracking-tight text-white">
-                  Nison <span className="text-amber-400">Analytics</span>
+                <h1 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+                  <span>Nison <span className="text-amber-400">Analytics</span></span>
+                  <span
+                    className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30 normal-case tracking-normal"
+                    title={import.meta.env.VITE_APP_VERSION ? `v${import.meta.env.VITE_APP_VERSION}` : 'v1.0'}
+                  >
+                    v{import.meta.env.VITE_APP_VERSION || '1.0'}
+                  </span>
                 </h1>
                 <p className="text-[10px] text-gray-500 -mt-0.5 tracking-wider uppercase">
                   Trading Dashboard
@@ -70,7 +76,7 @@ export default function Layout() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <p className="text-sm text-gray-500">
-              © 2026 Nison Analytics. Powered by Steve Nison's methodology.
+              © 2026 Nison Analytics v{import.meta.env.VITE_APP_VERSION || '1.0'}. Powered by Steve Nison's methodology.
             </p>
             <div className="flex items-center gap-4 text-xs text-gray-600">
               <span>Data: Bybit API</span>
