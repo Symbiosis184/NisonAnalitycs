@@ -64,6 +64,14 @@ export function detectPatterns(candles: Candle[], timeframe: string = 'D'): Patt
     const candle = candles[i];
     const prev = candles.slice(0, i);
     const next = candles[i + 1]; // Следующая свеча для подтверждения
+
+    // FIX канона / жалобы «ложные паттерны»: раньше зона проверялась по всей
+    // истории — даже очень далёкие уровни считались «поддержкой», и формации
+    // в середине флэта получали бонус контекста. Нисон анализирует уровень в
+    // рабочем окне графика (~последние 100–150 свечей): всё, что глубже, для
+    // текущей цены не является близким уровнем. Окно отсечки — максимум из
+    // последних ~120 свечей (и всегда включает предпаттерный сегмент).
+    const zonePrev = prev.length > 130 ? prev.slice(-120) : prev;
     
     const checks: Array<{ found: boolean; name: string; type: 'бычий' | 'медвежий' | 'нейтральный'; patternCandles: number }> = [];
     
@@ -303,9 +311,9 @@ export function detectPatterns(candles: Candle[], timeframe: string = 'D'): Patt
       // FIX (wick-касания): формация тестирует уровень ТЕНЬЮ — передаём low/high
       // свечи паттерна, чтобы молот со сформированной зоной поддержки не терялся.
       const atLevel = check.type === 'бычий' 
-        ? ZoneVoter.isNearSupport(candle.close, prev, 0.015, timeframeKey(timeframe), candle.low)
+        ? ZoneVoter.isNearSupport(candle.close, zonePrev, 0.015, timeframeKey(timeframe), candle.low)
         : check.type === 'медвежий'
-        ? ZoneVoter.isNearResistance(candle.close, prev, 0.015, timeframeKey(timeframe), candle.high)
+        ? ZoneVoter.isNearResistance(candle.close, zonePrev, 0.015, timeframeKey(timeframe), candle.high)
         : false;
       
       if (confirmed) confidence += 15;

@@ -136,10 +136,15 @@ export class ZoneVoter {
     // молот/звезда терялись на графике.
     const atrWindow = candles.length > 74 ? candles.slice(-60) : candles;
     const atrVal = atrWilder(atrWindow, 14);
-    const halfWidthBase = Math.min(
-      Math.max(params.tolerance * price, atrVal * 0.25),
-      Math.max(atrVal * 2, params.tolerance * price)
-    );
+    // FIX канона (гл. 11): ширина зоны — СВОЙСТВО УРОВНЯ, а не глобальная
+    // константа текущего момента. Прежняя halfWidthBase применялась ко всем
+    // зонам сразу: далеко стоящая зона получала полосу из сегодняшнего ATR,
+    // и проверка «цена внутри полосы» давала ложные касания (молот «видел»
+    // поддержку там, где её не было). Канон: зона = [уровень ± max(толеранс
+    // кластеризации, 0.25×ATR)], т.е. полоса покрывает разброс составляющих
+    // зону цен и шум вокруг уровня, но не растягивается на весь ATR-диапазон.
+    const zoneHalfWidth = (level: number) =>
+      Math.max(params.tolerance * level, atrVal * 0.25);
 
     // FIX канон-аудита (гл. 11): роль уровня определяется его ПОЗИЦИЕЙ ОТНОСИТЕЛЬНО
     // ТЕКУЩЕЙ ЦЕНЫ, а не тем, из какой карты он собран. Пробитое сопротивление
@@ -147,11 +152,11 @@ export class ZoneVoter {
     // над ценой мог попасть в «поддержку» (если цена касалась его снизу какSupport
     // ложно срабатывал при level≈price), а круглое число ниже цены — в
     // «сопротивление». Финальная инварианта: поддержка ≤ цена ≤ сопротивление.
-    const support = this.mapToZones(supMap, halfWidthBase)
+    const support = this.mapToZones(supMap, zoneHalfWidth)
       .filter(z => z.level <= price)
       .sort((a, b) => b.level - a.level); // Ближайшие к цене — первыми
 
-    const resistance = this.mapToZones(resMap, halfWidthBase)
+    const resistance = this.mapToZones(resMap, zoneHalfWidth)
       .filter(z => z.level >= price)
       .sort((a, b) => a.level - b.level); // Ближайшие к цене — первыми
 
@@ -416,7 +421,7 @@ export class ZoneVoter {
    */
   private static mapToZones(
     map: Map<number, { reasons: string[]; touches: number; lastTouch: number }>,
-    halfWidth: number
+    halfWidthOf: (level: number) => number
   ): Zone[] {
     const zones: Zone[] = [];
 
@@ -429,7 +434,7 @@ export class ZoneVoter {
         reasons: uniqueReasons,
         touches: data.touches,
         lastTouch: data.lastTouch,
-        halfWidth,
+        halfWidth: halfWidthOf(level),
       });
     }
 
@@ -459,13 +464,16 @@ export class ZoneVoter {
     // low последней свечи, считается касанием, когда тень вошла в зону (с допуском
     // 0.3×halfWidth на шум), даже если закрытие осталось выше её края.
     const { support } = this.collect(price, candles, tfKey);
-    // FIX канона: зона — это полоса [level ± halfWidth]; касание ТЕНЬЮ чуть ниже
-    // края (в пределах толеранса кластеризации зоны tol*level) тоже тест уровня —
-    // иначе формация с тенью, вошедшей в зону снизу под краем, терялась.
+    // FIX канона (гл. 4/11): зона — это полоса [level ± halfWidth]. Прежнее
+    // условие требовало, чтобы тень вошла в полосу СНИЗУ (wickLow ≤ верхнего
+    // края) и отвергало самый частый канонический случай: молот, чья длинная
+    // тень ПРОШИЛА зону сверху вниз (close над полосой, low под ней). Корректно:
+    // тень коснулась уровня, если интервал [wickLow … price] пересекает полосу.
     return support.some(zone =>
       this.inBand(price, zone) ||
-      (wickLow !== undefined && wickLow <= zone.level + zone.halfWidth * 1.3 &&
-       wickLow >= zone.level - zone.halfWidth - zone.level * 0.01)
+      (wickLow !== undefined &&
+        wickLow <= zone.level + zone.halfWidth &&
+        price >= zone.level - zone.halfWidth)
     );
   }
 
@@ -487,10 +495,14 @@ export class ZoneVoter {
     // См. комментарий к isNearSupport: high тени, вошедшей в зону сопротивления,
     // считается касанием уровня (Нисон: звезда тестит вершину тенью).
     const { resistance } = this.collect(price, candles, tfKey);
+    // FIX канона (гл. 4-5): зеркально поддержке — тень звезды/повешенного может
+    // ПРОШИТЬ зону сопротивления снизу вверх (high над полосой, close под ней).
+    // Пересечение интервала [price … wickHigh] с полосой уровня = касание.
     return resistance.some(zone =>
       this.inBand(price, zone) ||
-      (wickHigh !== undefined && wickHigh >= zone.level - zone.halfWidth * 1.3 &&
-       wickHigh <= zone.level + zone.halfWidth)
+      (wickHigh !== undefined &&
+        wickHigh >= zone.level - zone.halfWidth &&
+        price <= zone.level + zone.halfWidth)
     );
   }
 }

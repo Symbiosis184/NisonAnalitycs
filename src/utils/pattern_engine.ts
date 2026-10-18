@@ -166,7 +166,7 @@ export class PatternDetector {
     const lo = Math.min(...seg.map(c => c.low));
     const hi = Math.max(...seg.map(c => c.high));
     if (hi <= lo) return true;
-    // FIX канона: «локальное дно» — это ОТКАТ к нижней границе окна, а не обязанность
+    // FIX канона (гл. 4): «локальное дно» — это ОТКАТ к нижней границе окна, а не обязанность
     // обновить абсолютный минимум (требование low == min отвергало молоты, которые
     // тестировали СУЩЕСТВУЮЩУЮ зону поддержки, не пробивая её — именно так Нисон
     // и описывает отказ: цена приходит к прежнему дну и отскакивает).
@@ -178,9 +178,13 @@ export class PatternDetector {
     const lo2 = Math.min(...segNoSelf.map(c => c.low));
     const hi2 = Math.max(...segNoSelf.map(c => c.high));
     const atPriorBottom = candle.low <= lo2 + (hi2 - lo2) * 0.35; // пришёл к прежнему дну
-    const bounced = candle.close >= (lo + hi) / 2; // и закрытие отскочило вверх
+    // FIX канона (гл. 4): тело молота расположено В ВЕРХНЕЙ части диапазона —
+    // закрытие не ниже середины свечи (это же условие проверяется в isHammer).
+    // Прежнее «bounced» сравнивало close с серединой ОКНА: при длинном нисходящем
+    // сегменте оно отвергало корректные молоты, закрывшиеся у локального дна.
+    const bodyInUpperHalf = candle.close >= (candle.high + candle.low) / 2;
     void nearBottom;
-    return (nearBottom || atPriorBottom) && bounced;
+    return (nearBottom || atPriorBottom) && bodyInUpperHalf;
   }
 
   /**
@@ -195,20 +199,25 @@ export class PatternDetector {
     if (hi <= lo) return true;
     // Зеркальный FIX: вершина = подход к потолку окна (не обязательный новый max).
     const nearTop = candle.high >= hi - (hi - lo) * 0.15;
-    const rejected = candle.close <= (lo + hi) / 2;
-    return nearTop && rejected;
+    // FIX канона (гл. 4-5): тело звезды/повешенного — в НИЖНЕЙ части диапазона
+    // (закрытие не выше середины самой свечи). Прежнее «rejected» сравнивало
+    // close с серединой ОКНА и отвергало корректные звезды на растущем сегменте.
+    const bodyInLowerHalf = candle.close <= (candle.high + candle.low) / 2;
+    return nearTop && bodyInLowerHalf;
   }
 
   static isHammer(candle: Candle, prevCandles: Candle[]): { found: boolean; name: string } {
     if (candle.totalRange === 0) return { found: false, name: '' };
     if (candle.body > candle.totalRange * 0.45) return { found: false, name: '' };
-    // FIX канона (гл. 4): «малое тело» у Нисона — ОТНОСИТЕЛЬНО предшествующих
-    // свечей (не более среднего тела последних ~10). Прежняя проверка
-    // close >= bodyMid требовала закрытия ВЫШЕ середины самой свечи и отвергала
-    // классические бычьи молоты с закрытием ровно на середине — корректный
-    // критерий «тела в верхней части»: close не ниже середины ДИАПАЗОНА свечи.
+    // FIX канона (гл. 2/4): «малое тело» у Нисона — ОТНОСИТЕЛЬНО предыдущих свечей.
+    // Корректная формулировка: тело молота мало по сравнению с телами ПРЕДШЕСТВУЮЩИХ
+    // свечей тренда, но главное — само тело должно быть МАЛЫМ относительно ДИАПАЗОНА
+    // свечи (проверка выше: ≤45%). Прежнее сравнение «body > avgBody(последних 10)»
+    // ломало эталонную ситуацию Нисона: после серии микро-свечей (затишье/флэт)
+    // любое нормальное малотелое тело отвергалось, хотя именно так и выглядит
+    // молот, завершающий спокойное снижение.
     const avgBodyH = prevCandles.slice(-10).reduce((a, c) => a + c.body, 0) / Math.min(10, prevCandles.length || 1);
-    if (avgBodyH > 0 && candle.body > avgBodyH) return { found: false, name: '' };
+    if (avgBodyH > 0 && candle.body > Math.max(avgBodyH * 3, candle.totalRange * 0.45)) return { found: false, name: '' };
     // Канон (рис. 4.7): нижняя тень НЕ МЕНЕЕ двух тел; верхняя тень отсутствует
     // или несущественна; тело в ВЕРХНЕЙ части свечи.
     if (candle.lowerWick < candle.body * 2) return { found: false, name: '' };
