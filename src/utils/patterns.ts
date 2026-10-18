@@ -2,12 +2,26 @@ import { Candle } from './candle';
 import { PatternDetector, SupportResistance, setPatternTimeframe } from './pattern_engine';
 import { ZoneVoter, timeframeKey } from './zone_voter';
 
+/**
+ * Жизненный цикл формации по Нисону («Expectation → Confirmation»):
+ * - pending   — формация обнаружена, но следующая свеча ещё не закрылась
+ *               (последняя свеча графика): «ожидание подтверждения»;
+ * - confirmed — следующая свеча закрылась в направлении паттерна за его
+ *               экстремумом: сигнал действителен, рисуем маркер;
+ * - cancelled — следующая свеча НЕ подтвердила формацию: по канону она
+ *               ОТМЕНЕНА и не является сигналом. Раньше такие формации
+ *               всё равно попадали в выдачу с пониженной уверенностью —
+ *               это главный источник «ложных» стрелок на графике.
+ */
+export type PatternStatus = 'pending' | 'confirmed' | 'cancelled';
+
 export interface PatternResult {
   name: string;
   type: 'бычий' | 'медвежий' | 'нейтральный';
   candleIndex: number;
   confidence: number;
   confirmed: boolean;
+  status?: PatternStatus;
   hasVolume: boolean;
   atLevel: boolean;
 }
@@ -260,11 +274,21 @@ export function detectPatterns(candles: Candle[], timeframe: string = 'D'): Patt
       const patternHigh = Math.max(...candles.slice(safeStartIdx, patternEndIdx + 1).map(c => c.high));
       const patternLow = Math.min(...candles.slice(safeStartIdx, patternEndIdx + 1).map(c => c.low));
       
-      const confirmed = next ? (
-        check.type === 'бычий' ? next.isBullish && next.close > patternHigh :
-        check.type === 'медвежий' ? next.isBearish && next.close < patternLow :
-        false
-      ) : false;
+      // FIX канона: раньше неподтверждённые формации оставались в выдаче с
+      // пониженной уверенностью — на графике это выглядело как «ложные» стрелки.
+      // По Нисону неподтверждённая формация ОТМЕНЕНА (cancelled); статус
+      // pending возможен только когда следующей ЗАКРЫТОЙ свечи ещё нет.
+      let status: PatternStatus;
+      if (!next) {
+        status = 'pending';
+      } else {
+        const ok =
+          check.type === 'бычий' ? next.isBullish && next.close > patternHigh :
+          check.type === 'медвежий' ? next.isBearish && next.close < patternLow :
+          false;
+        status = ok ? 'confirmed' : 'cancelled';
+      }
+      const confirmed = status === 'confirmed';
       
       // Правильный расчёт среднего объёма с защитой от деления на ноль
       const volumePeriod = Math.min(20, prev.length);
@@ -276,10 +300,12 @@ export function detectPatterns(candles: Candle[], timeframe: string = 'D'): Patt
       else if (check.name.includes('ЗВЕЗДА')) confidence = 63;
       
       // Проверка близости к уровню поддержки/сопротивления
+      // FIX (wick-касания): формация тестирует уровень ТЕНЬЮ — передаём low/high
+      // свечи паттерна, чтобы молот со сформированной зоной поддержки не терялся.
       const atLevel = check.type === 'бычий' 
-        ? ZoneVoter.isNearSupport(candle.close, prev, 0.015, timeframeKey(timeframe))
+        ? ZoneVoter.isNearSupport(candle.close, prev, 0.015, timeframeKey(timeframe), candle.low)
         : check.type === 'медвежий'
-        ? ZoneVoter.isNearResistance(candle.close, prev, 0.015, timeframeKey(timeframe))
+        ? ZoneVoter.isNearResistance(candle.close, prev, 0.015, timeframeKey(timeframe), candle.high)
         : false;
       
       if (confirmed) confidence += 15;
@@ -296,6 +322,7 @@ export function detectPatterns(candles: Candle[], timeframe: string = 'D'): Patt
         candleIndex: i,
         confidence,
         confirmed,
+        status,
         hasVolume,
         atLevel,
       });
@@ -310,7 +337,10 @@ export function detectPatterns(candles: Candle[], timeframe: string = 'D'): Patt
   // уверенности ПО ВСЕЙ истории — свежие формации вытеснялись старыми с
   // накопленными бонусами объёма/уровня. Теперь: окно последних свечей +
   // ранжирование по свежести → подтверждению → уверенности, лимит 24.
-  const filtered = unique.filter(p => p.confidence >= 55);
+  // FIX канона: в историю/на график попадают ТОЛЬКО подтверждённые сигналы.
+  // cancelled-формации исключаются полностью (Нисон: неподтверждённая
+  // формация не является сигналом), pending — как живые «ожидания».
+  const filtered = unique.filter(p => p.confidence >= 55 && p.status !== 'cancelled');
 
   return sortPatternsForDisplay(filtered, candles.length).slice(0, 24);
   } finally {

@@ -29,12 +29,12 @@ export class SupportResistance {
    * Собственный «процентный допуск» класса убран: он расходился с
    * каноном и зависел от переданного числа, а не от масштаба графика.
    */
-  static isNearSupport(price: number, candles: Candle[], tfKey: TimeframeKey = 'swing'): boolean {
-    return ZoneVoter.isNearSupport(price, candles, undefined, tfKey);
+  static isNearSupport(price: number, candles: Candle[], tfKey: TimeframeKey = 'swing', wickLow?: number): boolean {
+    return ZoneVoter.isNearSupport(price, candles, undefined, tfKey, wickLow);
   }
 
-  static isNearResistance(price: number, candles: Candle[], tfKey: TimeframeKey = 'swing'): boolean {
-    return ZoneVoter.isNearResistance(price, candles, undefined, tfKey);
+  static isNearResistance(price: number, candles: Candle[], tfKey: TimeframeKey = 'swing', wickHigh?: number): boolean {
+    return ZoneVoter.isNearResistance(price, candles, undefined, tfKey, wickHigh);
   }
 }
 
@@ -166,9 +166,21 @@ export class PatternDetector {
     const lo = Math.min(...seg.map(c => c.low));
     const hi = Math.max(...seg.map(c => c.high));
     if (hi <= lo) return true;
-    const isBottom = candle.low <= lo * 1.001; // дно свечи = дно диапазона
+    // FIX канона: «локальное дно» — это ОТКАТ к нижней границе окна, а не обязанность
+    // обновить абсолютный минимум (требование low == min отвергало молоты, которые
+    // тестировали СУЩЕСТВУЮЩУЮ зону поддержки, не пробивая её — именно так Нисон
+    // и описывает отказ: цена приходит к прежнему дну и отскакивает).
+    const nearBottom = candle.low <= lo + (hi - lo) * 0.15;
+    // FIX канона: молот сам рисует дно тенью, поэтому «дно окна» вычисляется
+    // БЕЗ его low (иначе глубина тени сама растягивает окно и условие
+    // nearBottom разрывается изнутри). Достаточно закрытия в верхней половине.
+    const segNoSelf = prevCandles.slice(-8);
+    const lo2 = Math.min(...segNoSelf.map(c => c.low));
+    const hi2 = Math.max(...segNoSelf.map(c => c.high));
+    const atPriorBottom = candle.low <= lo2 + (hi2 - lo2) * 0.35; // пришёл к прежнему дну
     const bounced = candle.close >= (lo + hi) / 2; // и закрытие отскочило вверх
-    return isBottom && bounced;
+    void nearBottom;
+    return (nearBottom || atPriorBottom) && bounced;
   }
 
   /**
@@ -181,14 +193,22 @@ export class PatternDetector {
     const lo = Math.min(...seg.map(c => c.low));
     const hi = Math.max(...seg.map(c => c.high));
     if (hi <= lo) return true;
-    const isTop = candle.high >= hi * 0.999;
+    // Зеркальный FIX: вершина = подход к потолку окна (не обязательный новый max).
+    const nearTop = candle.high >= hi - (hi - lo) * 0.15;
     const rejected = candle.close <= (lo + hi) / 2;
-    return isTop && rejected;
+    return nearTop && rejected;
   }
 
   static isHammer(candle: Candle, prevCandles: Candle[]): { found: boolean; name: string } {
     if (candle.totalRange === 0) return { found: false, name: '' };
     if (candle.body > candle.totalRange * 0.45) return { found: false, name: '' };
+    // FIX канона (гл. 4): «малое тело» у Нисона — ОТНОСИТЕЛЬНО предшествующих
+    // свечей (не более среднего тела последних ~10). Прежняя проверка
+    // close >= bodyMid требовала закрытия ВЫШЕ середины самой свечи и отвергала
+    // классические бычьи молоты с закрытием ровно на середине — корректный
+    // критерий «тела в верхней части»: close не ниже середины ДИАПАЗОНА свечи.
+    const avgBodyH = prevCandles.slice(-10).reduce((a, c) => a + c.body, 0) / Math.min(10, prevCandles.length || 1);
+    if (avgBodyH > 0 && candle.body > avgBodyH) return { found: false, name: '' };
     // Канон (рис. 4.7): нижняя тень НЕ МЕНЕЕ двух тел; верхняя тень отсутствует
     // или несущественна; тело в ВЕРХНЕЙ части свечи.
     if (candle.lowerWick < candle.body * 2) return { found: false, name: '' };
@@ -196,7 +216,7 @@ export class PatternDetector {
     // FIX канон-аудита: молот по Нисону — тело в ВЕРХНЕЙ части диапазона.
     // Прежнее условие (низ тела выше середины) отбрасывало классические бычьи
     // молоты; корректная проверка: close не ниже середины свечи.
-    if (candle.close < candle.bodyMid) return { found: false, name: '' };
+    if (candle.close < (candle.high + candle.low) / 2) return { found: false, name: '' };
     // Молот - РАЗВОРОТНАЯ свеча: требует дна (локальный минимум + опора).
     if (!this.atLocalLow(candle, prevCandles)) return { found: false, name: '' };
     
@@ -206,9 +226,11 @@ export class PatternDetector {
     
     // ГЛАВНОЕ ПОДТВЕРЖДЕНИЕ ПО КАНОНУ (гл. 4): молот — это ОТКАЗ У ЗОНЫ ПОДДЕРЖКИ.
     // Тень сама по себе не сигнал; без опоры это просто длинная нижняя тень.
-    // Допускается касание зоны тенью (low), а не только телом (close).
-    const nearSupport = ZoneVoter.isNearSupport(candle.low, prevCandles, 0.01, PATTERN_TF_KEY) ||
-                        ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01, PATTERN_TF_KEY);
+    // FIX канона: уровень тестируется ИМЕННО ТЕНЬЮ — передаём low свечи как
+    // wick-касание (раньше проверка шла только по close/low КАК ЦЕНЕ, и молот,
+    // чья тень вошла в зону при закрытии выше её края, не детектировался).
+    const nearSupport = ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01, PATTERN_TF_KEY, candle.low) ||
+                        ZoneVoter.isNearSupport(candle.low, prevCandles, 0.01, PATTERN_TF_KEY);
     if (!nearSupport) return { found: false, name: '' };
     // Объём/MA20 — дополнительные подтверждения (усиливают имя, но не заменяют зону).
     const volumeOk = VolumeAnalyzer.isHighVolume(candle, prevCandles, 1.3);
@@ -234,8 +256,9 @@ export class PatternDetector {
     const m20Arr = ema(closes, 20);
     const m20 = m20Arr.length > 0 ? m20Arr[m20Arr.length - 1] : null;
     
-    const nearSupport = ZoneVoter.isNearSupport(candle.low, prevCandles, 0.01, PATTERN_TF_KEY) ||
-                        ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01, PATTERN_TF_KEY);
+    // FIX канона: уровень тестируется тенью — low свечи как wick-касание.
+    const nearSupport = ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01, PATTERN_TF_KEY, candle.low) ||
+                        ZoneVoter.isNearSupport(candle.low, prevCandles, 0.01, PATTERN_TF_KEY);
     
     if (!nearSupport) return { found: false, name: '' };
     
@@ -250,8 +273,9 @@ export class PatternDetector {
     const m20Arr = ema(closes, 20);
     const m20 = m20Arr.length > 0 ? m20Arr[m20Arr.length - 1] : null;
     
-    const nearSupport = ZoneVoter.isNearSupport(candle.low, prevCandles, 0.01, PATTERN_TF_KEY) ||
-                        ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01, PATTERN_TF_KEY);
+    // FIX канона: уровень тестируется тенью — low свечи как wick-касание.
+    const nearSupport = ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01, PATTERN_TF_KEY, candle.low) ||
+                        ZoneVoter.isNearSupport(candle.low, prevCandles, 0.01, PATTERN_TF_KEY);
     
     // Канон (гл. 5): верхняя тень не менее двух тел, нижняя несущественна,
     // тело в НИЖНЕЙ части свечи; свеча стоит у локального дна.

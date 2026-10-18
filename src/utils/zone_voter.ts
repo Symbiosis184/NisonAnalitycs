@@ -129,7 +129,13 @@ export class ZoneVoter {
 
     // Ширина зоны привязана к волатильности ТФ (ATR): толеранс кластеризации,
     // но не уже 0.25×ATR и не шире 2×ATR (Нисон: уровень — это ЗОНА).
-    const atrVal = atrWilder(candles, 14);
+    // FIX канона (гл. 11): ATR считается по ПОСЛЕДНИМ ~60 свечам окна анализа,
+    // а не по всей истории. При резкой смене волатильности (затишье → импульс)
+    // исторический Wilder-ATR остаётся заниженным, зона получается тоньше своих
+    // же касаний — формация у уровня переставала считаться «у поддержки» и
+    // молот/звезда терялись на графике.
+    const atrWindow = candles.length > 74 ? candles.slice(-60) : candles;
+    const atrVal = atrWilder(atrWindow, 14);
     const halfWidthBase = Math.min(
       Math.max(params.tolerance * price, atrVal * 0.25),
       Math.max(atrVal * 2, params.tolerance * price)
@@ -387,12 +393,22 @@ export class ZoneVoter {
     else if (price >= 1) step = 0.1;
     else step = 0.01;
 
-    // Ближайшие круглые числа
+    // Ближайшие круглые числа.
+    // FIX канона (гл. 11): психологический уровень значим, когда к нему ПОДХОДИТ
+    // цена — раньше он добавлялся «вслепую» на весь шаг (±10 пунктов при цене ~100),
+    // и такой фантом перекрывал голосование РЕАЛЬНЫХ протестированных зон:
+    // молот у поддержки 97 не детектировался, потому что единственной «поддержкой»
+    // числилось круглое число 99. Теперь: только если close в пределах шага от
+    // уровня (уровень актуален прямо сейчас).
     const lower = Math.floor(price / step) * step;
     const upper = Math.ceil(price / step) * step;
 
-    addLevelToMap(supMap, lower, 'психологический уровень (круглое число)', Date.now(), tolerance);
-    addLevelToMap(resMap, upper, 'психологический уровень (круглое число)', Date.now(), tolerance);
+    if (price - lower <= step) {
+      addLevelToMap(supMap, lower, 'психологический уровень (круглое число)', Date.now(), tolerance);
+    }
+    if (upper - price <= step) {
+      addLevelToMap(resMap, upper, 'психологический уровень (круглое число)', Date.now(), tolerance);
+    }
   }
 
   /**
@@ -430,17 +446,32 @@ export class ZoneVoter {
     price: number,
     candles: Candle[],
     _tolerance: number = 0.015,
-    tfKey: TimeframeKey = 'swing'
+    tfKey: TimeframeKey = 'swing',
+    wickLow?: number
   ): boolean {
     // FIX канон-аудита: раньше порог был max(tol*price, halfWidth) — на дневном
     // ТФ это 1.5% от цены, т.е. свеча попадала «у поддержки», находясь на
     // расстоянии полутора ПРОЦЕНТОВ от зоны, которая по Нисону и так не шире
     // ATR. Канон (гл. 11): уровень — это ЗОНА [level − halfWidth … level + halfWidth];
-    // «у поддержки» = ЦЕНА ВНУТРИ полосы (допускается вхождение тенью: low ≤ верхний край).
+    // «у поддержки» = ЦЕНА ВНУТРИ полосы.
+    // FIX (wick-касания): разрыв между зоной и close молота/звезды — это ровно
+    // ТЕНЬ свечи. По Нисону формация тестирует уровень именно тенью: если передан
+    // low последней свечи, считается касанием, когда тень вошла в зону (с допуском
+    // 0.3×halfWidth на шум), даже если закрытие осталось выше её края.
     const { support } = this.collect(price, candles, tfKey);
+    // FIX канона: зона — это полоса [level ± halfWidth]; касание ТЕНЬЮ чуть ниже
+    // края (в пределах толеранса кластеризации зоны tol*level) тоже тест уровня —
+    // иначе формация с тенью, вошедшей в зону снизу под краем, терялась.
     return support.some(zone =>
-      price <= zone.level + zone.halfWidth && price >= zone.level - zone.halfWidth
+      this.inBand(price, zone) ||
+      (wickLow !== undefined && wickLow <= zone.level + zone.halfWidth * 1.3 &&
+       wickLow >= zone.level - zone.halfWidth - zone.level * 0.01)
     );
+  }
+
+  /** Цена внутри ATR-полосы зоны [level ± halfWidth]. */
+  private static inBand(price: number, zone: Zone): boolean {
+    return price <= zone.level + zone.halfWidth && price >= zone.level - zone.halfWidth;
   }
 
   /**
@@ -450,11 +481,16 @@ export class ZoneVoter {
     price: number,
     candles: Candle[],
     _tolerance: number = 0.015,
-    tfKey: TimeframeKey = 'swing'
+    tfKey: TimeframeKey = 'swing',
+    wickHigh?: number
   ): boolean {
+    // См. комментарий к isNearSupport: high тени, вошедшей в зону сопротивления,
+    // считается касанием уровня (Нисон: звезда тестит вершину тенью).
     const { resistance } = this.collect(price, candles, tfKey);
     return resistance.some(zone =>
-      price <= zone.level + zone.halfWidth && price >= zone.level - zone.halfWidth
+      this.inBand(price, zone) ||
+      (wickHigh !== undefined && wickHigh >= zone.level - zone.halfWidth * 1.3 &&
+       wickHigh <= zone.level + zone.halfWidth)
     );
   }
 }
