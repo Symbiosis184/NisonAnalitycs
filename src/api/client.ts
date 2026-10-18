@@ -1,4 +1,4 @@
-import { fetchKlines, fetch24hTicker } from './bybit';
+import { fetchKlines, fetch24hTicker, fetchInstrumentInfo } from './bybit';
 import { Candle } from '../utils/candle';
 import { ema, rsi, macd, detectTrend, generateSignal } from '../utils/indicators';
 import { detectPatterns, patternStory } from '../utils/patterns';
@@ -371,6 +371,64 @@ export class ApiClient {
       })
     );
     return results.filter((r): r is MultiTFZonesDTO => r !== null);
+  }
+
+  /**
+   * Анализ произвольного инструмента с дашборда: проверяем существование
+   * тикера на Bybit (спот, USDT-пары), нормализуем символ (TAO -> TAOUSDT)
+   * и возвращаем карточку в формате MarketOverviewItem.
+   */
+  async analyzeCustomSymbol(rawSymbol: string): Promise<MarketOverviewItem> {
+    const base = rawSymbol.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!base) throw new Error('Введите название криптовалюты, например TAO или ARB');
+    const symbol = base.endsWith('USDT') ? base : `${base}USDT`;
+
+    // Проверяем наличие инструмента через instruments-info (кэш/троттлинг общие)
+    const info = await fetchInstrumentInfo(symbol);
+    if (!info || !info.is_trading) {
+      throw new Error(`Инструмент ${symbol} не найден среди спотовых USDT-пар Bybit`);
+    }
+
+    let overview: MarketOverviewItem;
+    try {
+      overview = await this.buildOverviewItem(symbol);
+    } catch {
+      throw new Error(`Не удалось получить данные по ${symbol}. Попробуйте ещё раз.`);
+    }
+    return overview;
+  }
+
+  /** Одна карчка обзора рынка для конкретного символа (переиспользуется дашбордом). */
+  private async buildOverviewItem(symbol: string): Promise<MarketOverviewItem> {
+    const analysis = await this.getAnalysis(symbol, 'D');
+    const volumes = analysis.candles.map((c) => c.volume);
+    const avgVolume = volumes.reduce((sum, v) => sum + v, 0) / volumes.length;
+    const confirmedPatterns = analysis.patterns
+      .filter((p) => p.confirmed)
+      .map((p) => ({ name: p.name, type: p.type, confirmed: p.confirmed, confidence: p.confidence }));
+    const supportLevels = analysis.support.map((s) => s.level);
+    const resistanceLevels = analysis.resistance.map((r) => r.level);
+    const confirmedSignals = analysis.signals
+      .filter((s) => s.confirmed)
+      .map((s) => ({
+        direction: s.direction, pattern: s.pattern, entry_price: s.entry_price,
+        stop_loss: s.stop_loss, target: s.target, risk: s.risk, rr: s.rr,
+        quality: s.quality, confirmed: s.confirmed,
+      }));
+    return {
+      symbol,
+      price: analysis.price,
+      change_24h: analysis.change_24h,
+      trend: analysis.trend,
+      regime: analysis.regime,
+      patterns: confirmedPatterns,
+      signals: confirmedSignals,
+      support: supportLevels,
+      resistance: resistanceLevels,
+      volume: analysis.candles[analysis.candles.length - 1]?.volume || 0,
+      avgVolume,
+      consensus: analysis.consensus,
+    };
   }
 
   async getMarketOverview(): Promise<MarketOverviewItem[]> {

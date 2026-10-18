@@ -100,6 +100,27 @@ export async function fetchKlines(rawSymbol: string, interval: string, rawLimit:
   })).reverse();
 }
 
+/** Информация об инструменте Bybit (спот) — для проверки существования пары. */
+export interface InstrumentInfo {
+  symbol: string;
+  status: string;
+  is_trading: boolean;
+}
+
+export async function fetchInstrumentInfo(rawSymbol: string): Promise<InstrumentInfo | null> {
+  const symbol = assertValidSymbol(rawSymbol);
+  const url = `${BASE_URL}/v5/market/instruments-info?category=spot&symbol=${encodeURIComponent(symbol)}`;
+  const data = await cachedFetchJson(`instrument:${symbol}`, url, 300_000); // 5 минут
+  if (data.retCode !== 0) return null;
+  const item = data?.result?.list?.[0];
+  if (!item) return null;
+  return {
+    symbol: item.symbol,
+    status: item.status ?? '',
+    is_trading: item.isTrading === true || item.status === 'Trading',
+  };
+}
+
 export async function fetch24hTicker(rawSymbol: string): Promise<Ticker24h> {
   // Валидация symbol защищает от инъекции параметров в URL запроса к Bybit
   const symbol = assertValidSymbol(rawSymbol);
