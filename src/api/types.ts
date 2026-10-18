@@ -174,6 +174,8 @@ export interface AnalysisReport {
     val: number;
     hvn: Array<{ low: number; high: number; volume: number }>;
     lvn: Array<{ low: number; high: number; volume: number }>;
+    /** Полная гистограмма профиля для визуализации (горизонтальные бары по ценам) */
+    bins?: Array<{ low: number; high: number; volume: number; share: number }>;
   };
   /** Сводка дельты/агрессии за окно (proxy-оценка по OHLCV, utils/volume_profile) */
   delta_summary?: {
@@ -181,12 +183,59 @@ export interface AnalysisReport {
     buy_pressure_share: number;
     avg_clv: number;
     delta_trend: 'rising' | 'falling' | 'flat';
+    /** Поминутная proxy-дельта окна — для столбчатого графика и накопленной кривой */
+    points?: Array<{ time: number; delta: number; clv: number; imbalance: 'buy' | 'sell' | null }>;
   };
   consensus: ConsensusDTO;
   trend_analysis: TrendAnalysisDTO;
   /** Бэктест-сводка по найденным сигналам (заглушка до подключения движка — П.3) */
   backtest?: BacktestSummaryDTO[];
+  /** Верификация преимущества (utils/edge_verification): деградация + когорты режимов */
+  edge?: EdgeReportDTO;
   generated: number;
+}
+
+/** Когорта эффективности по режиму рынка (utils/edge_verification.statsByRegime) */
+export interface EdgeCohortDTO {
+  cohort: 'trend' | 'range' | 'volatile-breakout';
+  label: string;
+  trades: number;
+  wins: number;
+  win_rate: number;      // %
+  ci_low: number;        // % (Wilson CI)
+  ci_high: number;       // %
+  avg_net_r: number;     // expectancy, R/сделка
+  total_net_r: number;
+  exp_ci_low: number;    // 95% CI expectancy в R
+  exp_ci_high: number;
+  has_edge: boolean;
+}
+
+/** Отчёт о деградации за последние 90 дней vs история (utils/edge_verification.detectDegradation) */
+export interface DegradationDTO {
+  window_days: number;
+  recent_trades: number;
+  history_trades: number;
+  recent_expectancy: number | null;
+  history_expectancy: number | null;
+  delta: number | null;
+  z_score: number | null;
+  p_value: number | null;
+  degraded: boolean;
+  insufficient_data: boolean;
+  note: string;
+}
+
+/** Сводный вердикт edge (utils/edge_verification.edgeVerdict) */
+export interface EdgeReportDTO {
+  verdict: 'positive-edge' | 'no-edge' | 'edge-degrading' | 'insufficient';
+  summary: string;
+  best_cohort: string | null;
+  cohorts: EdgeCohortDTO[];
+  degradation: DegradationDTO;
+  /** Источник статистики: эмпирический бэктест на истории инструмента */
+  source: 'backtest';
+  sample_trades: number;
 }
 
 /** Карточка инструмента для обзора рынка (Dashboard) */
