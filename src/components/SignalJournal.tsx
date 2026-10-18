@@ -161,47 +161,47 @@ export default function SignalJournal() {
     <div className="space-y-6">
       {/* Статистика */}
       {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
-          <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 sm:gap-4">
+          <div className="p-3 sm:p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
             <div className="text-xs text-gray-500 mb-1">Всего сигналов</div>
-            <div className="text-2xl font-bold text-white">{stats.totalSignals}</div>
+            <div className="text-lg sm:text-2xl font-bold text-white">{stats.totalSignals}</div>
           </div>
           <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
             <div className="text-xs text-gray-500 mb-1">Активных</div>
-            <div className="text-2xl font-bold text-yellow-400">{stats.activeSignals}</div>
+            <div className="text-lg sm:text-2xl font-bold text-yellow-400">{stats.activeSignals}</div>
           </div>
           <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
             <div className="text-xs text-gray-500 mb-1">Цель достигнута</div>
-            <div className="text-2xl font-bold text-green-400">{stats.hitTarget}</div>
+            <div className="text-lg sm:text-2xl font-bold text-green-400">{stats.hitTarget}</div>
           </div>
           <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
             <div className="text-xs text-gray-500 mb-1">Стоп сработал</div>
-            <div className="text-2xl font-bold text-red-400">{stats.hitStop}</div>
+            <div className="text-lg sm:text-2xl font-bold text-red-400">{stats.hitStop}</div>
           </div>
           <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
             <div className="text-xs text-gray-500 mb-1">Win Rate</div>
-            <div className="text-2xl font-bold text-white">{stats.winRate.toFixed(1)}%</div>
+            <div className="text-lg sm:text-2xl font-bold text-white">{stats.winRate.toFixed(1)}%</div>
           </div>
           <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
             <div className="text-xs text-gray-500 mb-1">Средний P&L</div>
-            <div className={`text-2xl font-bold ${stats.avgPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+            <div className={`text-lg sm:text-2xl font-bold ${stats.avgPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               {stats.avgPnl >= 0 ? '+' : ''}{stats.avgPnl.toFixed(2)}%
             </div>
           </div>
           <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
             <div className="text-xs text-gray-500 mb-1">Средний R:R</div>
-            <div className="text-2xl font-bold text-white">1:{stats.avgRiskReward.toFixed(2)}</div>
+            <div className="text-lg sm:text-2xl font-bold text-white">1:{stats.avgRiskReward.toFixed(2)}</div>
           </div>
           <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
             <div className="text-xs text-gray-500 mb-1">Истёкших</div>
-            <div className="text-2xl font-bold text-gray-400">{stats.expired}</div>
+            <div className="text-lg sm:text-2xl font-bold text-gray-400">{stats.expired}</div>
           </div>
         </div>
       )}
 
       {/* Контролы */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex gap-2">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div className="flex gap-2 overflow-x-auto pb-1 -mx-3 px-3 sm:mx-0 sm:px-0">
           <button
             onClick={() => setFilter('all')}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -234,7 +234,7 @@ export default function SignalJournal() {
           </button>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex gap-2 overflow-x-auto pb-1 -mx-3 px-3 sm:mx-0 sm:px-0">
           <button
             onClick={handleRestore}
             title={`Авто-снапшоты: ${snapshots.length} (хранится до 7 последних)`}
@@ -274,7 +274,7 @@ export default function SignalJournal() {
           filteredSignals.map((signal) => (
             <div
               key={signal.id}
-              className={`p-4 rounded-xl border ${
+              className={`p-3 sm:p-4 rounded-xl border ${
                 signal.status === 'pending'
                   ? 'border-yellow-500/20 bg-yellow-500/5'
                   : signal.status === 'hit_target'
@@ -284,15 +284,15 @@ export default function SignalJournal() {
                   : 'border-gray-800/60 bg-[#131a2b]/50'
               }`}
             >
-              <div className="flex items-start justify-between mb-3">
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 mb-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2 mb-1">
                     {signal.direction === 'long' ? (
                       <TrendingUp className="w-5 h-5 text-green-400" />
                     ) : (
                       <TrendingDown className="w-5 h-5 text-red-400" />
                     )}
-                    <span className="text-lg font-bold text-white">
+                    <span className="text-base sm:text-lg font-bold text-white break-all">
                       {signal.symbol}
                     </span>
                     <span className={`text-sm font-medium ${
@@ -306,7 +306,7 @@ export default function SignalJournal() {
                   </div>
                   <p className="text-sm text-gray-400">{signal.pattern}</p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center justify-between sm:justify-start gap-2 shrink-0">
                   {getStatusBadge(signal.status)}
                   <button
                     onClick={() => handleDelete(signal.id)}

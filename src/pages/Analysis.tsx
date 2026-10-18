@@ -19,7 +19,7 @@ function RiskSettingsPanel({ settings, onApply }: {
   const [capital, setCapital] = useState(String(settings.capitalUsd));
   const [risk, setRisk] = useState((settings.riskPct * 100).toFixed(1));
   return (
-    <div className="mb-4 p-3 rounded-lg bg-gray-800/40 border border-gray-700/50 flex flex-wrap items-end gap-3 text-sm">
+    <div className="mb-4 p-3 rounded-lg bg-gray-800/40 border border-gray-700/50 flex flex-wrap items-end gap-3 text-sm overflow-x-auto">
       <label className="flex flex-col gap-1">
         <span className="text-xs text-gray-500">Капитал, $ ({RISK_LIMITS.minCapital}–{RISK_LIMITS.maxCapital.toLocaleString('ru-RU')})</span>
         <input
@@ -52,6 +52,15 @@ export default function Analysis() {
   // Валидация symbol из URL: недопустивые значения не дойдут до внешних API-запросов
   const symbol = rawSymbol && isValidSymbol(rawSymbol) ? rawSymbol.trim().toUpperCase() : undefined;
   const [timeframe, setTimeframe] = useState('D');
+
+  // Адаптивная высота графика: на узких экранах меньше, чтобы влезал без дабл-скролла
+  const [chartHeight, setChartHeight] = useState(() =>
+    typeof window !== 'undefined' ? (window.innerWidth < 480 ? 320 : window.innerWidth < 768 ? 400 : 500) : 500);
+  useEffect(() => {
+    const onResize = () => setChartHeight(window.innerWidth < 480 ? 320 : window.innerWidth < 768 ? 400 : 500);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   const [report, setReport] = useState<AnalysisReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -166,10 +175,10 @@ export default function Analysis() {
       </Link>
 
       {/* Заголовок с ценой */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
         <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-3xl font-bold text-white">{baseAsset}/USDT</h1>
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <h1 className="text-2xl sm:text-3xl font-bold text-white">{baseAsset}/USDT</h1>
             <span className={`px-3 py-1 rounded-lg text-sm font-medium ${
               report.trend === 'ВОСХОДЯЩИЙ' ? 'bg-green-500/10 text-green-400 border border-green-500/20' :
               report.trend === 'НИСХОДЯЩИЙ' ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
@@ -178,8 +187,8 @@ export default function Analysis() {
               {report.trend}
             </span>
           </div>
-          <div className="flex items-center gap-4 mt-2">
-            <span className="text-2xl font-bold text-white">${formatPrice(report.price)}</span>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2">
+            <span className="text-xl sm:text-2xl font-bold text-white">${formatPrice(report.price)}</span>
             <span className={`flex items-center gap-1 text-sm font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
               {isPositive ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
               {isPositive ? '+' : ''}{report.change_24h.toFixed(2)}%
@@ -188,7 +197,7 @@ export default function Analysis() {
         </div>
 
         {/* Переключатель таймфреймов */}
-        <div className="flex gap-1 p-1 rounded-lg bg-gray-800/50">
+        <div className="flex gap-1 p-1 rounded-lg bg-gray-800/50 self-start overflow-x-auto max-w-full">
           {['15m', '1H', '4H', 'D'].map((tf) => (
             <button
               key={tf}
@@ -266,7 +275,7 @@ export default function Analysis() {
           patterns={report.patterns}
           support={report.support}
           resistance={report.resistance}
-          height={500}
+          height={chartHeight}
         />
       </div>
 

@@ -58,6 +58,9 @@ export default function CandlestickChart({
       },
       width: chartContainerRef.current.clientWidth,
       height: height,
+      // Touch (мобильные): пан — пальцем, зум — щипком; на десктопе привычный drag/колесо
+      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+      handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
       timeScale: {
         borderColor: '#334155',
         timeVisible: true,
@@ -164,16 +167,17 @@ export default function CandlestickChart({
 
     chart.timeScale().fitContent();
 
-    const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+    // ResizeObserver: корректная перестройка при повороте экрана и смене размера контейнера
+    const container = chartContainerRef.current;
+    const ro = new ResizeObserver(() => {
+      if (container) {
+        chart.applyOptions({ width: container.clientWidth });
       }
-    };
-
-    window.addEventListener('resize', handleResize);
+    });
+    ro.observe(container);
 
     return () => {
-      window.removeEventListener('resize', handleResize);
+      ro.disconnect();
       if (chartRef.current) {
         chartRef.current.remove();
         chartRef.current = null;
@@ -181,5 +185,5 @@ export default function CandlestickChart({
     };
   }, [candles, ema20, ema50, ema200, patterns, support, resistance, height]);
 
-  return <div ref={chartContainerRef} className="w-full" />;
+  return <div ref={chartContainerRef} className="w-full" style={{ touchAction: 'pan-y' }} />;
 }

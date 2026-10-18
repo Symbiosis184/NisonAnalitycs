@@ -87,9 +87,9 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-bold text-white">Обзор рынка по методологии Нисона</h1>
+          <h1 className="text-xl sm:text-3xl font-bold text-white leading-tight">Обзор рынка<span className="hidden sm:inline"> по методологии Нисона</span></h1>
           <p className="text-sm text-gray-400 mt-1">
             Контекст → Паттерны → Подтверждение → Объём
           </p>
@@ -108,7 +108,7 @@ export default function Dashboard() {
         <button
           onClick={loadData}
           disabled={loading}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 transition-colors disabled:opacity-50"
+          className="self-start sm:self-auto flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 transition-colors disabled:opacity-50"
         >
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           Обновить
@@ -125,7 +125,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 xs:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
         {loading && market.length === 0 ? (
           Array.from({ length: 8 }).map((_, i) => (
             <div key={i} className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50 animate-pulse">
@@ -145,11 +145,11 @@ export default function Dashboard() {
               <Link
                 key={item.symbol}
                 to={`/analysis/${item.symbol}`}
-                className="block p-4 rounded-xl border border-gray-800/60 bg-gradient-to-b from-[#131a2b] to-[#0f1524] hover:border-amber-500/30 transition-all group"
+                className="block p-3 sm:p-4 rounded-xl border border-gray-800/60 bg-gradient-to-b from-[#131a2b] to-[#0f1524] hover:border-amber-500/30 transition-all group"
               >
                 {/* Заголовок: Контекст рынка */}
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-lg font-bold text-white group-hover:text-amber-400 transition-colors">
+                  <h3 className="text-base sm:text-lg font-bold text-white group-hover:text-amber-400 transition-colors">
                     {baseAsset}
                   </h3>
                   {getTrendIcon(item.trend)}
@@ -157,7 +157,7 @@ export default function Dashboard() {
 
                 {/* Цена и изменение */}
                 <div className="mb-3">
-                  <div className="text-2xl font-bold text-white">
+                  <div className="text-xl sm:text-2xl font-bold text-white break-all">
                     ${formatPrice(item.price)}
                   </div>
                   <div className={`flex items-center gap-1 text-sm font-medium ${

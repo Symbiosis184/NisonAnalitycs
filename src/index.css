@@ -1,1 +1,6 @@
 @import "tailwindcss";
+
+/* Брейкпоинт xs (480px) — адаптив для узких мобильных экранов */
+@theme {
+  --breakpoint-xs: 30rem;
+}

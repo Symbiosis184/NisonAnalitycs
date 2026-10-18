@@ -105,7 +105,7 @@ export default function BacktestPage() {
       </p>
 
       {/* Панель управления */}
-      <div className="flex flex-wrap items-end gap-3 bg-slate-900/60 border border-slate-800 rounded-lg p-3">
+      <div className="flex flex-wrap sm:flex-nowrap items-end gap-3 bg-slate-900/60 border border-slate-800 rounded-lg p-3 overflow-x-auto">
         <label className="text-xs text-slate-400">Инструмент
           <select value={symbol} onChange={(e) => setSymbol(e.target.value)}
             className="block mt-1 bg-slate-800 text-slate-100 text-sm rounded px-2 py-1 border border-slate-700">
@@ -162,8 +162,9 @@ export default function BacktestPage() {
             );
           })()}
 
-          {/* Таблица результатов */}
-          <table className="w-full text-sm border border-slate-800 rounded overflow-hidden">
+          {/* Таблица результатов (на мобильных — горизонтальный скролл) */}
+          <div className="overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0">
+          <table className="w-full min-w-[720px] text-sm border border-slate-800 rounded overflow-hidden">
             <thead className="bg-slate-900 text-slate-400 text-left">
               <tr>
                 <th className="p-2">Паттерн</th><th className="p-2">Сделок</th>
@@ -209,6 +210,7 @@ export default function BacktestPage() {
               )}
             </tbody>
           </table>
+          </div>
 
           {/* Кривые эквити */}
           <div className="grid md:grid-cols-2 gap-3">
