@@ -3,24 +3,38 @@ import { ema } from './indicators';
 import { ZoneVoter, timeframeKey, type TimeframeKey } from './zone_voter';
 import { findSwings } from './levels';
 
+/** Глубина окна свинг-детектора по временному масштабу (синхронно с ZONE_PARAMS в zone_voter). */
+const SWING_SPAN_BY_TF: Record<TimeframeKey, number> = {
+  scalp: 2, intraday: 3, swing: 3, position: 4,
+};
+
 export class SupportResistance {
-  // П.7: свинг-детекция вынесена в единый модуль levels.ts — тот же алгоритм,
-  // что использует ZoneVoter, чтобы аналитика уровней не расходилась между модулями.
-  static findLevels(candles: Candle[], lookback: number = 50): { support: number[]; resistance: number[] } {
-    const swings = findSwings(candles, lookback);
+  /**
+   * FIX ТФ-аудита (канон Нисона, гл. 11): зоны на каждом ТФ должны быть СВОИ —
+   * не только по толерансу кластеризации, но и по структуре экстремумов.
+   * Окно свинга раньше было захардкожено (lookback=50, span по умолчанию),
+   * из-за чего на 15-минутке уровни строились по более грубой структуре.
+   * Теперь span зависит от масштаба: scalp=2, intraday/swing=3, position=4.
+   */
+  static findLevels(candles: Candle[], lookback: number = 50, tfKey: TimeframeKey = 'swing'): { support: number[]; resistance: number[] } {
+    const swings = findSwings(candles, lookback, SWING_SPAN_BY_TF[tfKey]);
     const support = swings.filter(s => s.type === 'low').map(s => s.level);
     const resistance = swings.filter(s => s.type === 'high').map(s => s.level);
     return { support, resistance };
   }
-  
-  static isNearSupport(price: number, candles: Candle[], tolerance: number = 0.015): boolean {
-    const levels = this.findLevels(candles);
-    return levels.support.some(level => Math.abs(price - level) / price <= tolerance);
+
+  /**
+   * Близость к зоне делегируется ZoneVoter — единому источнику истины об зонах
+   * (гл. 11: уровень — это ЗОНА [level ± halfWidth], ширина привязана к ATR ТФ).
+   * Собственный «процентный допуск» класса убран: он расходился с
+   * каноном и зависел от переданного числа, а не от масштаба графика.
+   */
+  static isNearSupport(price: number, candles: Candle[], tfKey: TimeframeKey = 'swing'): boolean {
+    return ZoneVoter.isNearSupport(price, candles, undefined, tfKey);
   }
-  
-  static isNearResistance(price: number, candles: Candle[], tolerance: number = 0.015): boolean {
-    const levels = this.findLevels(candles);
-    return levels.resistance.some(level => Math.abs(price - level) / price <= tolerance);
+
+  static isNearResistance(price: number, candles: Candle[], tfKey: TimeframeKey = 'swing'): boolean {
+    return ZoneVoter.isNearResistance(price, candles, undefined, tfKey);
   }
 }
 
