@@ -292,9 +292,9 @@ export default function Analysis() {
               <div key={idx} className={`p-3 rounded-lg border ${
                 zone.strong ? 'border-green-500/30 bg-green-500/5' : 'border-gray-700/30 bg-gray-800/20'
               }`}>
-                <div className="flex items-center justify-between mb-2">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
                   <span className="text-green-400 font-mono text-lg">${formatPrice(zone.level)}</span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                     <span className="text-xs text-gray-500">{zone.touches} касаний</span>
                     {zone.strong && (
                       <span className="px-2 py-0.5 rounded bg-green-500/10 text-green-400 text-xs font-semibold">
@@ -327,9 +327,9 @@ export default function Analysis() {
               <div key={idx} className={`p-3 rounded-lg border ${
                 zone.strong ? 'border-red-500/30 bg-red-500/5' : 'border-gray-700/30 bg-gray-800/20'
               }`}>
-                <div className="flex items-center justify-between mb-2">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
                   <span className="text-red-400 font-mono text-lg">${formatPrice(zone.level)}</span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                     <span className="text-xs text-gray-500">{zone.touches} касаний</span>
                     {zone.strong && (
                       <span className="px-2 py-0.5 rounded bg-red-500/10 text-red-400 text-xs font-semibold">
@@ -371,16 +371,17 @@ export default function Analysis() {
                     : 'bg-red-500/5 border-red-500/20'
                 }`}
               >
-                <div className="flex items-start justify-between mb-2">
-                  <div className="flex items-center gap-2">
+                {/* Моб.: имя и бейджи в столбик (flex-col), на sm+ — строкой; бейжди не наезжают */}
+                <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex shrink-0 items-center gap-2">
                     <span className={`text-lg ${
                       pattern.type === 'bullish' ? 'text-green-400' :
                       pattern.type === 'bearish' ? 'text-red-400' : 'text-gray-400'
                     }`}>
                       {pattern.type === 'bullish' ? '▲' : pattern.type === 'bearish' ? '▼' : '◆'}
                     </span>
-                    <div>
-                      <div className={`text-sm font-semibold ${
+                    <div className="min-w-0">
+                      <div className={`truncate text-sm font-semibold ${
                         pattern.type === 'bullish' ? 'text-green-400' :
                         pattern.type === 'bearish' ? 'text-red-400' : 'text-gray-300'
                       }`}>
@@ -391,17 +392,17 @@ export default function Analysis() {
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-1 rounded bg-green-500/10 text-green-400 text-xs border border-green-500/20">
+                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 sm:justify-end">
+                    <span className="whitespace-nowrap rounded border border-green-500/20 bg-green-500/10 px-2 py-1 text-xs text-green-400">
                       ✓ Подтверждён
                     </span>
                     {pattern.hasVolume && (
-                      <span className="px-2 py-1 rounded bg-blue-500/10 text-blue-400 text-xs border border-blue-500/20">
+                      <span className="whitespace-nowrap rounded border border-blue-500/20 bg-blue-500/10 px-2 py-1 text-xs text-blue-400">
                         📊 Объём
                       </span>
                     )}
                     {pattern.atLevel && (
-                      <span className="px-2 py-1 rounded bg-purple-500/10 text-purple-400 text-xs border border-purple-500/20">
+                      <span className="whitespace-nowrap rounded border border-purple-500/20 bg-purple-500/10 px-2 py-1 text-xs text-purple-400">
                         🎯 У уровня
                       </span>
                     )}
@@ -448,7 +449,7 @@ export default function Analysis() {
                     : 'bg-red-500/5 border-red-500/20'
                 }`}
               >
-                <div className="flex items-start justify-between mb-3">
+                <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <div className="flex items-center gap-2 mb-1">
                       {signal.direction === 'long' ? (
@@ -464,7 +465,7 @@ export default function Analysis() {
                     </div>
                     <p className="text-sm text-gray-400">{signal.pattern}</p>
                   </div>
-                  <div className="text-right">
+                  <div className="sm:text-right">
                     <div className="text-xs text-gray-500">Качество</div>
                     <div className={`text-lg font-bold ${
                       signal.quality >= 0.7 ? 'text-green-400' :
@@ -475,7 +476,7 @@ export default function Analysis() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-4 text-sm mb-3">
+                <div className="grid grid-cols-1 gap-2 text-sm mb-3 sm:grid-cols-3 sm:gap-4">
                   <div className="p-2 rounded bg-gray-800/30">
                     <div className="text-xs text-gray-500 mb-1">Вход</div>
                     <div className="font-mono text-white">${formatPrice(signal.entry_price)}</div>
@@ -496,7 +497,7 @@ export default function Analysis() {
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between text-xs border-t border-gray-800/50 pt-2">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs border-t border-gray-800/50 pt-2">
                   <div>
                     <span className="text-gray-500">R:R </span>
                     <span className="text-white font-mono">1:{signal.rr.toFixed(2)}</span>
