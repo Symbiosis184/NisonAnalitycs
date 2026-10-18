@@ -659,7 +659,7 @@ export default function Analysis() {
         <Collapsible
           storageKey="signals"
           icon={<Target className="w-5 h-5 text-amber-400" />}
-          title="Торговые сигналы (Нисон: ожидание → подтверждение)"
+          title="Сценарии (Нисон: ожидание → подтверждение)"
           badge={
             <>
               <span className="text-xs text-green-400">✓ {report.signals.filter((s) => s.lifecycle_status === 'confirmed').length}</span>
@@ -670,7 +670,7 @@ export default function Analysis() {
         <div className="p-6 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
           <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
             <Target className="w-5 h-5 text-amber-400" />
-            Торговые сигналы (Нисон: ожидание → подтверждение)
+            Сценарии (Нисон: ожидание → подтверждение)
             <span className="text-xs text-gray-500 font-normal ml-2">
               подтверждено {report.signals.filter((s) => s.lifecycle_status === 'confirmed').length} · ждёт {report.signals.filter((s) => (s.lifecycle_status ?? 'pending') === 'pending').length} из {report.signals.length}
             </span>

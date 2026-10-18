@@ -202,7 +202,8 @@ export default function CandlestickChart({
               ? candles[p.candleIndex].low
               : candles[p.candleIndex].high;
             const cy = candlestickSeries.priceToCoordinate(anchorPrice) ?? y;
-            tipEl.innerHTML = `<b>${p.name}</b><span style="color:#94a3b8"> · ${Math.round(p.confidence * 100)}%</span>`;
+            // confidence из движка — это уже шкала 0–100 (не доля), умножать на 100 нельзя
+            tipEl.innerHTML = `<b>${p.name}</b><span style="color:#94a3b8"> · ${Math.round(Math.min(100, Math.max(0, p.confidence)))}%</span>`;
             tipEl.style.left = `${cx}px`;
             tipEl.style.top = p.type === 'bullish' ? `${cy + 36}px` : `${Math.max(4, cy - 10)}px`;
             if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }

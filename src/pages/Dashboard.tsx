@@ -220,12 +220,12 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* Торговые сигналы */}
+                {/* Сценарии */}
                 {item.signals && item.signals.length > 0 && (
                   <div className="mb-3">
                     <div className="text-xs text-gray-500 mb-2 flex items-center gap-1">
                       <BarChart2 className="w-3 h-3" />
-                      Торговые сигналы ({item.signals.length})
+                      Сценарии ({item.signals.length})
                     </div>
                     <div className="space-y-1">
                       {item.signals.slice(0, 2).map((signal, idx) => (
