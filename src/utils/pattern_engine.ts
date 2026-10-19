@@ -1034,11 +1034,14 @@ export class PatternDetector {
     if (!(f.isBullish && (this.isLongRelative(f, winRT) || f.isLongCandle) &&
           l.isBullish && (this.isLongRelative(l, winRL) || l.isLongCandle))) return { found: false, name: '' };
     if (l.close <= f.close) return { found: false, name: '' };
+    // Канон (гл. 7): пауза — малые тела внутри диапазона первой с дрейфом ВНИЗ.
+    // PR #8 (BUG FIX): раньше сравнение было перевёрнутым (восходящий дрейф
+    // допускался, нисходящий — отбрасывался), что противоречило и комментарию,
+    // и Нисону: у восходящих трёх методов пауза снижается к шее первой свечи.
     for (const s of small) {
       if (s.high > f.high || s.low < f.low || s.body > f.body * 0.5) return { found: false, name: '' };
     }
-    // Дрейф вниз внутри паузы.
-    if (small[2].close > small[0].close * 1.02) return { found: false, name: '' };
+    if (small[2].close >= small[0].close * 0.98) return { found: false, name: '' };
 
     let name = 'ВОСХОДЯЩИЕ ТРИ МЕТОДА';
     if (VolumeAnalyzer.isHighVolume(l, candles.slice(0, -1), 1.3)) name += ' (ОБЪЁМ)';
@@ -1058,10 +1061,12 @@ export class PatternDetector {
     if (!(f.isBearish && (this.isLongRelative(f, winFT) || f.isLongCandle) &&
           l.isBearish && (this.isLongRelative(l, winFL) || l.isLongCandle))) return { found: false, name: '' };
     if (l.close >= f.close) return { found: false, name: '' };
+    // PR #8 (BUG FIX): зеркальная ошибка — сравнение принимало только нисходящий
+    // дрейф; канон (гл. 7): у нисходящих трёх методов пауза дрейфует ВВЕРХ.
     for (const s of small) {
       if (s.high > f.high || s.low < f.low || s.body > f.body * 0.5) return { found: false, name: '' };
     }
-    if (small[2].close < small[0].close * 0.98) return { found: false, name: '' };
+    if (small[2].close <= small[0].close * 1.02) return { found: false, name: '' };
 
     let name = 'НИСХОДЯЩИЕ ТРИ МЕТОДА';
     if (VolumeAnalyzer.isHighVolume(l, candles.slice(0, -1), 1.3)) name += ' (ОБЪЁМ)';

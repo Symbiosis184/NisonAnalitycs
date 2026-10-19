@@ -160,6 +160,23 @@ export function detectTrendStart(candles: Candle[], price: number): {
   if (freshBullish) bull.push('подтверждённая бычья разворотная формация (гл. 4–6)');
   if (freshBearish) bear.push('подтверждённая медвежья разворотная формация (гл. 4–6)');
 
+
+  // PR #8 (BUG FIX): раньше здесь вызывалась ema() — «RSI» фактически был EMA(14)
+  // в ценовых единицах, пороги 30/70 срабатывали произвольно (зависели от цены
+  // инструмента). Вместо подмены RSI-сигналом добавляем подтверждение по канону
+  // Нисона (гл. 13): пересечение ценой 10-дневной SMA.
+  const smaValues = sma(closes, 10);
+  const lastSma = smaValues[smaValues.length - 1];
+  const prevSma = smaValues[smaValues.length - 2];
+  const prevClose = closes[closes.length - 2];
+  if (!Number.isNaN(lastSma) && !Number.isNaN(prevSma)) {
+    if (prevClose <= prevSma && candles[candles.length - 1].close > lastSma) {
+      bull.push('цена пересекла 10-дневную SMA снизу вверх (гл. 13)');
+    } else if (prevClose >= prevSma && candles[candles.length - 1].close < lastSma) {
+      bear.push('цена пересекла 10-дневную SMA сверху вниз (гл. 13)');
+    }
+  }
+
   // 2) Пробой уровня на объёме
   const avgVolume = candles.slice(-20).reduce((s, c) => s + c.volume, 0) / 20;
   const lastVolume = candles[candles.length - 1].volume;
