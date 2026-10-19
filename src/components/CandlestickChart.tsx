@@ -176,7 +176,21 @@ export default function CandlestickChart({
           hideTimer = setTimeout(() => { tipEl.style.display = 'none'; }, 120);
         };
 
-        const markers = confirmedPatterns.map(pattern => {
+        // Ключевая фиксация: маркер ставится на ПЕРВОЙ свече формации.
+        // lightweight-charts не допускает двух маркеров с одинаковым time —
+        // раньше несколько паттернов, подтверждённых на одной и той же свече,
+        // склеивались визуально в «тройную стрелку». Теперь каждый уникальный
+        // бар получает ровно один маркер; если на баре подтвердилось несколько
+        // формаций — их названия перечисляются в tooltip через « · ».
+        const byTime = new Map<string, { pattern: Pattern; count: number }>();
+        for (const p of confirmedPatterns) {
+          const t = String(candles[p.candleIndex].time);
+          const prev = byTime.get(t);
+          if (prev) prev.count += 1;
+          else byTime.set(t, { pattern: p, count: 1 });
+        }
+
+        const markers = [...byTime.values()].map(({ pattern, count }) => {
           const candle = candles[pattern.candleIndex];
           return {
             time: (candle.time / 1000) as any,
@@ -185,6 +199,7 @@ export default function CandlestickChart({
             shape: pattern.type === 'bullish' ? 'arrowUp' as const : pattern.type === 'bearish' ? 'arrowDown' as const : 'circle' as const,
             text: '', // название только в tooltip — чистый график без наложений
             size: 1,
+            __count: count,
           };
         });
 
@@ -205,17 +220,24 @@ export default function CandlestickChart({
             if (dist < bestDist) { bestDist = dist; bestIdx = i; }
           }
           if (bestIdx >= 0) {
-            const p = confirmedPatterns[bestIdx];
             const m = markers[bestIdx];
+            // Название(я) паттерна(ов), подтверждённых на этом баре. Если формаций
+            // несколько — перечисляем все, чтобы «одна стрелка» не выглядела загадкой.
+            const barTime = String(m.time);
+            const names = confirmedPatterns
+              .filter(p => String(candles[p.candleIndex].time) === barTime)
+              .map(p => `${p.name} · ${Math.round(Math.min(100, Math.max(0, p.confidence)))}%`);
+            const label = names.length > 1 ? `Паттерны Нисона: ${names.join(' | ')}` : names[0] ?? '';
             const cx = chart.timeScale().timeToCoordinate(m.time as any) ?? x;
-            const anchorPrice = p.type === 'bullish'
-              ? candles[p.candleIndex].low
-              : candles[p.candleIndex].high;
-            const cy = candlestickSeries.priceToCoordinate(anchorPrice) ?? y;
-            // confidence из движка — это уже шкала 0–100 (не доля), умножать на 100 нельзя
-            tipEl.innerHTML = `<b>${p.name}</b><span style="color:#94a3b8"> · ${Math.round(Math.min(100, Math.max(0, p.confidence)))}%</span>`;
+            const anchorPattern = byTime.get(barTime)?.pattern ?? confirmedPatterns[0];
+            const cy = candlestickSeries.priceToCoordinate(
+              anchorPattern.type === 'bullish'
+                ? candles[anchorPattern.candleIndex].low
+                : candles[anchorPattern.candleIndex].high,
+            ) ?? y;
+            tipEl.innerHTML = `<b>${label}</b>`;
             tipEl.style.left = `${cx}px`;
-            tipEl.style.top = p.type === 'bullish' ? `${cy + 36}px` : `${Math.max(4, cy - 10)}px`;
+            tipEl.style.top = anchorPattern.type === 'bullish' ? `${cy + 36}px` : `${Math.max(4, cy - 10)}px`;
             if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
             tipEl.style.display = 'block';
           } else {

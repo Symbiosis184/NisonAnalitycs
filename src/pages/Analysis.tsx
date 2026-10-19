@@ -4,7 +4,7 @@ import { ArrowLeft, TrendingUp, TrendingDown, Activity, AlertTriangle, RefreshCw
 import { api, type AnalysisReport } from '../api/client';
 import type { MultiTFZonesDTO } from '../api/types';
 import CandlestickChart from '../components/CandlestickChart';
-import { VolumeProfileChart, DeltaChart } from '../components/VolumeProfilePanel';
+import { VolumeProfileChart, VolumeProfileNotes, DeltaChart } from '../components/VolumeProfilePanel';
 import { WyckoffPhasePanel, PricePathCard, EdgeVerificationPanel } from '../components/MarketContextPanels';
 import { Collapsible } from '../components/Collapsible';
 import { formatPrice } from '../utils/format';
@@ -473,6 +473,13 @@ export default function Analysis() {
                     🛤️ {activePathSignal.path.description}
                   </div>
                 )}
+                {/* Текстовая расшифровка профиля — что означают узлы и как их читать */}
+                <details className="mt-2 text-xs border-t border-gray-800/50 pt-2">
+                  <summary className="cursor-pointer select-none text-gray-300 hover:text-white">
+                    ℹ️ Как читать профиль объёма
+                  </summary>
+                  <VolumeProfileNotes profile={report.volume_profile} price={report.price} />
+                </details>
               </div>
             )}
             {report.wyckoff && <WyckoffPhasePanel wyckoff={report.wyckoff} />}

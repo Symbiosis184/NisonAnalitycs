@@ -25,6 +25,59 @@ interface VPProps {
   signal?: SignalDTO;
 }
 
+/** Текстовая расшифровка профиля объёма (под графиком, см. «Как читать») */
+export function VolumeProfileNotes({ profile, price }: Pick<VPProps, 'profile' | 'price'>) {
+  const bins = profile.bins ?? [];
+  const hvnPct = bins.length > 0
+    ? (profile.hvn.reduce((s, n) => s + n.volume, 0) / Math.max(1e-9, bins.reduce((s, b) => s + b.volume, 0))) * 100
+    : null;
+  const lvnCount = profile.lvn.length;
+  // Где сейчас цена относительно Value Area → канонический сценарий Стейдента
+  const positionVsVa = price > profile.vah ? 'above' : price < profile.val ? 'below' : 'inside';
+  const positionNote =
+    positionVsVa === 'inside'
+      ? `Цена внутри Value Area (~70% всего объёма окна) — рынок в равновесии. Наиболее вероятен возврат к POC («магнит ликвидности») и боковое движение между VAH и VAL: у VAL ищем отскок вверх, у VAH — вниз, а не торговлю на пробой.`
+      : positionVsVa === 'above'
+        ? `Цена ВЫШЕ Value Area — покупатели удерживают зону дисбаланса, пробой верхней границы зафиксирован. Откат к VAH при удержании выше него — потенциальная точка входа по тренду; если же свеча закроется обратно внутри VA, срабатывает стоп-реверс (правило 80% П. Стейдента): вероятен проход к противоположной границе VAL.`
+        : `Цена НИЖЕ Value Area — продавцы контролируют ценовое открытие, нижняя граница пробита. Возврат внутрь VA маловероятен без роста дельты покупателей; VAH теперь — сильное сопротивление, а продолжение движения через LVN-«дыры» обычно проходит быстро и без откатов.`;
+
+  return (
+    <div className="mt-2 space-y-2 text-xs leading-relaxed text-gray-400">
+      <p>
+        Профиль показывает, на каких ценах за окно анализа реально торговался объём
+        (в отличие от объёма по времени внизу графика свечей). Горизонтальная длина
+        каждого бара = доля объёма на этом ценовом уровне.
+      </p>
+      <ul className="list-disc pl-4 space-y-1">
+        <li>
+          <span className="font-medium text-amber-400">HVN</span>
+          {hvnPct !== null ? ` — пики объёма (${hvnPct.toFixed(0)}% всего объёма окна)` : ''}: здесь цена
+          «застряла», много двусторонних сделок. Работают как магниты и зоны трения:
+          подход к HVN обычно замедляет движение, пробой требует сильной дельты.
+        </li>
+        <li>
+          <span className="font-medium text-sky-400">LVN</span> — «дыры» в профиле ({lvnCount} узлов): объём здесь почти не торговался,
+          цены пролетают такие зоны быстро, откаты в них коротки. LVN между входом и
+          целью — союзник транзита; LVN сразу за стопом — сигнал, что выбить вас будет трудно.
+        </li>
+        <li>
+          <span className="font-medium text-violet-400">POC</span> (${formatPrice(profile.poc)}) — цена максимального объёма («справедливая цена» окна). В равновесном
+          рынке притягивает цену обратно.
+        </li>
+        <li>
+          <span className="font-medium text-gray-300">Value Area</span> (${formatPrice(profile.val)}–${formatPrice(profile.vah)}) — затенённая полоса ~70% объёма. Границы VA —
+          естественные уровни для входов от границ и стопов.
+        </li>
+      </ul>
+      <p className="rounded-lg border border-gray-800/60 bg-[#0b1120] p-2 text-gray-300">{positionNote}</p>
+      <p className="text-gray-500">
+        Совпадение POC или границы VA с уровнем S/R мульти-ТФ карты резко повышает
+        значимость зоны: два независимых метода указывают на одну цену.
+      </p>
+    </div>
+  );
+}
+
 export function VolumeProfileChart({ profile, price, signal }: VPProps) {
   const bins = profile.bins ?? [];
   if (bins.length === 0) return null;
