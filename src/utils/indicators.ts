@@ -43,24 +43,35 @@ export function rsi(closes: number[], period: number = 14): number[] {
     losses.push(change < 0 ? Math.abs(change) : 0);
   }
   
+  // BUG FIX: closes.length <= period -> slice по пустому срезу давал 0/0,
+  // rs = NaN и весь массив состоял из NaN без явного guard.
+  if (closes.length <= period) {
+    return new Array(Math.max(0, closes.length)).fill(NaN);
+  }
+
   let avgGain = gains.slice(0, period).reduce((a, b) => a + b, 0) / period;
   let avgLoss = losses.slice(0, period).reduce((a, b) => a + b, 0) / period;
-  
+
   for (let i = 0; i < period; i++) {
     result.push(NaN);
   }
-  
-  const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-  result.push(100 - (100 / (1 + rs)));
-  
+
+  // BUG FIX: заглушка rs = 100 при avgLoss === 0 давала RSI ~99 вместо канонических
+  // 100 (чистый рост), а на флэт-рынке (avgGain = avgLoss = 0) тоже ложные ~99.
+  // Канон Уайлдера: avgLoss = 0 и avgGain > 0 -> 100; оба нули (нет движения) -> 50.
+  const rsiFromAvg = (g: number, l: number): number => {
+    if (l === 0) return g === 0 ? 50 : 100;
+    return 100 - 100 / (1 + g / l);
+  };
+
+  result.push(rsiFromAvg(avgGain, avgLoss));
+
   for (let i = period; i < gains.length; i++) {
     avgGain = (avgGain * (period - 1) + gains[i]) / period;
     avgLoss = (avgLoss * (period - 1) + losses[i]) / period;
-    
-    const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-    result.push(100 - (100 / (1 + rs)));
+
+    result.push(rsiFromAvg(avgGain, avgLoss));
   }
-  
   return result;
 }
 
