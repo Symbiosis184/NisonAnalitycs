@@ -182,8 +182,13 @@ export default function CandlestickChart({
 
         const markers = [...byTime.values()].map(({ pattern, count }) => {
           const candle = candles[pattern.candleIndex];
+          // ВАЖНО: время маркера округляем до целых секунд — ровно так же,
+          // как и ключ в byTime. Без округления key «1700000000» никогда не
+          // совпадал бы с String(m.time) = «1700000000.5», tooltip искал бы
+          // запись по неверному ключу и плашка над стрелкой не появлялась.
+          const markerTime = Math.round(candle.time / 1000);
           return {
-            time: (candle.time / 1000) as any,
+            time: markerTime as any,
             position: pattern.type === 'bullish' ? 'belowBar' as const : 'aboveBar' as const,
             color: pattern.type === 'bullish' ? '#22c55e' : pattern.type === 'bearish' ? '#ef4444' : '#94a3b8',
             shape: pattern.type === 'bullish' ? 'arrowUp' as const : pattern.type === 'bearish' ? 'arrowDown' as const : 'circle' as const,
