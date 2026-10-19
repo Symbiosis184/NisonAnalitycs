@@ -142,6 +142,7 @@ export default function CandlestickChart({
     // (или касании на мобильных) рядом с маркером всплывает тёмная плашка
     // с названием паттерна и уверенностью.
     let hideTimer: ReturnType<typeof setTimeout> | null = null;
+    let tipEl: HTMLDivElement | null = null;
 
     if (patterns.length > 0) {
       // По Нисону паттерн считается валидным только ПОСЛЕ подтверждения
@@ -160,21 +161,6 @@ export default function CandlestickChart({
 
       if (confirmedPatterns.length > 0) {
         const container = chartContainerRef.current!;
-        const tipEl = document.createElement('div');
-        Object.assign(tipEl.style, {
-          position: 'absolute', display: 'none', zIndex: '30', pointerEvents: 'none',
-          padding: '4px 8px', borderRadius: '6px', fontSize: '11px', lineHeight: '1.3',
-          background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(148,163,184,0.35)',
-          color: '#e2e8f0', boxShadow: '0 2px 10px rgba(0,0,0,0.5)', whiteSpace: 'nowrap',
-          transform: 'translate(-50%, -100%)', transition: 'opacity .1s',
-        } as Partial<CSSStyleDeclaration>);
-        container.style.position = 'relative';
-        container.appendChild(tipEl);
-
-        const scheduleHide = () => {
-          if (hideTimer) clearTimeout(hideTimer);
-          hideTimer = setTimeout(() => { tipEl.style.display = 'none'; }, 120);
-        };
 
         // Ключевая фиксация: маркер ставится на ПЕРВОЙ свече формации.
         // lightweight-charts не допускает двух маркеров с одинаковым time —
@@ -182,9 +168,13 @@ export default function CandlestickChart({
         // склеивались визуально в «тройную стрелку». Теперь каждый уникальный
         // бар получает ровно один маркер; если на баре подтвердилось несколько
         // формаций — их названия перечисляются в tooltip через « · ».
+        // Ключ карты — время бара В СЕКУНДАХ (как у самих маркеров): раньше
+        // tooltip сверял String(m.time) («1700000000») со String(candle.time)
+        // в миллисекундах («1700000000000») — совпадений не было никогда,
+        // поэтому плашка выходила пустой («undefined%» / `<b></b>`).
         const byTime = new Map<string, { pattern: Pattern; count: number }>();
         for (const p of confirmedPatterns) {
-          const t = String(candles[p.candleIndex].time);
+          const t = String(Math.round(candles[p.candleIndex].time / 1000));
           const prev = byTime.get(t);
           if (prev) prev.count += 1;
           else byTime.set(t, { pattern: p, count: 1 });
@@ -207,6 +197,23 @@ export default function CandlestickChart({
 
         // lightweight-charts рисует маркеры на canvas — ловим mousemove по
         // контейнеру и находим ближайший маркер по X-координате.
+        tipEl = document.createElement('div');
+        Object.assign(tipEl.style, {
+          position: 'absolute', display: 'none', zIndex: '30', pointerEvents: 'none',
+          padding: '4px 8px', borderRadius: '6px', fontSize: '11px', lineHeight: '1.3',
+          background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(148,163,184,0.35)',
+          color: '#e2e8f0', boxShadow: '0 2px 10px rgba(0,0,0,0.5)', whiteSpace: 'nowrap',
+          transform: 'translate(-50%, -100%)', transition: 'opacity .1s',
+        } as Partial<CSSStyleDeclaration>);
+        container.style.position = 'relative';
+        container.appendChild(tipEl);
+        const tip = tipEl;
+
+        const scheduleHide = () => {
+          if (hideTimer) clearTimeout(hideTimer);
+          hideTimer = setTimeout(() => { tip.style.display = 'none'; }, 120);
+        };
+
         const onMove = (ev: MouseEvent) => {
           const rect = container.getBoundingClientRect();
           const x = ev.clientX - rect.left;
@@ -224,28 +231,38 @@ export default function CandlestickChart({
             // Название(я) паттерна(ов), подтверждённых на этом баре. Если формаций
             // несколько — перечисляем все, чтобы «одна стрелка» не выглядела загадкой.
             const barTime = String(m.time);
-            const names = confirmedPatterns
-              .filter(p => String(candles[p.candleIndex].time) === barTime)
-              .map(p => `${p.name} · ${Math.round(Math.min(100, Math.max(0, p.confidence)))}%`);
-            const label = names.length > 1 ? `Паттерны Нисона: ${names.join(' | ')}` : names[0] ?? '';
+            const entry = byTime.get(barTime);
+            if (!entry) { scheduleHide(); return; }
+            // Уверенность нормализуем к проценту: detector отдаёт 0-100,
+            // но общий контракт PatternDTO допускает долю 0-1 — иначе в
+            // tooltip появлялось «1%» вместо «75%».
+            const conf = entry.pattern.confidence <= 1
+              ? entry.pattern.confidence * 100
+              : entry.pattern.confidence;
+            const suffix = entry.count > 1 ? ` · ещё ${entry.count - 1}` : '';
+            const label = `${entry.pattern.name} · ${Math.round(Math.min(100, Math.max(0, conf)))}%${suffix}`;
             const cx = chart.timeScale().timeToCoordinate(m.time as any) ?? x;
-            const anchorPattern = byTime.get(barTime)?.pattern ?? confirmedPatterns[0];
+            const anchorPattern = entry.pattern;
             const cy = candlestickSeries.priceToCoordinate(
               anchorPattern.type === 'bullish'
                 ? candles[anchorPattern.candleIndex].low
                 : candles[anchorPattern.candleIndex].high,
             ) ?? y;
-            tipEl.innerHTML = `<b>${label}</b>`;
-            tipEl.style.left = `${cx}px`;
-            tipEl.style.top = anchorPattern.type === 'bullish' ? `${cy + 36}px` : `${Math.max(4, cy - 10)}px`;
+            // Текст пишем через textContent: никаких HTML-инъекций из названий
+            tip.textContent = label;
+            tip.style.left = `${cx}px`;
+            tip.style.top = anchorPattern.type === 'bullish' ? `${cy + 36}px` : `${Math.max(4, cy - 10)}px`;
             if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
-            tipEl.style.display = 'block';
+            tip.style.display = 'block';
           } else {
             scheduleHide();
           }
         };
         container.addEventListener('mousemove', onMove);
-        (chartRef.current as any).__cleanupMarkerHover = () => container.removeEventListener('mousemove', onMove);
+        (chartRef.current as any).__cleanupMarkerHover = () => {
+          container.removeEventListener('mousemove', onMove);
+          if (tip.parentNode) tip.parentNode.removeChild(tip);
+        };
       }
     }
 
