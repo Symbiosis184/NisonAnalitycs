@@ -150,8 +150,16 @@ export default function CandlestickChart({
       // маркеры (это защита от «ложных» стрелок: неподтверждённая формация
       // может быть отменена следующей свечой). При равной уверенности выше
       // ставится тот паттерн, который подкреплён объёмом или уровнем S/R.
+      // FIX (tooltip не показывался): раньше маркеры ставились ТОЛЬКО на
+      // подтверждённые паттерны. Пока формация в статусе 'pending' (следующая
+      // свеча ещё не закрылась в её направлении — у Нисона это почти всегда
+      // последний бар), стрелка на график НЕ попадала. Пользователь видел
+      // стрелку, рисованную другим слоем/старой сборкой, наводил курсор —
+      // а в нашем списке маркеров её не было, и tooltip не появлялся.
+      // Теперь рисуем все валидные паттерны; pending рисуются полупрозрачным
+      // цветом, подтверждённые — сплошным.
       const confirmedPatterns = patterns
-        .filter(p => p.confirmed && p.candleIndex >= 0 && p.candleIndex < candles.length)
+        .filter(p => p.candleIndex >= 0 && p.candleIndex < candles.length)
         .sort(
           (a, b) =>
             b.confidence - a.confidence ||
@@ -172,6 +180,11 @@ export default function CandlestickChart({
         // tooltip сверял String(m.time) («1700000000») со String(candle.time)
         // в миллисекундах («1700000000000») — совпадений не было никогда,
         // поэтому плашка выходила пустой («undefined%» / `<b></b>`).
+        // Ключ карты — ТОЛЬКО что округлённое время бара. Ровно это же значение
+        // кладём в time маркера и ровно по нему ищем при наведении. Раньше
+        // ключи строились из candle.time, а поиск шёл по m.time — при любом
+        // расхождении (например, дробное время или пересборка массива) плашка
+        // не появлялась вообще.
         const byTime = new Map<string, { pattern: Pattern; count: number }>();
         for (const p of confirmedPatterns) {
           const t = String(Math.round(candles[p.candleIndex].time / 1000));
@@ -187,10 +200,14 @@ export default function CandlestickChart({
           // совпадал бы с String(m.time) = «1700000000.5», tooltip искал бы
           // запись по неверному ключу и плашка над стрелкой не появлялась.
           const markerTime = Math.round(candle.time / 1000);
+          // Pending-формации (ждут подтверждения следующей свечой) рисуем
+          // полупрозрачным цветом, чтобы не путать с подтверждёнными.
+          const baseColor = pattern.type === 'bullish' ? '#22c55e' : pattern.type === 'bearish' ? '#ef4444' : '#94a3b8';
+          const color = pattern.confirmed ? baseColor : baseColor + '80'; // +alpha для pending
           return {
             time: markerTime as any,
             position: pattern.type === 'bullish' ? 'belowBar' as const : 'aboveBar' as const,
-            color: pattern.type === 'bullish' ? '#22c55e' : pattern.type === 'bearish' ? '#ef4444' : '#94a3b8',
+            color,
             shape: pattern.type === 'bullish' ? 'arrowUp' as const : pattern.type === 'bearish' ? 'arrowDown' as const : 'circle' as const,
             text: '', // название только в tooltip — чистый график без наложений
             size: 1,
@@ -200,8 +217,8 @@ export default function CandlestickChart({
 
         createSeriesMarkers(candlestickSeries, markers);
 
-        // lightweight-charts рисует маркеры на canvas — ловим mousemove по
-        // контейнеру и находим ближайший маркер по X-координате.
+        // lightweight-charts рисует маркеры на canvas — ловим mousemove/touch
+        // по контейнеру и находим ближайший маркер по X-координате.
         tipEl = document.createElement('div');
         Object.assign(tipEl.style, {
           position: 'absolute', display: 'none', zIndex: '30', pointerEvents: 'none',
@@ -219,12 +236,15 @@ export default function CandlestickChart({
           hideTimer = setTimeout(() => { tip.style.display = 'none'; }, 120);
         };
 
-        const onMove = (ev: MouseEvent) => {
+        const showAt = (clientX: number, clientY: number) => {
           const rect = container.getBoundingClientRect();
-          const x = ev.clientX - rect.left;
-          const y = ev.clientY - rect.top;
+          const x = clientX - rect.left;
+          const y = clientY - rect.top;
           let bestIdx = -1;
-          let bestDist = 14; // px радиус «попадания» по маркеру
+          // FIX: радиус попадания увеличен 14 → 24 px. Маркер size:1 — это
+          // ~10 px стрелка; при плотных барах курсор часто промахивался на
+          // пиксель-два мимо 14-пиксельного окна, и tooltip не показывался.
+          let bestDist = 24;
           for (let i = 0; i < markers.length; i++) {
             const px = chart.timeScale().timeToCoordinate(markers[i].time as any);
             if (px === null) continue;
@@ -233,19 +253,22 @@ export default function CandlestickChart({
           }
           if (bestIdx >= 0) {
             const m = markers[bestIdx];
-            // Название(я) паттерна(ов), подтверждённых на этом баре. Если формаций
-            // несколько — перечисляем все, чтобы «одна стрелка» не выглядела загадкой.
+            // КЛЮЧ ИЩЕМ ПО ТОМУ ЖЕ ЗНАЧЕНИЮ, ЧТО ИСПОЛЬЗОВАЛИ ПРИ ПОСТРОЕНИИ
+            // МАРКЕРОВ (markerTime), а НЕ заново из candles[].time/1000:
+            // любой повторный пересчёт мог дать иной результат после
+            // склейки/ресемплинга — entry не находился и плашка исчезала.
             const barTime = String(m.time);
             const entry = byTime.get(barTime);
             if (!entry) { scheduleHide(); return; }
-            // Уверенность нормализуем к проценту: detector отдаёт 0-100,
-            // но общий контракт PatternDTO допускает долю 0-1 — иначе в
-            // tooltip появлялось «1%» вместо «75%».
-            const conf = entry.pattern.confidence <= 1
-              ? entry.pattern.confidence * 100
-              : entry.pattern.confidence;
+            // Уверенность: нормализуем долю 0–1 (контракт PatternDTO) к
+            // проценту. Детектор всегда отдаёт 50–92, поэтому условие
+            // «<= 1» больше не может съесть реальный низкий процент.
+            const raw = entry.pattern.confidence;
+            const conf = raw > 0 && raw <= 1 ? raw * 100 : raw;
+            const pct = Math.round(Math.min(100, Math.max(0, conf)));
+            const pendingNote = entry.pattern.confirmed ? '' : ' · ожидает подтверждения';
             const suffix = entry.count > 1 ? ` · ещё ${entry.count - 1}` : '';
-            const label = `${entry.pattern.name} · ${Math.round(Math.min(100, Math.max(0, conf)))}%${suffix}`;
+            const label = `${entry.pattern.name} · ${pct}%${pendingNote}${suffix}`;
             const cx = chart.timeScale().timeToCoordinate(m.time as any) ?? x;
             const anchorPattern = entry.pattern;
             const cy = candlestickSeries.priceToCoordinate(
@@ -263,9 +286,17 @@ export default function CandlestickChart({
             scheduleHide();
           }
         };
+        const onMove = (ev: MouseEvent) => showAt(ev.clientX, ev.clientY);
+        // FIX (не показывался на мобильных): раньше слушался только mousemove.
         container.addEventListener('mousemove', onMove);
+        const onTouch = (ev: TouchEvent) => {
+          const t0 = ev.touches[0];
+          if (t0) showAt(t0.clientX, t0.clientY);
+        };
+        container.addEventListener('touchstart', onTouch, { passive: true });
         (chartRef.current as any).__cleanupMarkerHover = () => {
           container.removeEventListener('mousemove', onMove);
+          container.removeEventListener('touchstart', onTouch);
           if (tip.parentNode) tip.parentNode.removeChild(tip);
         };
       }
@@ -274,13 +305,13 @@ export default function CandlestickChart({
     chart.timeScale().fitContent();
 
     // ResizeObserver: корректная перестройка при повороте экрана и смене размера контейнера
-    const container = chartContainerRef.current;
+    const roContainer = chartContainerRef.current;
     const ro = new ResizeObserver(() => {
-      if (container) {
-        chart.applyOptions({ width: container.clientWidth });
+      if (roContainer) {
+        chart.applyOptions({ width: roContainer.clientWidth });
       }
     });
-    ro.observe(container);
+    ro.observe(roContainer);
 
     return () => {
       ro.disconnect();
