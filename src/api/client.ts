@@ -172,9 +172,11 @@ export class ApiClient {
     const efficiency = pathLength > 0 ? Math.abs(dirWindow[dirWindow.length - 1].close - dirWindow[0].close) / netMove : 0;
     const directionalShare = pathLength > 0 ? netMove / pathLength : 0;
     const rawStrength = Math.min(100, Math.max(0, ((efficiency + directionalShare) / 2) * 100));
-    // В боковике сила по определению ~0: показываем floor 1%, чтобы UI не
-    // выводил «0%» (округление от 0.4 тоже давало бы вечный ноль).
-    const trendStrengthPct = trend === 'БОКОВИК' ? 1 : Math.max(1, Math.round(rawStrength));
+    // Сила тренда — без floor-подмены: в боковике она действительно ~0,
+    // и UI обязан это честно показывать (десятичный формат), а не рисовать
+    // искусственные «1%». Раньше из-за округления до целого все значения
+    // <0.5 превращались в 0, а захардкоженный floor=1 маскировал реальные данные.
+    const trendStrengthPct = Math.min(100, Math.max(0, rawStrength));
     
     // Определение зон поддержки/сопротивления по методологии Нисона
     const zones = ZoneVoter.collect(currentPrice, candles, timeframeKey(timeframe));

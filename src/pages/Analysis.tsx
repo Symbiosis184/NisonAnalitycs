@@ -877,21 +877,35 @@ export default function Analysis() {
           }`}>
             {report.rsi.toFixed(1)}
           </div>
+          {/* Честная зональная классификация: extremes — это <20/>80, а не 30/70 */}
           <div className="text-xs text-gray-500 mt-1">
-            {report.rsi > 70 ? 'Перекупленность' :
-             report.rsi < 30 ? 'Перепроданность' : 'Нейтрально'}
+            {report.rsi >= 80 ? 'Экстремальная перекупленность' :
+             report.rsi > 70 ? 'Зона перекупленности' :
+             report.rsi <= 20 ? 'Экстремальная перепроданность' :
+             report.rsi < 30 ? 'Зона перепроданности' : 'Нейтральная зона (30–70)'}
+          </div>
+          <div className="text-xs text-gray-600 mt-2 leading-relaxed">
+            ⚠️ По Нисону RSI — только контекст. В сильном тренде перекупленность
+            сохраняется долго и сама по себе НЕ сигнал на продажу.
           </div>
         </div>
 
         <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
           <h3 className="text-sm font-semibold text-gray-400 mb-2">MACD</h3>
+          {/* Гистограмма в абсолюте масштабо-зависима: для BTC $100k «1.23» ничего
+              не значит. Показываем знак гистограммы + её отношение к цене в %. */}
           <div className={`text-3xl font-bold ${
             report.macd.histogram > 0 ? 'text-green-400' : 'text-red-400'
           }`}>
-            {report.macd.histogram.toFixed(2)}
+            {((report.macd.histogram / Math.max(report.price, 1e-9)) * 100).toFixed(3)}%
           </div>
           <div className="text-xs text-gray-500 mt-1">
-            {report.macd.histogram > 0 ? 'Бычий моментум' : 'Медвежий моментум'}
+            {report.macd.histogram > 0 ? 'Бычий импульс' : 'Медвежий импульс'}
+            {' · '}гистограмма от цены
+          </div>
+          <div className="text-xs text-gray-600 mt-2 leading-relaxed">
+            ⚠️ Контекстный индикатор (лагирует). Вход по Нисону определяется
+            свечами + объёмом + уровнями, а не MACD.
           </div>
         </div>
 
@@ -901,10 +915,14 @@ export default function Analysis() {
             report.trend === 'ВОСХОДЯЩИЙ' ? 'text-green-400' :
             report.trend === 'НИСХОДЯЩИЙ' ? 'text-red-400' : 'text-yellow-400'
           }`}>
-            {report.trend_strength.toFixed(0)}%
+            {(report.trend_strength * 100).toFixed(1)}%
           </div>
           <div className="text-xs text-gray-500 mt-1">
-            Сила тренда
+            Сила направленного движения ({report.trend})
+          </div>
+          <div className="text-xs text-gray-600 mt-2 leading-relaxed">
+            Метрика: КПД пути цены за последние 20 баров (net move ÷ суммарные
+            диапазоны). ~0% — флэт/шум; 40%+ — чистое направленное движение.
           </div>
         </div>
       </div>
