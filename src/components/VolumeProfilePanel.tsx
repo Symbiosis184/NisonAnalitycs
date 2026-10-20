@@ -202,6 +202,82 @@ interface DeltaProps {
 
 const TREND_LABEL_RU: Record<string, string> = { rising: 'растёт ↗', falling: 'падает ↘', flat: 'плоско →' };
 
+// ── Подробная текстовая расшифровка дельты-графика ────────────────────────────
+// Поясняет каждую метрику и формирует динамический вывод «что сейчас происходит»,
+// чтобы панель читалась как готовый комментарий аналитика, а не набор чисел.
+
+type DeltaSummary = NonNullable<AnalysisReport['delta_summary']>;
+type DeltaPoint = NonNullable<DeltaSummary['points']>[number];
+
+function classifyImbalance(p: DeltaPoint, maxAbs: number): 'strong' | 'weak' | null {
+  if (!p.imbalance) return null;
+  return Math.abs(p.delta) >= 0.6 * maxAbs ? 'strong' : 'weak';
+}
+
+function divergenceNote(summary: DeltaSummary, priceChangePct?: number): string | null {
+  if (priceChangePct === undefined || Math.abs(priceChangePct) < 0.3) return null;
+  const cum = summary.cumulative_delta;
+  const trendUp = summary.delta_trend === 'rising';
+  const priceUp = priceChangePct > 0;
+  // Дивергенция: цена идёт в одну сторону, накопленная агрессия — в другую
+  if (priceUp && (cum < 0 || summary.delta_trend === 'falling')) {
+    return `⚠️ Бычья дивергенция: цена выросла за окно (${priceUp ? '+' : ''}${priceChangePct.toFixed(1)}%), но дельта отрицательная / падает — рост делают пассивные лимитки, а не агрессивный спрос. По Нисону такое движение хрупкое: без подтверждения объёмом на пробое ему не доверяем.`;
+  }
+  if (!priceUp && (cum > 0 || trendUp)) {
+    return `⚠️ Медвежья дивергенция: цена снизилась (${priceChangePct.toFixed(1)}%), но покупатели агрессивно подбирают (ΣΔ > 0 / дельта растёт). Часто это признак поглощения предложения — кандидат на разворот вверх после подтверждения следующей свечой.`;
+  }
+  if (priceUp && cum > 0 && trendUp) {
+    return '✅ Подтверждённый рост: цена и накопленная дельта идут вместе — спрос агрессивный и настоящий, движению можно доверять.';
+  }
+  if (!priceUp && cum < 0 && summary.delta_trend === 'falling') {
+    return '✅ Подтверждённое снижение: продавцы давят и ценой, и дельтой — отскоки без смены знака ΣΔ лучше рассматривать как повод для шорта, а не разворот.';
+  }
+  return null;
+}
+
+export function DeltaNotes({ summary, priceChangePct }: { summary: DeltaSummary; priceChangePct?: number }) {
+  const points = summary.points ?? [];
+  if (points.length === 0) return null;
+  const maxAbs = Math.max(...points.map((p) => Math.abs(p.delta))) || 1;
+
+  const strongBuy = points.filter((p) => classifyImbalance(p, maxAbs) === 'strong' && p.imbalance === 'buy').length;
+  const strongSell = points.filter((p) => classifyImbalance(p, maxAbs) === 'strong' && p.imbalance === 'sell').length;
+  const lastN = points.slice(-Math.min(8, points.length));
+  const recentSum = lastN.reduce((s, p) => s + p.delta, 0);
+  const div = divergenceNote(summary, priceChangePct);
+
+  return (
+    <div className="text-xs text-gray-400 leading-relaxed space-y-2">
+      <p className="text-gray-300 font-medium">Как читать этот график</p>
+      <ul className="list-disc list-inside space-y-1">
+        <li>
+          <span className="text-green-400 font-medium">Зелёный столбец</span> — за свечу агрессия покупателей превысила агрессию продавцов (покупали по рынку / «били в аск»).{' '}
+          <span className="text-red-400 font-medium">Красный</span> — наоборот, продавали в рынок. Высота столбца = величина перевеса.
+        </li>
+        <li>
+          <span className="text-green-500 font-medium">Насыщенные зелёные / <span className="text-red-500">насыщенные красные</span></span> — дисбаланс агрессии (перевес одной стороны ≥3:1 внутри бара). За окном найдено:{' '}
+          <b className="text-white">{strongBuy}</b> бычьих и <b className="text-white">{strongSell}</b> медвежьих сильных дисбалансов. Их скопление у уровня поддержки — типичное «всасывание» предложения по Нисону; у сопротивления — активность распределения.
+        </li>
+        <li>
+          <span className="text-amber-400 font-medium">Жёлтая линия</span> — накопленная дельта (сумма всех Δ слева направо). Растёт = рынок чистят покупатели; падает = продавцы; плоская при движении цены = работу делает пассивная сторона (тонкая ликвидность).
+        </li>
+        <li>
+          <b className="text-gray-300">CLV (Close Location Value)</b> — где внутри диапазона свечи закрылась цена: <span className="text-green-400">+1</span> — у самого максимума (покупатели дожали бар), <span className="text-red-400">−1</span> — у минимума, <span className="text-gray-300">0</span> — в середине. Средний CLV окна: <span className={summary.avg_clv >= 0 ? 'text-green-400' : 'text-red-400'}><b>{summary.avg_clv.toFixed(2)}</b></span> — {summary.avg_clv >= 0.2 ? 'закрытия жмутся к вершинам свечей, buyers держат финал каждого бара' : summary.avg_clv <= -0.2 ? 'закрытия у оснований свечей — продавцы закрывают бары на минимумах, давление реальное' : 'закрытия в середине диапазонов — ни одна сторона не продавила итог бара (борьба/флэт)'}.
+        </li>
+        <li>
+          <b className="text-gray-300">Последние {lastN.length} баров:</b> ΣΔ {recentSum >= 0 ? <span className="text-green-400">+{Math.round(recentSum).toLocaleString('ru-RU')}</span> : <span className="text-red-400">{Math.round(recentSum).toLocaleString('ru-RU')}</span>} — {recentSum >= 0 ? 'на свежем участке спрос перевешивает' : 'на свежем участке перевешивает предложение'} (важнее всей линии: показывает, кто контролирует рынок прямо сейчас).
+        </li>
+      </ul>
+      {div && (
+        <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-200">{div}</p>
+      )}
+      <p className="text-gray-500 italic">
+        ⚠️ Proxy-оценка по OHLCV: тикового стакана/ленты Bybit здесь нет, поэтому дельта вычисляется из формы свечи (тело + позиция закрытия + объём). Она надёжна для оценки перекоса агрессии и дивергенций, но абсолютные числа не равны биржевой дельте из footprint-терминалов. Правило Нисона сохраняется: любой сигнал подтверждается только на следующей свече.
+      </p>
+    </div>
+  );
+}
+
 export function DeltaChart({ summary }: DeltaProps) {
   const points = summary.points ?? [];
   if (points.length === 0) return null;

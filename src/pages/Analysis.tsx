@@ -4,7 +4,7 @@ import { ArrowLeft, TrendingUp, TrendingDown, Activity, AlertTriangle, RefreshCw
 import { api, type AnalysisReport } from '../api/client';
 import type { MultiTFZonesDTO } from '../api/types';
 import CandlestickChart from '../components/CandlestickChart';
-import { VolumeProfileChart, VolumeProfileNotes, DeltaChart } from '../components/VolumeProfilePanel';
+import { VolumeProfileChart, VolumeProfileNotes, DeltaChart, DeltaNotes } from '../components/VolumeProfilePanel';
 import { WyckoffPhasePanel, PricePathCard, EdgeVerificationPanel } from '../components/MarketContextPanels';
 import { Collapsible } from '../components/Collapsible';
 import { formatPrice } from '../utils/format';
@@ -491,6 +491,15 @@ export default function Analysis() {
                 Дельта агрессии (покупатели − продавцы)
               </h3>
               <DeltaChart summary={report.delta_summary} />
+              {/* Текстовая расшифровка: что означают столбцы/линия и что происходит сейчас */}
+              <details className="mt-2 text-xs border-t border-gray-800/50 pt-2">
+                <summary className="cursor-pointer select-none text-gray-300 hover:text-white">
+                  ℹ️ Как читать дельту агрессии
+                </summary>
+                <div className="mt-2">
+                  <DeltaNotes summary={report.delta_summary} priceChangePct={report.change_24h} />
+                </div>
+              </details>
             </div>
           )}
         </div>
