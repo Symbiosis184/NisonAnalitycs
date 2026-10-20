@@ -857,7 +857,7 @@ export default function Analysis() {
           <>
             <span className="text-xs text-gray-500">RSI {report.rsi.toFixed(1)}</span>
             <span className="text-xs text-gray-500">MACD {report.macd.histogram.toFixed(2)}</span>
-            <span className="text-xs text-gray-500">Тренд {report.trend_strength.toFixed(0)}%</span>
+            <span className="text-xs text-gray-500">Тренд {(report.trend_strength * 100).toFixed(1)}%</span>
           </>
         }
       >

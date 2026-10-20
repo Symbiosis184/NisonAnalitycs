@@ -154,6 +154,9 @@ export class ApiClient {
     
     const trend = detectTrend(currentPrice, ema20, ema50, ema200);
     const { signal, confidence } = generateSignal(currentPrice, rsiVal, histLast, ema20, ema50);
+    // Сила тренда: реальная дивергенция скользящих (spread EMA20/EMA50 в % цены),
+    // а не уверенность сигнала — иначе индикатор «Тренд» почти всегда показывал ~1%.
+    const trendStrengthPct = Math.min(100, (Math.abs(ema20 - ema50) / currentPrice) * 100 * 4);
     
     // Определение зон поддержки/сопротивления по методологии Нисона
     const zones = ZoneVoter.collect(currentPrice, candles, timeframeKey(timeframe));
@@ -273,7 +276,7 @@ export class ApiClient {
       price: currentPrice,
       change_24h: changePercent,
       trend: regime,
-      trend_strength: confidence / 100,
+      trend_strength: trendStrengthPct / 100,
       rsi: isNaN(rsiVal) ? 50 : rsiVal,
       macd: {
         value: macdLast,
