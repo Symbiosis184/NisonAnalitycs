@@ -1,43 +1,85 @@
 import { Candle } from './candle';
-import { ema } from './indicators';
+import { ema, rsi } from './indicators';
+import { detectPatterns } from './patterns';
 
 export type TrendContext = 'ВОСХОДЯЩИЙ' | 'НИСХОДЯЩИЙ' | 'БОКОВИК';
 
-export function getTrendContext(candles: Candle[]): TrendContext {
-  if (candles.length < 20) return 'БОКОВИК';
-  
-  const closes = candles.map(c => c.close);
-  const ema10 = ema(closes, 10);
-  const ema20 = ema(closes, 20);
-  const ema50 = ema(closes, 50);
-  
-  const last = candles[candles.length - 1];
-  const lastEma10 = ema10[ema10.length - 1];
-  const lastEma20 = ema20[ema20.length - 1];
-  const lastEma50 = ema50[ema50.length - 1];
-  
-  if (last.close > lastEma10 && lastEma10 > lastEma20 && lastEma20 > lastEma50) {
-    return 'ВОСХОДЯЩИЙ';
-  } else if (last.close < lastEma10 && lastEma10 < lastEma20 && lastEma20 < lastEma50) {
-    return 'НИСХОДЯЩИЙ';
+// Структурный тренд по канону Нисона (гл. 13): направление определяется
+// последовательностью свингов — Higher High/Higher Low (бычий) или
+// Lower High/Lower Low (медвежий), а не расположением цены относительно MA.
+export function getSwingTrend(candles: Candle[], k: number = 3): TrendContext {
+  if (candles.length < 2 * k + 3) return 'БОКОВИК';
+
+  const highs: number[] = [];
+  const lows: number[] = [];
+  for (let i = k; i < candles.length - k; i++) {
+    let isHigh = true;
+    let isLow = true;
+    for (let j = i - k; j <= i + k; j++) {
+      if (j === i) continue;
+      if (candles[j].high >= candles[i].high) isHigh = false;
+      if (candles[j].low <= candles[i].low) isLow = false;
+    }
+    if (isHigh) highs.push(candles[i].high);
+    if (isLow) lows.push(candles[i].low);
   }
-  
+
+  // Нужно минимум два подтверждённых экстремума каждого типа
+  if (highs.length < 2 || lows.length < 2) return 'БОКОВИК';
+
+  const hhPrev = highs[highs.length - 2];
+  const hhLast = highs[highs.length - 1];
+  const hlPrev = lows[lows.length - 2];
+  const hlLast = lows[lows.length - 1];
+
+  if (hhLast > hhPrev && hlLast > hlPrev) return 'ВОСХОДЯЩИЙ';
+  if (hhLast < hhPrev && hlLast < hlPrev) return 'НИСХОДЯЩИЙ';
   return 'БОКОВИК';
 }
 
-export function getTrendMacro(candles: Candle[], price: number): TrendContext {
-  if (candles.length < 65) return 'БОКОВИК';
-  
+// Контекст тренда: структура свингов (первична по Нисону) с MA-подтверждением.
+// Свечи опережают индикаторы, поэтому расхождение со скользящими трактуется
+// как ранний признак нового тренда, а не шум; БОКОВИК — при отсутствии обоих.
+export function getTrendContext(candles: Candle[]): TrendContext {
+  const swing = getSwingTrend(candles, 3);
+
+  if (candles.length < 20) return swing;
+
   const closes = candles.map(c => c.close);
-  const ma65 = ema(closes, 65);
+  const e10 = ema(closes, 10);
+  const e20 = ema(closes, 20);
+  const e50 = ema(closes, Math.min(50, closes.length - 1));
+  const last = candles[candles.length - 1];
+  const v10 = e10[e10.length - 1];
+  const v20 = e20[e20.length - 1];
+  const v50 = e50[e50.length - 1];
+
+  let ma: TrendContext = 'БОКОВИК';
+  if (last.close > v10 && v10 > v20 && v20 > v50) ma = 'ВОСХОДЯЩИЙ';
+  else if (last.close < v10 && v10 < v20 && v20 < v50) ma = 'НИСХОДЯЩИЙ';
+
+  if (swing !== 'БОКОВИК') return swing; // структура первична (свечи опережают MA)
+  return ma; // нет структуры — лагающий, но подтверждённый контекст MA
+}
+
+export function getTrendMacro(candles: Candle[], price: number): TrendContext {
+  if (candles.length < 40) return 'БОКОВИК';
+
+  // Первичен структурный признак (свинги HH/HL или LH/LL)
+  const swing = getSwingTrend(candles, 4);
+  if (swing !== 'БОКОВИК') return swing;
+
+  // Нет выраженной структуры — смотрим на MA65 как на вторичный лагающий фильтр
+  const closes = candles.map(c => c.close);
+  const ma65 = ema(closes, Math.min(65, closes.length - 1));
   const ma65Val = ma65[ma65.length - 1];
-  
+
   if (price > ma65Val) {
     return 'ВОСХОДЯЩИЙ';
   } else if (price < ma65Val) {
     return 'НИСХОДЯЩИЙ';
   }
-  
+
   return 'БОКОВИК';
 }
 
@@ -53,18 +95,17 @@ export function detectTrendStart(candles: Candle[], price: number): {
   
   const bull: string[] = [];
   const bear: string[] = [];
-  
-  // 1) Свечной разворотный сигнал
   const closes = candles.map(c => c.close);
-  const rsiValues = ema(closes, 14);
-  const lastRsi = rsiValues[rsiValues.length - 1];
-  
-  if (lastRsi < 30) {
-    bull.push('свечной сигнал в основании (гл. 4–6)');
-  } else if (lastRsi > 70) {
-    bear.push('свечной сигнал на вершине (гл. 4–6)');
-  }
-  
+
+  // 1) Свечной разворотный сигнал (Нисон гл. 4–6): подтверждаем свежей
+  // ЗАКРЫТЫЕ разворотные формации последних 5 баров (а не подменяем их MA).
+  const recentPatterns = detectPatterns(candles);
+  const freshIdx = candles.length - 5;
+  const freshBullish = recentPatterns.some(p => p.confirmed && p.type === 'бычий' && p.candleIndex >= freshIdx);
+  const freshBearish = recentPatterns.some(p => p.confirmed && p.type === 'медвежий' && p.candleIndex >= freshIdx);
+  if (freshBullish) bull.push('подтверждённая бычья разворотная формация (гл. 4–6)');
+  if (freshBearish) bear.push('подтверждённая медвежья разворотная формация (гл. 4–6)');
+
   // 2) Пробой уровня на объёме
   const avgVolume = candles.slice(-20).reduce((s, c) => s + c.volume, 0) / 20;
   const lastVolume = candles[candles.length - 1].volume;
@@ -138,6 +179,8 @@ export function detectTrendStart(candles: Candle[], price: number): {
   }
   
   // 6) Дивергенция RSI
+  const rsiCloses = candles.map(c => c.close);
+  const rsiValues = rsi(rsiCloses, 14);
   const recent = candles.slice(-20);
   const prev = candles.slice(-40, -20);
   

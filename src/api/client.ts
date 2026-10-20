@@ -1,6 +1,6 @@
 import { fetchKlines, fetch24hTicker, fetchInstrumentInfo } from './bybit';
 import { Candle } from '../utils/candle';
-import { ema, rsi, macd, detectTrend, generateSignal } from '../utils/indicators';
+import { ema, rsi, macd, detectTrend } from '../utils/indicators';
 import { detectPatterns, patternStory } from '../utils/patterns';
 import { signalGenerator } from '../utils/signal_generator';
 import { ZoneVoter, timeframeKey } from '../utils/zone_voter';
@@ -152,8 +152,10 @@ export class ApiClient {
     const signalLast = macdData.signal[macdData.signal.length - 1];
     const histLast = macdData.histogram[macdData.histogram.length - 1];
     
+    // По канону Нисона сигнальная логика НЕ строится на индикаторах
+    // (EMA/RSI/MACD — только визуальный контекст). Consensus считается ниже
+    // по подтверждённым сценариям (свечи + объём + уровни S/R).
     const trend = detectTrend(currentPrice, ema20, ema50, ema200);
-    const { signal, confidence } = generateSignal(currentPrice, rsiVal, histLast, ema20, ema50);
     // Сила тренда: реальная дивергенция скользящих (spread EMA20/EMA50 в % цены),
     // а не уверенность сигнала — иначе индикатор «Тренд» почти всегда показывал ~1%.
     const trendStrengthPct = Math.min(100, (Math.abs(ema20 - ema50) / currentPrice) * 100 * 4);
@@ -265,10 +267,30 @@ export class ApiClient {
     const changePercent = ticker ? ticker.priceChangePercent : (change24h / candles[candles.length - 2].close) * 100;
 
     const regime = toRegime(trend);
+
+    // Consensus по Нисону: свечные паттерны + объём + уровни S/R.
+    // Агрегируем ЗАКРЫТЫЕ (confirmed) сценарии последних 20 баров; взвешиваем
+    // по качеству и силе подтверждения объёмом. Индикаторы в расчёт не входят.
+    // Свежесть — по времени бара формации (meta.patternEndIdx), т.к. timestamp
+    // сигнала — время вычисления отчёта, а не бара.
+    const freshCut = candles.length - 20;
+    const freshConfirmed = detectedSignals.filter((s) => {
+      if (s.status !== 'confirmed') return false;
+      const endIdx = s.meta?.patternEndIdx ?? -1;
+      return endIdx >= 0 ? endIdx >= freshCut : true;
+    });
+    let bullW = 0;
+    let bearW = 0;
+    for (const s of freshConfirmed) {
+      const volBoost = s.quality >= 0.75 ? 1.25 : s.quality >= 0.6 ? 1.0 : 0.8;
+      const w = (0.5 + s.quality) * volBoost;
+      if (s.direction === 'long') bullW += w; else bearW += w;
+    }
+    const totalW = bullW + bearW;
     const consensusDirection: ConsensusDTO['direction'] =
-      signal.toLowerCase().includes('покупка') ? 'buy'
-        : signal.toLowerCase().includes('продажа') ? 'sell'
-          : 'neutral';
+      totalW === 0 ? 'neutral' : bullW > bearW ? 'buy' : bearW > bullW ? 'sell' : 'neutral';
+    const consensusScore = totalW === 0 ? 0 : Math.min(5, (Math.abs(bullW - bearW) / totalW) * 2 + Math.min(3, totalW));
+    const consensusConfidence = totalW === 0 ? 0 : Math.min(95, 40 + (Math.abs(bullW - bearW) / totalW) * 55);
 
     return {
       symbol,
@@ -326,9 +348,9 @@ export class ApiClient {
         points: deltaSummary.points.map((p) => ({ time: p.time, delta: p.delta, clv: p.clv, imbalance: p.imbalance })),
       },
       consensus: {
-        score: confidence / 20,
+        score: consensusScore,
         direction: consensusDirection,
-        confidence,
+        confidence: consensusConfidence,
       },
       trend_analysis: {
         // Реальная детекция старта тренда (движок trend_detection)
