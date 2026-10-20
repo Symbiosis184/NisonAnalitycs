@@ -12,6 +12,7 @@ import { detectPhase } from '../utils/wyckoff';
 import { buildVolumeProfile, summarizeDelta } from '../utils/volume_profile';
 import { runBacktest, type FormationBounds } from '../utils/backtest';
 import { tagTradesByRegime, detectDegradation, statsByRegime, edgeVerdict } from '../utils/edge_verification';
+import { aggregateConsensus } from '../utils/consensus';
 import type {
   AnalysisReport,
   MultiTFZonesDTO,
@@ -296,28 +297,22 @@ export class ApiClient {
           }.`;
 
     // Consensus по Нисону: свечные паттерны + объём + уровни S/R.
-    // Агрегируем ЗАКРЫТЫЕ (confirmed) сценарии последних 20 баров; взвешиваем
-    // по качеству и силе подтверждения объёмом. Индикаторы в расчёт не входят.
-    // Свежесть — по времени бара формации (meta.patternEndIdx), т.к. timestamp
-    // сигнала — время вычисления отчёта, а не бара.
+    // Агрегируем ПОДТВЁЖДЁННЫЕ разворотные сценарии последних 20 баров.
+    // Консенсус = СОГЛАСИЕ факторов в одну сторону, а не сумма голосов
+    // (см. src/utils/consensus.ts): противоречивые long+short гасят друг друга
+    // и дают низкий балл — раньше «много шума» давало 5/5 («с ума сошёл»).
     const freshCut = candles.length - 20;
     const freshConfirmed = detectedSignals.filter((s) => {
       if (s.status !== 'confirmed') return false;
       const endIdx = s.meta?.patternEndIdx ?? -1;
       return endIdx >= 0 ? endIdx >= freshCut : true;
     });
-    let bullW = 0;
-    let bearW = 0;
-    for (const s of freshConfirmed) {
-      const volBoost = s.quality >= 0.75 ? 1.25 : s.quality >= 0.6 ? 1.0 : 0.8;
-      const w = (0.5 + s.quality) * volBoost;
-      if (s.direction === 'long') bullW += w; else bearW += w;
-    }
-    const totalW = bullW + bearW;
-    const consensusDirection: ConsensusDTO['direction'] =
-      totalW === 0 ? 'neutral' : bullW > bearW ? 'buy' : bearW > bullW ? 'sell' : 'neutral';
-    const consensusScore = totalW === 0 ? 0 : Math.min(5, (Math.abs(bullW - bearW) / totalW) * 2 + Math.min(3, totalW));
-    const consensusConfidence = totalW === 0 ? 0 : Math.min(95, 40 + (Math.abs(bullW - bearW) / totalW) * 55);
+    const consensus = aggregateConsensus(
+      freshConfirmed.map((s) => ({ direction: s.direction, quality: s.quality })),
+    );
+    const consensusScore = consensus.score;
+    const consensusDirection = consensus.direction;
+    const consensusConfidence = consensus.confidence;
 
     return {
       symbol,
