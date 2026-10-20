@@ -37,9 +37,23 @@ export default function CandlestickChart({
 }: Props) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
+  // Состояние маркеров createSeriesMarkers — живёт МЕЖДУ перестройками
+  // графика; hover-обработчик читает из него актуальный список стрелок.
+  const markerStateRef = useRef<any>(null);
+  // Удаление слушателя/плашки tooltip при cleanup эффекта.
+  const cleanupHoverRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!chartContainerRef.current || candles.length === 0) return;
+
+    // При каждой перестройке графика старое состояние маркеров привязано к
+    // уже удалённой серии — сбрасываем, чтобы следующий цикл создал новый
+    // setMarkers на живой серии (иначе стрелки пропадали бы навсегда).
+    markerStateRef.current = null;
+    if (cleanupHoverRef.current) {
+      cleanupHoverRef.current();
+      cleanupHoverRef.current = null;
+    }
 
     // Очищаем предыдущий график если есть
     if (chartRef.current) {
@@ -141,8 +155,88 @@ export default function CandlestickChart({
     // Стрелки уменьшены (size 1), текст убран с canvas. При наведении мыши
     // (или касании на мобильных) рядом с маркером всплывает тёмная плашка
     // с названием паттерна и уверенностью.
-    let hideTimer: ReturnType<typeof setTimeout> | null = null;
-    let tipEl: HTMLDivElement | null = null;
+    const hideTimerRef = { current: null as ReturnType<typeof setTimeout> | null };
+    const tipElRef = { current: null as HTMLDivElement | null };
+
+    // ── Всплывающая подсказка паттернов: СОЗДАЁТСЯ ВСЕГДА, независимо от того,
+    // есть ли маркеры в момент монтирования. Раньше плашка и слушатель mousemove
+    // создавались только внутри блока «есть паттерны» — при первом рендере без
+    // паттернов hover-обработчик не навешивался НИКОГДА, и даже когда стрелки
+    // появлялись позже, наведение на них не давало ровным счётом ничего.
+    {
+      const container = chartContainerRef.current!;
+      const tip = document.createElement('div');
+      Object.assign(tip.style, {
+        position: 'absolute', display: 'none', zIndex: '30', pointerEvents: 'none',
+        padding: '4px 8px', borderRadius: '6px', fontSize: '11px', lineHeight: '1.3',
+        background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(148,163,184,0.35)',
+        color: '#e2e8f0', boxShadow: '0 2px 10px rgba(0,0,0,0.5)', whiteSpace: 'nowrap',
+        transform: 'translate(-50%, -100%)', transition: 'opacity .1s',
+      } as Partial<CSSStyleDeclaration>);
+      container.style.position = 'relative';
+      container.appendChild(tip);
+      tipElRef.current = tip;
+
+      const scheduleHide = () => {
+        if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+        hideTimerRef.current = setTimeout(() => { tip.style.display = 'none'; }, 120);
+      };
+
+      const showAt = (clientX: number, clientY: number) => {
+        // Актуальный список маркеров берём из state-хранилища createSeriesMarkers:
+        // он обновляется отдельным эффектом при каждом изменении паттернов,
+        // поэтому hover всегда видит те же стрелки, что нарисованы на canvas.
+        const ms = markerStateRef.current;
+        const list = ms ? ms.markers() : [];
+        if (!list || list.length === 0) { scheduleHide(); return; }
+        const rect = container.getBoundingClientRect();
+        const x = clientX - rect.left;
+        const y = clientY - rect.top;
+        let bestIdx = -1;
+        // Радиус попадания 24 px: маркер size:1 — это ~10 px стрелка; при
+        // плотных барах курсор часто промахивался на пиксель-два мимо узкого
+        // окна, и tooltip не показывался.
+        let bestDist = 24;
+        for (let i = 0; i < list.length; i++) {
+          const px = chart.timeScale().timeToCoordinate(list[i].time as any);
+          if (px === null) continue;
+          const dist = Math.abs(px - x);
+          if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+        }
+        if (bestIdx >= 0) {
+          const m: any = list[bestIdx];
+          const entry = m && typeof m.__tip === 'string' ? m.__tip : '';
+          if (!entry) { scheduleHide(); return; }
+          const cx = chart.timeScale().timeToCoordinate(m.time as any) ?? x;
+          // Y-якорь: bullish — под баром (стрелка belowBar), bearish — над баром.
+          const cy = candlestickSeries.priceToCoordinate(m.position === 'belowBar' ? (m.__low ?? 0) : (m.__high ?? 0)) ?? y;
+          tip.textContent = entry;
+          tip.style.left = `${cx}px`;
+          tip.style.top = m.position === 'belowBar' ? `${cy + 36}px` : `${Math.max(4, cy - 10)}px`;
+          if (hideTimerRef.current) { clearTimeout(hideTimerRef.current); hideTimerRef.current = null; }
+          tip.style.display = 'block';
+        } else {
+          scheduleHide();
+        }
+      };
+
+      const onMove = (ev: MouseEvent) => showAt(ev.clientX, ev.clientY);
+      container.addEventListener('mousemove', onMove);
+      // Touch (мобильные): раньше слушался только mousemove — на телефоне
+      // tooltip не появлялся никогда.
+      const onTouch = (ev: TouchEvent) => {
+        const t0 = ev.touches[0];
+        if (t0) showAt(t0.clientX, t0.clientY);
+      };
+      container.addEventListener('touchstart', onTouch, { passive: true });
+
+      cleanupHoverRef.current = () => {
+        container.removeEventListener('mousemove', onMove);
+        container.removeEventListener('touchstart', onTouch);
+        if (tip.parentNode) tip.parentNode.removeChild(tip);
+        tipElRef.current = null;
+      };
+    }
 
     if (patterns.length > 0) {
       // По Нисону паттерн считается валидным только ПОСЛЕ подтверждения
@@ -204,6 +298,18 @@ export default function CandlestickChart({
           // полупрозрачным цветом, чтобы не путать с подтверждёнными.
           const baseColor = pattern.type === 'bullish' ? '#22c55e' : pattern.type === 'bearish' ? '#ef4444' : '#94a3b8';
           const color = pattern.confirmed ? baseColor : baseColor + '80'; // +alpha для pending
+          // Уверенность: нормализуем долю 0–1 (контракт PatternDTO) к
+          // проценту. Детектор всегда отдаёт 50–92, поэтому условие
+          // «<= 1» больше не может съесть реальный низкий процент.
+          const raw = pattern.confidence;
+          const conf = raw > 0 && raw <= 1 ? raw * 100 : raw;
+          const pct = Math.round(Math.min(100, Math.max(0, conf)));
+          const pendingNote = pattern.confirmed ? '' : ' · ожидает подтверждения';
+          const suffix = count > 1 ? ` · ещё ${count - 1}` : '';
+          // Текст плашки заранее шьём прямо в маркер (__tip): hover-обработчик
+          // живёт вне этого блока и берёт актуальные маркеры из состояния
+          // createSeriesMarkers — без замыкания на конкретный рендер.
+          const tipText = `${pattern.name} · ${pct}%${pendingNote}${suffix}`;
           return {
             time: markerTime as any,
             position: pattern.type === 'bullish' ? 'belowBar' as const : 'aboveBar' as const,
@@ -211,94 +317,23 @@ export default function CandlestickChart({
             shape: pattern.type === 'bullish' ? 'arrowUp' as const : pattern.type === 'bearish' ? 'arrowDown' as const : 'circle' as const,
             text: '', // название только в tooltip — чистый график без наложений
             size: 1,
-            __count: count,
+            __tip: tipText,
+            __low: candle.low,
+            __high: candle.high,
           };
         });
 
-        createSeriesMarkers(candlestickSeries, markers);
-
-        // lightweight-charts рисует маркеры на canvas — ловим mousemove/touch
-        // по контейнеру и находим ближайший маркер по X-координате.
-        tipEl = document.createElement('div');
-        Object.assign(tipEl.style, {
-          position: 'absolute', display: 'none', zIndex: '30', pointerEvents: 'none',
-          padding: '4px 8px', borderRadius: '6px', fontSize: '11px', lineHeight: '1.3',
-          background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(148,163,184,0.35)',
-          color: '#e2e8f0', boxShadow: '0 2px 10px rgba(0,0,0,0.5)', whiteSpace: 'nowrap',
-          transform: 'translate(-50%, -100%)', transition: 'opacity .1s',
-        } as Partial<CSSStyleDeclaration>);
-        container.style.position = 'relative';
-        container.appendChild(tipEl);
-        const tip = tipEl;
-
-        const scheduleHide = () => {
-          if (hideTimer) clearTimeout(hideTimer);
-          hideTimer = setTimeout(() => { tip.style.display = 'none'; }, 120);
-        };
-
-        const showAt = (clientX: number, clientY: number) => {
-          const rect = container.getBoundingClientRect();
-          const x = clientX - rect.left;
-          const y = clientY - rect.top;
-          let bestIdx = -1;
-          // FIX: радиус попадания увеличен 14 → 24 px. Маркер size:1 — это
-          // ~10 px стрелка; при плотных барах курсор часто промахивался на
-          // пиксель-два мимо 14-пиксельного окна, и tooltip не показывался.
-          let bestDist = 24;
-          for (let i = 0; i < markers.length; i++) {
-            const px = chart.timeScale().timeToCoordinate(markers[i].time as any);
-            if (px === null) continue;
-            const dist = Math.abs(px - x);
-            if (dist < bestDist) { bestDist = dist; bestIdx = i; }
-          }
-          if (bestIdx >= 0) {
-            const m = markers[bestIdx];
-            // КЛЮЧ ИЩЕМ ПО ТОМУ ЖЕ ЗНАЧЕНИЮ, ЧТО ИСПОЛЬЗОВАЛИ ПРИ ПОСТРОЕНИИ
-            // МАРКЕРОВ (markerTime), а НЕ заново из candles[].time/1000:
-            // любой повторный пересчёт мог дать иной результат после
-            // склейки/ресемплинга — entry не находился и плашка исчезала.
-            const barTime = String(m.time);
-            const entry = byTime.get(barTime);
-            if (!entry) { scheduleHide(); return; }
-            // Уверенность: нормализуем долю 0–1 (контракт PatternDTO) к
-            // проценту. Детектор всегда отдаёт 50–92, поэтому условие
-            // «<= 1» больше не может съесть реальный низкий процент.
-            const raw = entry.pattern.confidence;
-            const conf = raw > 0 && raw <= 1 ? raw * 100 : raw;
-            const pct = Math.round(Math.min(100, Math.max(0, conf)));
-            const pendingNote = entry.pattern.confirmed ? '' : ' · ожидает подтверждения';
-            const suffix = entry.count > 1 ? ` · ещё ${entry.count - 1}` : '';
-            const label = `${entry.pattern.name} · ${pct}%${pendingNote}${suffix}`;
-            const cx = chart.timeScale().timeToCoordinate(m.time as any) ?? x;
-            const anchorPattern = entry.pattern;
-            const cy = candlestickSeries.priceToCoordinate(
-              anchorPattern.type === 'bullish'
-                ? candles[anchorPattern.candleIndex].low
-                : candles[anchorPattern.candleIndex].high,
-            ) ?? y;
-            // Текст пишем через textContent: никаких HTML-инъекций из названий
-            tip.textContent = label;
-            tip.style.left = `${cx}px`;
-            tip.style.top = anchorPattern.type === 'bullish' ? `${cy + 36}px` : `${Math.max(4, cy - 10)}px`;
-            if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
-            tip.style.display = 'block';
-          } else {
-            scheduleHide();
-          }
-        };
-        const onMove = (ev: MouseEvent) => showAt(ev.clientX, ev.clientY);
-        // FIX (не показывался на мобильных): раньше слушался только mousemove.
-        container.addEventListener('mousemove', onMove);
-        const onTouch = (ev: TouchEvent) => {
-          const t0 = ev.touches[0];
-          if (t0) showAt(t0.clientX, t0.clientY);
-        };
-        container.addEventListener('touchstart', onTouch, { passive: true });
-        (chartRef.current as any).__cleanupMarkerHover = () => {
-          container.removeEventListener('mousemove', onMove);
-          container.removeEventListener('touchstart', onTouch);
-          if (tip.parentNode) tip.parentNode.removeChild(tip);
-        };
+        // Ключевое исправление №2: маркеры обновляются ЧЕРЕЗ существующее
+        // состояние createSeriesMarkers, а не пересоздаются каждый раз.
+        // Раньше здесь вызывался createSeriesMarkers(...) повторно на той же
+        // серии — в lightweight-charts v5 это вешало второй обработчик
+        // destroyOnSeriesDisconnect, который при перестройке графика убивал
+        // ПЕРВОЕ хранилище маркеров: набор маркеров продолжал отрисовываться
+        // на canvas (стрелки видно), но hover-логика смотрела в мёртвое/пустое
+        // состояние — tooltip не появлялся никогда.
+        const ms = markerStateRef.current;
+        if (ms) ms.setMarkers(markers);
+        else markerStateRef.current = createSeriesMarkers(candlestickSeries, markers);
       }
     }
 
@@ -315,9 +350,11 @@ export default function CandlestickChart({
 
     return () => {
       ro.disconnect();
-      if (hideTimer) clearTimeout(hideTimer);
-      const cleanup = (chartRef.current as any)?.__cleanupMarkerHover;
-      if (typeof cleanup === 'function') cleanup();
+      if (cleanupHoverRef.current) {
+        cleanupHoverRef.current();
+        cleanupHoverRef.current = null;
+      }
+      markerStateRef.current = null;
       if (chartRef.current) {
         chartRef.current.remove();
         chartRef.current = null;
