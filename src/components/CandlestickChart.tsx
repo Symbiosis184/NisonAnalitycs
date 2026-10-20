@@ -184,7 +184,9 @@ export default function CandlestickChart({
         // формаций — их названия перечисляются в tooltip через « · ».
         const byTime = new Map<string, { pattern: Pattern; count: number }>();
         for (const p of confirmedPatterns) {
-          const t = String(candles[p.candleIndex].time);
+          // Ключ — время бара в СЕКУНДАХ (как у маркеров ниже), чтобы
+          // lookup из tooltip (byTime.get(barTime)) совпадал корректно.
+          const t = String(Math.floor(candles[p.candleIndex].time / 1000));
           const prev = byTime.get(t);
           if (prev) prev.count += 1;
           else byTime.set(t, { pattern: p, count: 1 });
@@ -193,7 +195,7 @@ export default function CandlestickChart({
         const markers = [...byTime.values()].map(({ pattern, count }) => {
           const candle = candles[pattern.candleIndex];
           return {
-            time: (candle.time / 1000) as any,
+            time: Math.floor(candle.time / 1000) as any,
             position: pattern.type === 'bullish' ? 'belowBar' as const : 'aboveBar' as const,
             color: pattern.type === 'bullish' ? '#22c55e' : pattern.type === 'bearish' ? '#ef4444' : '#94a3b8',
             shape: pattern.type === 'bullish' ? 'arrowUp' as const : pattern.type === 'bearish' ? 'arrowDown' as const : 'circle' as const,
@@ -223,9 +225,12 @@ export default function CandlestickChart({
             const m = markers[bestIdx];
             // Название(я) паттерна(ов), подтверждённых на этом баре. Если формаций
             // несколько — перечисляем все, чтобы «одна стрелка» не выглядела загадкой.
+            // Ключ маркера — время в СЕКУНДАХ (timeToCoordinate/сравнение),
+            // а time свечей — в миллисекундах. Конвертируем обе стороны,
+            // иначе совпадений нет и tooltip остаётся пустым.
             const barTime = String(m.time);
             const names = confirmedPatterns
-              .filter(p => String(candles[p.candleIndex].time) === barTime)
+              .filter(p => String(Math.floor(candles[p.candleIndex].time / 1000)) === barTime)
               .map(p => `${p.name} · ${Math.round(Math.min(100, Math.max(0, p.confidence)))}%`);
             const label = names.length > 1 ? `Паттерны Нисона: ${names.join(' | ')}` : names[0] ?? '';
             const cx = chart.timeScale().timeToCoordinate(m.time as any) ?? x;
