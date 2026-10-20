@@ -155,9 +155,25 @@ export class ApiClient {
     // по подтверждённым сценариям (свечи + объём + уровни S/R).
     // Режим рынка/тренд — структурный: свинги HH/HL vs LH/LL (гл. 13), MA — вторичны.
     const trend = getTrendContext(candles);
-    // Сила тренда: реальная дивергенция скользящих (spread EMA20/EMA50 в % цены),
-    // а не уверенность сигнала — иначе индикатор «Тренд» почти всегда показывал ~1%.
-    const trendStrengthPct = Math.min(100, (Math.abs(ema20 - ema50) / currentPrice) * 100 * 4);
+    // Сила тренда — структурная (по Нисону): насколько выражен направленный
+    // импульс относительно шума. Считается по последним 20 барам: суммарное
+    // перемещение цены (net move) против суммарных внутрибарных диапазонов.
+    // Направленный тренд => близко к 100%; флэт/шум => близко к 0%.
+    // Раньше использовалась дивергенция EMA20/EMA50 с коэффициентом ×4: при
+    // spread <0.05% округление до целого давало вечные «0%» даже в тренде.
+    const dirWindow = candles.slice(-21);
+    let netMove = 0;
+    let pathLength = 0;
+    for (let i = 1; i < dirWindow.length; i++) {
+      netMove += Math.abs(dirWindow[i].close - dirWindow[i - 1].close);
+      pathLength += dirWindow[i].high - dirWindow[i].low;
+    }
+    const efficiency = pathLength > 0 ? Math.abs(dirWindow[dirWindow.length - 1].close - dirWindow[0].close) / netMove : 0;
+    const directionalShare = pathLength > 0 ? netMove / pathLength : 0;
+    const rawStrength = Math.min(100, Math.max(0, ((efficiency + directionalShare) / 2) * 100));
+    // В боковике сила по определению ~0: показываем floor 1%, чтобы UI не
+    // выводил «0%» (округление от 0.4 тоже давало бы вечный ноль).
+    const trendStrengthPct = trend === 'БОКОВИК' ? 1 : Math.max(1, Math.round(rawStrength));
     
     // Определение зон поддержки/сопротивления по методологии Нисона
     const zones = ZoneVoter.collect(currentPrice, candles, timeframeKey(timeframe));
