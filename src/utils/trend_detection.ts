@@ -1,5 +1,5 @@
 import { Candle } from './candle';
-import { ema } from './indicators';
+import { ema, rsi } from './indicators';
 
 export type TrendContext = 'ВОСХОДЯЩИЙ' | 'НИСХОДЯЩИЙ' | 'БОКОВИК';
 
@@ -56,7 +56,9 @@ export function detectTrendStart(candles: Candle[], price: number): {
   
   // 1) Свечной разворотный сигнал
   const closes = candles.map(c => c.close);
-  const rsiValues = ema(closes, 14);
+  // BUG FIX: вместо rsi() вызывалась ema() — «RSI» фактически был EMA(14) в ценовых
+  // единицах, пороги 30/70 срабатывали произвольно (зависели от цены инструмента).
+  const rsiValues = rsi(closes, 14);
   const lastRsi = rsiValues[rsiValues.length - 1];
   
   if (lastRsi < 30) {

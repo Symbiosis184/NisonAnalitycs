@@ -885,13 +885,16 @@ export class PatternDetector {
     if (!(f.isBullish && f.isLongCandle && l.isBullish && l.isLongCandle)) return { found: false, name: '' };
     if (l.close <= f.close) return { found: false, name: '' };
     
-    // Канон (гл. 7): пауза — малые тела внутри диапазона первой с дрейфом вниз.
+    // Канон (гл. 7): пауза — малые тела внутри диапазона первой с дрейфом ВНИЗ.
+    // BUG FIX: раньше сравнение было перевёрнутым (s3 > s1 отбрасывало рост —
+    // т.е. принимался только восходящий дрейф), что противоречило и комментарию,
+    // и Нисону: у восходящих трёх методов пауза снижается к шее первой свечи.
     for (const s of [s1, s2, s3]) {
       if (s.high > f.high || s.low < f.low || s.body > f.body * 0.5) {
         return { found: false, name: '' };
       }
     }
-    if (s3.close > s1.close * 1.02) return { found: false, name: '' };
+    if (s3.close >= s1.close * 0.98) return { found: false, name: '' };
     
     if (!VolumeAnalyzer.isHighVolume(l, candles.slice(0, -1), 1.3)) return { found: false, name: '' };
     
@@ -909,13 +912,14 @@ export class PatternDetector {
     if (!(f.isBearish && f.isLongCandle && l.isBearish && l.isLongCandle)) return { found: false, name: '' };
     if (l.close >= f.close) return { found: false, name: '' };
     
-    // Канон (гл. 7): пауза с дрейфом вверх внутри диапазона первой медвежьей.
+    // Канон (гл. 7): пауза с дрейфом ВВЕРХ внутри диапазона первой медвежьей.
+    // BUG FIX: зеркальная ошибка — сравнение принимало только нисходящий дрейф.
     for (const s of [s1, s2, s3]) {
       if (s.high > f.high || s.low < f.low || s.body > f.body * 0.5) {
         return { found: false, name: '' };
       }
     }
-    if (s3.close < s1.close * 0.98) return { found: false, name: '' };
+    if (s3.close <= s1.close * 1.02) return { found: false, name: '' };
     
     if (!VolumeAnalyzer.isHighVolume(l, candles.slice(0, -1), 1.3)) return { found: false, name: '' };
     
