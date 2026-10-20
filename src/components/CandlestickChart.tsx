@@ -205,47 +205,82 @@ export default function CandlestickChart({
 
         createSeriesMarkers(candlestickSeries, markers);
 
-        // lightweight-charts рисует маркеры на canvas — ловим mousemove по
-        // контейнеру и находим ближайший маркер по X-координате.
-        const onMove = (ev: MouseEvent) => {
-          const rect = container.getBoundingClientRect();
-          const x = ev.clientX - rect.left;
-          const y = ev.clientY - rect.top;
+        // ── Tooltip по наведению: subscribeCrosshairMove ────────────────────
+        // lightweight-charts рисует маркеры на canvas, поэтому подписку на
+        // hover делаем через штатное событие crosshair move: оно приходит с
+        // временем бара под курсором и координатами курсора В СИСТЕМЕ КООРДИНАТ
+        // ГРАФИКА. Раньше использовался «сырой» mousemove контейнера: координата
+        // мыши считалась от левого верхнего угла контейнера, а timeToCoordinate()
+        // возвращает X относительно начала области графика — из-за расхождения
+        // осей ближайший маркер не попадал в радиус «попадания», и tooltip при
+        // наведении мыши не появлялся.
+        const showTipForMarker = (cursorX: number, cursorY: number) => {
           let bestIdx = -1;
-          let bestDist = 14; // px радиус «попадания» по маркеру
+          let bestDist = 18; // px радиус «попадания» по маркеру (чуть шире стрелки)
           for (let i = 0; i < markers.length; i++) {
             const px = chart.timeScale().timeToCoordinate(markers[i].time as any);
             if (px === null) continue;
-            const dist = Math.abs(px - x);
+            const dist = Math.abs(px - cursorX);
             if (dist < bestDist) { bestDist = dist; bestIdx = i; }
           }
-          if (bestIdx >= 0) {
-            const m = markers[bestIdx];
-            // Название(я) паттерна(ов), подтверждённых на этом баре. Если формаций
-            // несколько — перечисляем все, чтобы «одна стрелка» не выглядела загадкой.
-            const barTime = String(m.time);
-            const names = confirmedPatterns
-              .filter(p => String(candles[p.candleIndex].time) === barTime)
-              .map(p => `${p.name} · ${Math.round(Math.min(100, Math.max(0, p.confidence)))}%`);
-            const label = names.length > 1 ? `Паттерны Нисона: ${names.join(' | ')}` : names[0] ?? '';
-            const cx = chart.timeScale().timeToCoordinate(m.time as any) ?? x;
-            const anchorPattern = byTime.get(barTime)?.pattern ?? confirmedPatterns[0];
-            const cy = candlestickSeries.priceToCoordinate(
-              anchorPattern.type === 'bullish'
-                ? candles[anchorPattern.candleIndex].low
-                : candles[anchorPattern.candleIndex].high,
-            ) ?? y;
-            tipEl.innerHTML = `<b>${label}</b>`;
-            tipEl.style.left = `${cx}px`;
-            tipEl.style.top = anchorPattern.type === 'bullish' ? `${cy + 36}px` : `${Math.max(4, cy - 10)}px`;
-            if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
-            tipEl.style.display = 'block';
-          } else {
-            scheduleHide();
-          }
+          if (bestIdx < 0) { scheduleHide(); return; }
+          const m = markers[bestIdx];
+          // Название(я) паттерна(ов), подтверждённых на этом баре. Если формаций
+          // несколько — перечисляем все, чтобы «одна стрелка» не выглядела загадкой.
+          const barTime = String(m.time);
+          const names = confirmedPatterns
+            .filter(p => String(candles[p.candleIndex].time) === barTime)
+            .map(p => `${p.name} · ${Math.round(Math.min(100, Math.max(0, p.confidence)))}%`);
+          const label = names.length > 1 ? `Паттерны Нисона: ${names.join(' | ')}` : names[0] ?? '';
+          if (!label) { scheduleHide(); return; }
+          const cx = chart.timeScale().timeToCoordinate(m.time as any) ?? cursorX;
+          const anchorPattern = byTime.get(barTime)?.pattern ?? confirmedPatterns[0];
+          const cy = candlestickSeries.priceToCoordinate(
+            anchorPattern.type === 'bullish'
+              ? candles[anchorPattern.candleIndex].low
+              : candles[anchorPattern.candleIndex].high,
+          ) ?? cursorY;
+          tipEl.innerHTML = `<b>${label}</b>`;
+          tipEl.style.left = `${cx}px`;
+          tipEl.style.top = anchorPattern.type === 'bullish' ? `${cy + 36}px` : `${Math.max(4, cy - 10)}px`;
+          if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+          tipEl.style.display = 'block';
         };
-        container.addEventListener('mousemove', onMove);
-        (chartRef.current as any).__cleanupMarkerHover = () => container.removeEventListener('mousemove', onMove);
+
+        const onCrosshairMove = (param: any) => {
+          // lightweight-charts v5: param.time может быть строкой/объектом —
+          // приводим к секундам через tsToSeconds, чтобы не пропускать валидные
+          // события из-за «undefined/null» проверок или формата времени.
+          let x: number | null = null;
+          let y: number | null = null;
+          try {
+            if (param && param.point) { x = param.point.x; y = param.point.y; }
+          } catch { /* нет точки — считаем, что курсор вне графика */ }
+          const hasBar = param && param.seriesData && param.seriesData.size > 0;
+          const secTime = chart.timeScale().tsToSeconds(param ? param.time : undefined);
+          if (x === null || y === null || (secTime === undefined && !hasBar)) {
+            scheduleHide();
+            return;
+          }
+          showTipForMarker(x, y);
+        };
+        chart.subscribeCrosshairMove(onCrosshairMove);
+        // Резервный триггер для устройств/браузеров, где crosshair-события
+        // не приходят без активного перетаскивания: обычный mousemove.
+        // Координаты мыши приводим к системе графика через offsetLeft/offsetTop
+        // канваса — иначе сравнение с timeToCoordinate() было бы некорректным.
+        const onMouseMoveFallback = (ev: MouseEvent) => {
+          const rect = container.getBoundingClientRect();
+          const canvas = container.querySelector('canvas') as HTMLCanvasElement | null;
+          const ox = canvas ? canvas.offsetLeft : 0;
+          const oy = canvas ? canvas.offsetTop : 0;
+          showTipForMarker(ev.clientX - rect.left - ox, ev.clientY - rect.top - oy);
+        };
+        container.addEventListener('mousemove', onMouseMoveFallback);
+        (chartRef.current as any).__cleanupMarkerHover = () => {
+          chart.unsubscribeCrosshairMove(onCrosshairMove);
+          container.removeEventListener('mousemove', onMouseMoveFallback);
+        };
       }
     }
 
