@@ -1,10 +1,11 @@
 import { fetchKlines, fetch24hTicker, fetchInstrumentInfo } from './bybit';
 import { Candle } from '../utils/candle';
-import { ema, rsi, macd, detectTrend } from '../utils/indicators';
+import { ema, rsi, macd } from '../utils/indicators';
 import { detectPatterns, patternStory } from '../utils/patterns';
 import { signalGenerator } from '../utils/signal_generator';
 import { ZoneVoter, timeframeKey } from '../utils/zone_voter';
-import { detectTrendStart, getTrendMacro, type TrendContext } from '../utils/trend_detection';
+import { detectTrendStart, getTrendContext, getTrendMacro, type TrendContext } from '../utils/trend_detection';
+import { detectRegime } from '../utils/regime';
 import { planPosition, toPlanDTO } from '../utils/position_sizing';
 import { loadRiskSettings } from '../utils/risk_settings';
 import { detectPhase } from '../utils/wyckoff';
@@ -27,9 +28,6 @@ import type {
 } from './types';
 
 export type { AnalysisReport } from './types';
-
-const toRegime = (trend: 'бычий' | 'медвежий' | 'нейтральный'): Regime =>
-  trend === 'бычий' ? 'ВОСХОДЯЩИЙ' : trend === 'медвежий' ? 'НИСХОДЯЩИЙ' : 'БОКОВИК';
 
 const toPatternDirection = (type: 'бычий' | 'медвежий' | 'нейтральный'): PatternDirection =>
   type === 'бычий' ? 'bullish' : type === 'медвежий' ? 'bearish' : 'neutral';
@@ -155,7 +153,8 @@ export class ApiClient {
     // По канону Нисона сигнальная логика НЕ строится на индикаторах
     // (EMA/RSI/MACD — только визуальный контекст). Consensus считается ниже
     // по подтверждённым сценариям (свечи + объём + уровни S/R).
-    const trend = detectTrend(currentPrice, ema20, ema50, ema200);
+    // Режим рынка/тренд — структурный: свинги HH/HL vs LH/LL (гл. 13), MA — вторичны.
+    const trend = getTrendContext(candles);
     // Сила тренда: реальная дивергенция скользящих (spread EMA20/EMA50 в % цены),
     // а не уверенность сигнала — иначе индикатор «Тренд» почти всегда показывал ~1%.
     const trendStrengthPct = Math.min(100, (Math.abs(ema20 - ema50) / currentPrice) * 100 * 4);
@@ -266,7 +265,19 @@ export class ApiClient {
     const change24h = ticker ? ticker.priceChange : currentPrice - candles[candles.length - 2].close;
     const changePercent = ticker ? ticker.priceChangePercent : (change24h / candles[candles.length - 2].close) * 100;
 
-    const regime = toRegime(trend);
+    // Режим рынка: структурный тренд (свинги HH/HL, гл. 13) + волатильность ATR.
+    // БОКОВИК классифицируется как 'range'; при высокой относительной волатильности —
+    // 'volatile-breakout' (шум, риск ложных пробоев).
+    const regimeInfo = detectRegime(candles);
+    const regime: Regime = trend;
+    const regimeLabel =
+      regime === 'БОКОВИК' ? 'Боковик (флэт)' : regime === 'ВОСХОДЯЩИЙ' ? 'Восходящий тренд' : 'Нисходящий тренд';
+    const regimeDescription =
+      regime === 'БОКОВИК'
+        ? `Режим: ${regimeLabel}. Структура вершин/впадин не сформирована — разворотные паттерны надёжны только у границ диапазона (уровни S/R), продолжение тренда торговать нельзя.`
+        : `Режим: ${regimeLabel}. Подтверждённые свинги ${trend === 'ВОСХОДЯЩИЙ' ? 'HH/HL' : 'LH/LL'}${
+            regimeInfo.regime === 'volatile-breakout' ? '; повышенная волатильность (ATR выше среднего) — риск шумовых ложных пробоев' : ''
+          }.`;
 
     // Consensus по Нисону: свечные паттерны + объём + уровни S/R.
     // Агрегируем ЗАКРЫТЫЕ (confirmed) сценарии последних 20 баров; взвешиваем
@@ -321,7 +332,7 @@ export class ApiClient {
       support: zones.support,
       resistance: zones.resistance,
       regime,
-      regime_description: `Тренд: ${trend}`,
+      regime_description: regimeDescription,
       wyckoff: {
         phase: marketPhase.phase,
         confidence: marketPhase.confidence,
