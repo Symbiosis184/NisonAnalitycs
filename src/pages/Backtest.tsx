@@ -66,25 +66,40 @@ export default function BacktestPage() {
     for (let i = 60; i < candles.length; i++) {
       const sigs = signalGenerator.findSignals(candles.slice(0, i + 1), 'D');
       for (const s of sigs) {
-        // FIX бэктест-аудита №2: событие = ПЕРВОЕ появление формации в выдаче
-        // (момент подтверждения). Флаг isFreshEvent ставит генератор; раньше
-        // фильтр был `patternEndIdx === i`, что ловило только первый бар окна
-        // сканирования (за день до подтверждения) и давал пустую таблицу.
-        if (!(s as Signal & { isFreshEvent?: boolean }).isFreshEvent) continue;
-        events.push({ i, pattern: s.pattern, direction: s.direction, bounds: { patternLow: s.meta.patternLow, patternHigh: s.meta.patternHigh } });
+        // FIX бэктест-аудита №3 (по книгам Нисона): торгуем ТОЛЬКО подтверждённые
+        // сигналы — «ожидание → подтверждение». Раньше вход шёл по close первого
+        // появления формации (статус pending, т.е. за бар ДО подтверждения), что
+        // систематически ломало статистику (WR ~35%, отрицательная expectancy).
+        if (!s.confirmed || s.status !== 'confirmed') continue;
+        // FIX: событие привязываем к ЗАКРЫВАЮЩЕМУ бару формации (meta.patternEndIdx),
+        // а не к текущему бару прогона i. При confirmDelay>1 пары (i, endIdx) не
+        // существовало — детектор runBacktest никогда не находил сигнал (потерянные
+        // паттерны). Вход: close бара подтверждения (= candles[endIdx+1]).
+        const entryBar = Math.min(s.meta.patternEndIdx + 1, i);
+        events.push({ i: entryBar, pattern: s.pattern, direction: s.direction, bounds: { patternLow: s.meta.patternLow, patternHigh: s.meta.patternHigh } });
       }
     }
+    // Дедупликация событий: одна формация = одна сделка. При confirmDelay>1 один
+    // и тот же паттерн подтверждается повторно с разных баров i — без дедупа
+    // выборка раздувалась серией входов в одну структуру (артефакты «Три горы»).
+    const uniqueEvents = new Map<string, typeof events[number]>();
+    for (const e of events) {
+      const key = `${e.pattern}|${e.direction}|${e.i}`;
+      if (!uniqueEvents.has(key)) uniqueEvents.set(key, e);
+    }
+    const deduped = [...uniqueEvents.values()];
+
     // Один прогон на уникальную пару (паттерн, направление)
-    const keys = new Set(events.map((e) => `${e.pattern}|${e.direction}`));
+    const keys = new Set(deduped.map((e) => `${e.pattern}|${e.direction}`));
     const out: Array<{ key: string; res: BacktestResult; wf: ReturnType<typeof runWalkForward>; regime: RegimeInfo }> = [];
     for (const k of keys) {
       const [pattern, dirRaw] = k.split('|');
       const direction = dirRaw as 'long' | 'short';
       const detect = (hist: Candle[], idx: number): FormationBounds | null => {
-        const hit = events.find((e) => e.i === idx && e.pattern === pattern && hist.length === idx + 1);
+        const hit = deduped.find((e) => e.i === idx && e.pattern === pattern && e.direction === direction && hist.length === idx + 1);
         return hit ? hit.bounds : null;
       };
-      const evCount = events.filter((e) => e.pattern === pattern && e.direction === direction).length;
+      const evCount = deduped.filter((e) => e.pattern === pattern && e.direction === direction).length;
       if (evCount < 3) continue; // слишком мало наблюдений — не показываем
       const config = { detect, direction, costs };
       const res = runBacktest(candles, config);
