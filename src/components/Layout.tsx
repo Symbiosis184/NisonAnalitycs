@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { BarChart3, TrendingUp, BookOpen, FlaskConical, Heart } from 'lucide-react';
 import SupportModal from './SupportModal';
+import ContextMenu from './ContextMenu';
 
 export default function Layout() {
   const location = useLocation();
@@ -157,6 +158,7 @@ export default function Layout() {
       </footer>
 
       <SupportModal open={supportOpen} onClose={() => setSupportOpen(false)} />
+      <ContextMenu onSupport={() => setSupportOpen(true)} />
     </div>
   );
 }
