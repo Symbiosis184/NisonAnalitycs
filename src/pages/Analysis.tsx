@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, TrendingUp, TrendingDown, Activity, AlertTriangle, RefreshCw, Target, Shield, BarChart2, CandlestickChart as ChartIcon } from 'lucide-react';
 import { api, type AnalysisReport } from '../api/client';
 import type { MultiTFZonesDTO } from '../api/types';
 import CandlestickChart from '../components/CandlestickChart';
+import { useKlineWebSocket, mergeLiveCandle } from '../hooks/useKlineWebSocket';
 import { VolumeProfileChart, VolumeProfileNotes, DeltaChart } from '../components/VolumeProfilePanel';
 import { WyckoffPhasePanel, PricePathCard, EdgeVerificationPanel } from '../components/MarketContextPanels';
 import { Collapsible } from '../components/Collapsible';
@@ -151,6 +152,17 @@ export default function Analysis() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
   const [report, setReport] = useState<AnalysisReport | null>(null);
+
+  // ── Live-обновление графика по WebSocket (поток клайнов Bybit) ──────────
+  // Вместо поллинга REST последняя формирующаяся свеча обновляется в реальном
+  // времени; при обрыве соединения график остаётся на данных REST-истории.
+  const { liveCandle, connected: wsConnected } = useKlineWebSocket(symbol, timeframe);
+  const liveCandles = useMemo(
+    () => (report ? mergeLiveCandle(report.candles, liveCandle) : []),
+    [report, liveCandle],
+  );
+  const livePrice = liveCandle?.close ?? report?.price;
+
   // Мульти-ТФ карта зон S/R (загружается отдельно от основного анализа)
   const [multiZones, setMultiZones] = useState<MultiTFZonesDTO[]>([]);
   const [loading, setLoading] = useState(true);
@@ -298,10 +310,15 @@ export default function Analysis() {
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2">
-            <span className="text-xl sm:text-2xl font-bold text-white">${formatPrice(report.price)}</span>
+            <span className="text-xl sm:text-2xl font-bold text-white">${formatPrice(livePrice ?? report.price)}</span>
             <span className={`flex items-center gap-1 text-sm font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
               {isPositive ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
               {isPositive ? '+' : ''}{report.change_24h.toFixed(2)}%
+            </span>
+            {/* Индикатор live-потока: WebSocket-обновление последней свечи */}
+            <span className={`flex items-center gap-1.5 text-xs font-medium ${wsConnected ? 'text-green-400' : 'text-gray-500'}`}>
+              <span className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-green-400 animate-pulse' : 'bg-gray-600'}`} />
+              {wsConnected ? 'LIVE' : 'OFFLINE'}
             </span>
           </div>
         </div>
@@ -400,7 +417,7 @@ export default function Analysis() {
         badge={<span className="text-xs text-gray-500">{report.patterns.length} паттернов · {report.support.length + report.resistance.length} зон</span>}
       >
         <CandlestickChart
-          candles={report.candles}
+          candles={liveCandles}
           patterns={report.patterns}
           support={report.support}
           resistance={report.resistance}
