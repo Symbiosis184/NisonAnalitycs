@@ -313,8 +313,12 @@ export default function Analysis() {
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2">
             <span className="text-xl sm:text-2xl font-bold text-white">${formatPrice(liveCandle && Date.now() - liveCandle.ts < 30_000 ? liveCandle.close : report.price)}</span>
             {liveCandle && Date.now() - liveCandle.ts < 30_000 && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-green-500/10 border border-green-500/20 text-green-400 text-[11px] font-medium" title="Цена и свеча обновляются в реальном времени через WebSocket Bybit">
-                <Zap className="w-3 h-3" /> LIVE
+              <span className="animate-live-pulse inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-500/10 border border-green-500/20 text-green-400 text-[11px] font-medium" title="Цена и свеча обновляются в реальном времени через WebSocket Bybit">
+                <span className="relative flex w-1.5 h-1.5">
+                  <span className="absolute inline-flex w-full h-full rounded-full bg-green-400 opacity-60 animate-ping" />
+                  <span className="relative inline-flex w-1.5 h-1.5 rounded-full bg-green-400" />
+                </span>
+                LIVE
               </span>
             )}
             <span className={`flex items-center gap-1 text-sm font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
