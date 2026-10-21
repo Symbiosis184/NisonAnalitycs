@@ -162,37 +162,37 @@ export default function SignalJournal() {
       {/* Статистика */}
       {stats && (
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 sm:gap-4">
-          <div className="p-3 sm:p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+          <div className="p-3 sm:p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
             <div className="text-xs text-gray-500 mb-1">Всего сигналов</div>
             <div className="text-lg sm:text-2xl font-bold text-white">{stats.totalSignals}</div>
           </div>
-          <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+          <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
             <div className="text-xs text-gray-500 mb-1">Активных</div>
             <div className="text-lg sm:text-2xl font-bold text-yellow-400">{stats.activeSignals}</div>
           </div>
-          <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+          <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
             <div className="text-xs text-gray-500 mb-1">Цель достигнута</div>
             <div className="text-lg sm:text-2xl font-bold text-green-400">{stats.hitTarget}</div>
           </div>
-          <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+          <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
             <div className="text-xs text-gray-500 mb-1">Стоп сработал</div>
             <div className="text-lg sm:text-2xl font-bold text-red-400">{stats.hitStop}</div>
           </div>
-          <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+          <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
             <div className="text-xs text-gray-500 mb-1">Win Rate</div>
             <div className="text-lg sm:text-2xl font-bold text-white">{stats.winRate.toFixed(1)}%</div>
           </div>
-          <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+          <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
             <div className="text-xs text-gray-500 mb-1">Средний P&L</div>
             <div className={`text-lg sm:text-2xl font-bold ${stats.avgPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               {stats.avgPnl >= 0 ? '+' : ''}{stats.avgPnl.toFixed(2)}%
             </div>
           </div>
-          <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+          <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
             <div className="text-xs text-gray-500 mb-1">Средний R:R</div>
             <div className="text-lg sm:text-2xl font-bold text-white">1:{stats.avgRiskReward.toFixed(2)}</div>
           </div>
-          <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+          <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
             <div className="text-xs text-gray-500 mb-1">Истёкших</div>
             <div className="text-lg sm:text-2xl font-bold text-gray-400">{stats.expired}</div>
           </div>
@@ -281,7 +281,7 @@ export default function SignalJournal() {
                   ? 'border-green-500/20 bg-green-500/5'
                   : signal.status === 'hit_stop'
                   ? 'border-red-500/20 bg-red-500/5'
-                  : 'border-gray-800/60 bg-[#131a2b]/50'
+                  : 'border-gray-800/60 bg-surface-panel/50'
               }`}
             >
               <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 mb-3">

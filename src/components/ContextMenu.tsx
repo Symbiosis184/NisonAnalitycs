@@ -95,7 +95,7 @@ export default function ContextMenu({ onSupport }: Props) {
       ref={menuRef}
       role="menu"
       aria-label="Меню действий"
-      className="fixed z-[100] min-w-[220px] rounded-xl border border-gray-700/70 bg-[#0d1321]/95 backdrop-blur-xl shadow-2xl shadow-black/50 py-1.5 animate-in"
+      className="fixed z-[100] min-w-[220px] rounded-xl border border-gray-700/70 bg-surface-raised/95 backdrop-blur-xl shadow-2xl shadow-black/50 py-1.5 animate-in"
       style={{ left: menu.x, top: menu.y }}
     >
       <button

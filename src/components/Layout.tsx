@@ -9,8 +9,8 @@ export default function Layout() {
   const [supportOpen, setSupportOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-[#0a0e17] text-gray-100">
-      <header className="border-b border-gray-800/60 bg-[#0d1321]/80 backdrop-blur-xl sticky top-0 z-50">
+    <div className="min-h-screen bg-surface-deep text-gray-100">
+      <header className="border-b border-gray-800/60 bg-surface-raised/80 backdrop-blur-xl sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-14 sm:h-16">
             <Link to="/" className="flex items-center gap-2 sm:gap-3 group min-w-0">

@@ -114,7 +114,7 @@ export default function SupportModal({ open, onClose }: Props) {
       aria-label="Поддержать развитие проекта"
     >
       <div
-        className="relative w-full max-w-md rounded-2xl border border-amber-500/30 bg-[#0d1321] shadow-2xl shadow-amber-500/10 p-6"
+        className="relative w-full max-w-md rounded-2xl border border-amber-500/30 bg-surface-raised shadow-2xl shadow-amber-500/10 p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <button
@@ -156,7 +156,7 @@ export default function SupportModal({ open, onClose }: Props) {
         </p>
 
         {/* Адрес + копирование */}
-        <div className="rounded-lg border border-gray-800 bg-[#0a0e17] p-3">
+        <div className="rounded-lg border border-gray-800 bg-surface-deep p-3">
           <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">
             Адрес кошелька GRAM
           </div>

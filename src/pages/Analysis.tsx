@@ -362,7 +362,7 @@ export default function Analysis() {
       >
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Режим рынка */}
-        <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+        <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
           <h3 className="text-sm font-semibold text-gray-400 mb-2 flex items-center gap-2">
             <Activity className="w-4 h-4" />
             Режим рынка
@@ -402,7 +402,7 @@ export default function Analysis() {
         </div>
 
         {/* Объём */}
-        <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+        <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
           <h3 className="text-sm font-semibold text-gray-400 mb-2 flex items-center gap-2">
             <BarChart2 className="w-4 h-4" />
             Объём
@@ -463,7 +463,7 @@ export default function Analysis() {
         <div className="space-y-4">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {report.volume_profile && (
-              <div className="lg:col-span-2 p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+              <div className="lg:col-span-2 p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                   <h3 className="text-sm font-semibold text-gray-400 flex items-center gap-2">
                     <BarChart2 className="w-4 h-4" />
@@ -516,7 +516,7 @@ export default function Analysis() {
             {report.wyckoff && <WyckoffPhasePanel wyckoff={report.wyckoff} />}
           </div>
           {report.delta_summary && (
-            <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+            <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
               <h3 className="text-sm font-semibold text-gray-400 mb-2 flex items-center gap-2">
                 <Activity className="w-4 h-4" />
                 Дельта агрессии (покупатели − продавцы)
@@ -632,7 +632,7 @@ export default function Analysis() {
           title="Подтверждённые паттерны"
           badge={<span className="text-xs text-gray-500">{confirmedPatterns.length} из {report.patterns.length} · подтверждены объёмом/уровнем</span>}
         >
-        <div className="p-6 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+        <div className="p-6 rounded-xl border border-gray-800/60 bg-surface-panel/50">
           <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
             🕯️ Подтверждённые паттерны
             <span className="text-xs text-gray-500 font-normal ml-2">
@@ -714,7 +714,7 @@ export default function Analysis() {
             </>
           }
         >
-        <div className="p-6 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+        <div className="p-6 rounded-xl border border-gray-800/60 bg-surface-panel/50">
           <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
             <Target className="w-5 h-5 text-amber-400" />
             Сценарии (Нисон: ожидание → подтверждение)
@@ -893,7 +893,7 @@ export default function Analysis() {
         }
       >
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+        <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
           <h3 className="text-sm font-semibold text-gray-400 mb-2">RSI (14)</h3>
           <div className={`text-3xl font-bold ${
             report.rsi > 70 ? 'text-red-400' :
@@ -914,7 +914,7 @@ export default function Analysis() {
           </div>
         </div>
 
-        <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+        <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
           <h3 className="text-sm font-semibold text-gray-400 mb-2">MACD</h3>
           {/* Гистограмма в абсолюте масштабо-зависима: для BTC $100k «1.23» ничего
               не значит. Показываем знак гистограммы + её отношение к цене в %. */}
@@ -933,7 +933,7 @@ export default function Analysis() {
           </div>
         </div>
 
-        <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+        <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
           <h3 className="text-sm font-semibold text-gray-400 mb-2">Тренд</h3>
           <div className={`text-3xl font-bold ${
             report.trend === 'ВОСХОДЯЩИЙ' ? 'text-green-400' :

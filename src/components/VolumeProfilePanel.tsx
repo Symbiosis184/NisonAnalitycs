@@ -69,7 +69,7 @@ export function VolumeProfileNotes({ profile, price }: Pick<VPProps, 'profile' |
           естественные уровни для входов от границ и стопов.
         </li>
       </ul>
-      <p className="rounded-lg border border-gray-800/60 bg-[#0b1120] p-2 text-gray-300">{positionNote}</p>
+      <p className="rounded-lg border border-gray-800/60 bg-surface-base p-2 text-gray-300">{positionNote}</p>
       <p className="text-gray-500">
         Совпадение POC или границы VA с уровнем S/R мульти-ТФ карты резко повышает
         значимость зоны: два независимых метода указывают на одну цену.

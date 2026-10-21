@@ -5,6 +5,12 @@
   --breakpoint-xs: 30rem;
   /* Мягкая «дыхательная» пульсация индикатора LIVE */
   --animate-live-pulse: live-pulse 2.2s ease-in-out infinite;
+
+  /* Палитра тёмной trading-темы (токены Tailwind v4) */
+  --color-surface-deep: #0a0e17;   /* фон страницы */
+  --color-surface-base: #0b1120;   /* нижняя панель/футер */
+  --color-surface-raised: #0d1321; /* приподнятые блоки */
+  --color-surface-panel: #131a2b;  /* карточки и панели */
 }
 
 @keyframes live-pulse {

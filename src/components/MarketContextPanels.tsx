@@ -80,7 +80,7 @@ export function WyckoffPhasePanel({ wyckoff }: WProps) {
   const detailsMeta = PHASE_META[shown];
 
   return (
-    <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+    <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
       <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
         🌀 Фаза цикла Вайкоффа
         <span

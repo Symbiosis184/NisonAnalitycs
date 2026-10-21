@@ -299,7 +299,7 @@ export default function Dashboard() {
       </div>
 
       {/* Поиск произвольной криптовалюты */}
-      <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+      <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
         <div className="flex flex-col sm:flex-row gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
@@ -354,7 +354,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 xs:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
         {loading && market.length === 0 ? (
           Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50 animate-pulse">
+            <div key={i} className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50 animate-pulse">
               <div className="h-6 w-20 bg-gray-700 rounded mb-3" />
               <div className="h-8 w-32 bg-gray-700 rounded mb-2" />
               <div className="h-4 w-24 bg-gray-700 rounded" />
@@ -402,7 +402,7 @@ export default function Dashboard() {
         </div>
       )}
       {/* Легенда методологии */}
-      <div className="p-4 rounded-xl border border-gray-800/60 bg-[#131a2b]/50">
+      <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
         <h3 className="text-sm font-semibold text-white mb-3">📚 Методология Стива Нисона</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
           <div>
