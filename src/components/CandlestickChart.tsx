@@ -14,6 +14,16 @@ interface Pattern {
   confirmed: boolean;
 }
 
+/** Живая (незакрытая) свеча из WebSocket-потока Bybit */
+export interface LiveCandleProp {
+  start: number; // openTime, мс
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
 interface Props {
   candles: Candle[];
   ema20?: number[];
@@ -23,6 +33,7 @@ interface Props {
   support?: Zone[];
   resistance?: Zone[];
   height?: number;
+  live?: LiveCandleProp | null;
 }
 
 export default function CandlestickChart({ 
@@ -33,10 +44,15 @@ export default function CandlestickChart({
   patterns = [],
   support = [],
   resistance = [],
-  height = 500 
+  height = 500,
+  live = null,
 }: Props) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
+  // Живая свеча обновляется через WebSocket каждые ~сотни миллисекунд —
+  // пересоздавать весь график на каждый тик нельзя. Держим ссылки на серии
+  // и обновляем только последний бар отдельным «тихим» эффектом.
+  const seriesRef = useRef<{ candle: any; volume: any } | null>(null);
 
   useEffect(() => {
     if (!chartContainerRef.current || candles.length === 0) return;
@@ -90,6 +106,25 @@ export default function CandlestickChart({
       close: candle.close,
     }));
 
+    // Живая (незакрытая) свеча из WebSocket: если её бар новее последнего
+    // закрытого — добавляем его в данные графика; если это тот же незакрытый
+    // бар (REST-кэш отдаёт текущий) — заменяем на актуальные значения.
+    if (live && live.start > 0) {
+      const lastClosed = candles[candles.length - 1];
+      const liveBar = {
+        time: (Math.floor(live.start / 1000)) as any,
+        open: live.open,
+        high: live.high,
+        low: live.low,
+        close: live.close,
+      };
+      if (lastClosed && Math.floor(lastClosed.time / 1000) === liveBar.time) {
+        chartData[chartData.length - 1] = liveBar;
+      } else if (!lastClosed || liveBar.time > Math.floor(lastClosed.time / 1000)) {
+        chartData.push(liveBar);
+      }
+    }
+
     candlestickSeries.setData(chartData);
 
     // Добавляем объем
@@ -113,7 +148,25 @@ export default function CandlestickChart({
       color: candle.close >= candle.open ? 'rgba(34, 197, 94, 0.5)' : 'rgba(239, 68, 68, 0.5)',
     }));
 
+    if (live && live.start > 0) {
+      const lastClosed = candles[candles.length - 1];
+      const lt = Math.floor(live.start / 1000);
+      const liveVol = {
+        time: lt as any,
+        value: live.volume,
+        color: live.close >= live.open ? 'rgba(34, 197, 94, 0.5)' : 'rgba(239, 68, 68, 0.5)',
+      };
+      if (lastClosed && Math.floor(lastClosed.time / 1000) === lt) {
+        volumeData[volumeData.length - 1] = liveVol;
+      } else if (!lastClosed || lt > Math.floor(lastClosed.time / 1000)) {
+        volumeData.push(liveVol);
+      }
+    }
+
     volumeSeries.setData(volumeData);
+
+    // Публикуем серии для «тихого» live-обновления последнего бара без пересоздания графика
+    seriesRef.current = { candle: candlestickSeries, volume: volumeSeries };
 
     // ── Уровни S/R: тонкие линии, без зашумлённых подписей на полотне ────
     // Сильные поддержки — зелёные сплошные 1px, сопротивления — красные;
@@ -276,6 +329,25 @@ export default function CandlestickChart({
       }
     };
   }, [candles, ema20, ema50, ema200, patterns, support, resistance, height]);
+
+  // ── Тихое live-обновление последнего бара (WebSocket) ─────────────────────
+  // Не пересоздаём график: обновляем только OHLCV текущего незакрытого бара
+  // через series.update(). Вызывается на каждый тик дельты цены (~200–1000 мс).
+  useEffect(() => {
+    const s = seriesRef.current;
+    if (!s || !live || live.start <= 0) return;
+    const t = Math.floor(live.start / 1000);
+    try {
+      s.candle.update({ time: t as any, open: live.open, high: live.high, low: live.low, close: live.close });
+      s.volume.update({
+        time: t as any,
+        value: live.volume,
+        color: live.close >= live.open ? 'rgba(34, 197, 94, 0.5)' : 'rgba(239, 68, 68, 0.5)',
+      });
+    } catch {
+      // бар ещё не в данных серии — ignore (полный setData перестроится при реанализе)
+    }
+  }, [live]);
 
   return <div ref={chartContainerRef} className="w-full" style={{ touchAction: 'pan-y' }} />;
 }

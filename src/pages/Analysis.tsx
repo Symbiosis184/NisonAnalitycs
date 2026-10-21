@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, TrendingUp, TrendingDown, Activity, AlertTriangle, RefreshCw, Target, Shield, BarChart2, CandlestickChart as ChartIcon } from 'lucide-react';
+import { ArrowLeft, TrendingUp, TrendingDown, Activity, AlertTriangle, RefreshCw, Target, Shield, BarChart2, Zap, CandlestickChart as ChartIcon } from 'lucide-react';
 import { api, type AnalysisReport } from '../api/client';
 import type { MultiTFZonesDTO } from '../api/types';
 import CandlestickChart from '../components/CandlestickChart';
+import { useBybitLiveCandle } from '../hooks/useBybitLiveCandle';
 import { VolumeProfileChart, VolumeProfileNotes, DeltaChart, DeltaNotes } from '../components/VolumeProfilePanel';
 import { WyckoffPhasePanel, PricePathCard, EdgeVerificationPanel } from '../components/MarketContextPanels';
 import { Collapsible } from '../components/Collapsible';
@@ -196,6 +197,18 @@ export default function Analysis() {
     loadAnalysis();
   }, [symbol, timeframe]);
 
+  // ── Живая цена и свеча через WebSocket Bybit (kline-поток спота) ──────────
+  // Обновляет заголовок цены и последний бар графика в реальном времени без
+  // REST-поллинга. По закрытию бара — автоматический полный реанализ.
+  const [lastBarCloseTs, setLastBarCloseTs] = useState(0);
+  const liveCandle = useBybitLiveCandle(symbol, timeframe, () => setLastBarCloseTs(Date.now()));
+  useEffect(() => {
+    if (lastBarCloseTs === 0 || !symbol) return;
+    const t = setTimeout(() => { loadAnalysis(); }, 1500); // даём REST-кэшу обновиться
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastBarCloseTs, symbol, timeframe]);
+
   // Мульти-ТФ карта зон: грузится параллельно с основным анализом, ошибки не блокируют страницу
   useEffect(() => {
     if (!symbol) return;
@@ -298,7 +311,12 @@ export default function Analysis() {
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2">
-            <span className="text-xl sm:text-2xl font-bold text-white">${formatPrice(report.price)}</span>
+            <span className="text-xl sm:text-2xl font-bold text-white">${formatPrice(liveCandle && Date.now() - liveCandle.ts < 30_000 ? liveCandle.close : report.price)}</span>
+            {liveCandle && Date.now() - liveCandle.ts < 30_000 && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-green-500/10 border border-green-500/20 text-green-400 text-[11px] font-medium" title="Цена и свеча обновляются в реальном времени через WebSocket Bybit">
+                <Zap className="w-3 h-3" /> LIVE
+              </span>
+            )}
             <span className={`flex items-center gap-1 text-sm font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
               {isPositive ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
               {isPositive ? '+' : ''}{report.change_24h.toFixed(2)}%
@@ -412,6 +430,7 @@ export default function Analysis() {
           support={report.support}
           resistance={report.resistance}
           height={chartHeight}
+          live={liveCandle && Date.now() - liveCandle.ts < 30_000 ? liveCandle : null}
         />
       </Collapsible>
 
