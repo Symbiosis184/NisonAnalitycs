@@ -288,6 +288,9 @@ export class ApiClient {
     // Режим рынка: структурный тренд (свинги HH/HL, гл. 13) + волатильность ATR.
     // БОКОВИК классифицируется как 'range'; при высокой относительной волатильности —
     // 'volatile-breakout' (шум, риск ложных пробоев).
+    // Тип Regime в DTO = TrendContext (русские метки): UI (Analysis/Dashboard) и
+    // getTrendColor сравнивают именно их; английские значения detectRegime —
+    // внутренний слой (edge_verification когорты), в DTO попадать не должны.
     const regimeInfo = detectRegime(candles);
     const regime: Regime = trend;
     const regimeLabel =
