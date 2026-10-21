@@ -50,13 +50,58 @@ export default function SupportModal({ open, onClose }: Props) {
 
   if (!open) return null;
 
-  const copyAddress = async () => {
+  const markCopied = () => {
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1800);
+  };
+
+  // Резервный способ: textarea + execCommand. Работает и по HTTP (без HTTPS
+  // navigator.clipboard часто недоступен или молча отклоняет запись).
+  const legacyCopy = (): boolean => {
     try {
-      await navigator.clipboard.writeText(TON_ADDRESS);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
+      const ta = document.createElement('textarea');
+      ta.value = TON_ADDRESS;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '-1000px';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, TON_ADDRESS.length);
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
     } catch {
-      /* clipboard недоступен — пользователь скопирует вручную */
+      return false;
+    }
+  };
+
+  const copyAddress = async () => {
+    // 1) Современный Clipboard API — если доступен (HTTPS/localhost и разрешение)
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(TON_ADDRESS);
+        markCopied();
+        return;
+      } catch {
+        /* падаем на резервный путь */
+      }
+    }
+    // 2) Резервный execCommand
+    if (legacyCopy()) {
+      markCopied();
+      return;
+    }
+    // 3) Последний вариант — выделить адрес текстом, чтобы скопировать Ctrl+C
+    const codeEl = Array.from(document.querySelectorAll('code')).find((el) =>
+      el.textContent?.includes(TON_ADDRESS.slice(0, 12)),
+    );
+    if (codeEl) {
+      const range = document.createRange();
+      range.selectNodeContents(codeEl);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
     }
   };
 
