@@ -177,13 +177,13 @@ export default function Analysis() {
     }));
   };
 
-  const loadAnalysis = async () => {
+  const loadAnalysis = async (opts: { force?: boolean } = {}) => {
     if (!symbol) return;
     
     try {
       setLoading(true);
       setError(null);
-      const data = await api.getAnalysis(symbol, timeframe);
+      const data = await api.getAnalysis(symbol, timeframe, opts);
       setReport(data);
     } catch (err) {
       console.error('Ошибка загрузки анализа:', err);
@@ -204,7 +204,7 @@ export default function Analysis() {
   const liveCandle = useBybitLiveCandle(symbol, timeframe, () => setLastBarCloseTs(Date.now()));
   useEffect(() => {
     if (lastBarCloseTs === 0 || !symbol) return;
-    const t = setTimeout(() => { loadAnalysis(); }, 1500); // даём REST-кэшу обновиться
+    const t = setTimeout(() => { loadAnalysis({ force: true }); }, 1500); // даём бирже зафиксировать бар
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastBarCloseTs, symbol, timeframe]);

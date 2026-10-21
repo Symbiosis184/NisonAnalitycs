@@ -19,7 +19,7 @@
       style-src 'self' 'unsafe-inline';
       font-src 'self' data:;
       img-src 'self' data:;
-      connect-src 'self' https://api.bybit.com wss://stream.binance.com:9443;
+      connect-src 'self' https://api.bybit.com wss://stream.bybit.com wss://stream.binance.com:9443;
       object-src 'none';
       base-uri 'self';
       form-action 'none';

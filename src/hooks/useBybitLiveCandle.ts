@@ -5,6 +5,7 @@
 // запустить полный пересчёт анализа по новому закрытому свечному набору.
 import { useEffect, useRef, useState } from 'react';
 import { isValidSymbol } from '../utils/validation';
+import { toBybitInterval } from '../api/bybit';
 
 export interface LiveCandle {
   /** openTime бара, мс */
@@ -21,11 +22,10 @@ export interface LiveCandle {
 
 const WS_BASE = 'wss://stream.bybit.com/v5/public/spot';
 
-// Интервалы Bybit для потока kline (секунды)
-const INTERVAL_SEC: Record<string, string> = {
-  '1': '1', '5': '5', '15': '15', '15m': '15', '30': '30', '30m': '30',
-  '60': '60', '1H': '60', '240': '240', '4H': '240', 'D': 'D', '1D': 'D', 'W': 'W', '1W': 'W',
-};
+// Интервалы нормализуются через единый маппинг toBybitInterval (src/api/bybit.ts):
+// он понимает и канон приложения ('15m', '1H', 'D'), и числовые формы из URL/списков
+// ('15', '60', '240'). Раньше локальная таблица не содержала 'D'/'1D' — на дневном
+// ТФ (дефолт страницы) подписка вообще не создавалась, LIVE не появлялся никогда.
 
 /**
  * @param symbol торговый инструмент (например BTCUSDT)
@@ -49,10 +49,14 @@ export function useBybitLiveCandle(
     setLive(null);
     if (!symbol || !isValidSymbol(symbol)) return;
 
-    const sec = INTERVAL_SEC[timeframe];
+    const sec = toBybitInterval(timeframe);
     if (!sec) return; // неизвестный интервал — живых обновлений не будет
 
     let attempts = 0;
+    // Bybit закрывает бездействующее соединение через ~20 секунд (ping/pong).
+    // Прикладной ping каждые 15 секунд держит сокет живым — иначе постоянное
+    // переподключение и «мигающий»/отсутствующий статус LIVE.
+    let pingTimer: ReturnType<typeof setInterval> | null = null;
 
     const connect = () => {
       if (disposed.current) return;
@@ -70,13 +74,20 @@ export function useBybitLiveCandle(
           op: 'subscribe',
           args: [`kline.${sec}.${symbol}`],
         }));
+        if (pingTimer) clearInterval(pingTimer);
+        pingTimer = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ op: 'ping' }));
+        }, 15_000);
       };
 
       ws.onmessage = (ev) => {
         try {
           const msg = JSON.parse(ev.data);
-          if (msg.topic !== `kline.${sec}.${symbol}` || !msg.data) return;
-          const d = msg.data;
+          if (msg.op === 'pong' || (msg.success !== undefined && msg.topic === undefined)) return;
+          // Bybit присылает kline-обновления как data=[{...}] (массив из одного элемента)
+          const raw = Array.isArray(msg.data) ? msg.data[0] : msg.data;
+          if (msg.topic !== `kline.${sec}.${symbol}` || !raw) return;
+          const d = raw;
           const candle: LiveCandle = {
             start: Number(d.start),
             open: Number(d.open),
@@ -115,6 +126,7 @@ export function useBybitLiveCandle(
     return () => {
       disposed.current = true;
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+      if (pingTimer) clearInterval(pingTimer);
       const ws = wsRef.current;
       wsRef.current = null;
       if (ws) {

@@ -5,6 +5,13 @@ const SYMBOL_RE = /^[A-Z0-9]{3,20}$/;
 
 const ALLOWED_TIMEFRAMES = new Set(['1m', '5m', '15m', '30m', '1H', '4H', '1D', 'D', '1W', 'W']);
 
+// Числовые формы интервалов Bybit (секунды/минуты), встречающиеся в URL и
+// мульти-ТФ списках: '15' -> '15m', '60' -> '1H', '240' -> '4H' и т.д.
+const NUMERIC_TF_CANON: Record<string, string> = {
+  '1': '1m', '3': '5m', '5': '5m', '15': '15m', '30': '30m',
+  '60': '1H', '120': '4H', '240': '4H',
+};
+
 /**
  * Проверяет, что symbol — это безопасный идентификатор тикера (A-Z, 0-9).
  * Бросает исключение при недопустимом значении, чтобы предотвратить
@@ -26,9 +33,9 @@ export function isValidSymbol(symbol: unknown): boolean {
   return typeof symbol === 'string' && SYMBOL_RE.test(symbol.trim().toUpperCase());
 }
 
-/** Валидация таймфрейма по whitelist. */
+/** Валидация таймфрейма по whitelist (принимает канон '15m'/'1H'/'D' и числовые формы Bybit '15'/'60'/'240'). */
 export function isValidTimeframe(tf: unknown): tf is string {
-  return typeof tf === 'string' && ALLOWED_TIMEFRAMES.has(tf);
+  return typeof tf === 'string' && (ALLOWED_TIMEFRAMES.has(tf) || ALLOWED_TIMEFRAMES.has(NUMERIC_TF_CANON[tf] ?? ''));
 }
 
 /**

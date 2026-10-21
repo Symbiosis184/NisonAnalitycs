@@ -122,8 +122,8 @@ export function higherTimeframe(tf: string): string | null {
 }
 
 export class ApiClient {
-  async getAnalysis(symbol: string, timeframe: string = 'D'): Promise<AnalysisReport> {
-    const klines = await fetchKlines(symbol, timeframe, 250);
+  async getAnalysis(symbol: string, timeframe: string = 'D', opts: { force?: boolean } = {}): Promise<AnalysisReport> {
+    const klines = await fetchKlines(symbol, timeframe, 250, opts);
     const ticker = await fetch24hTicker(symbol).catch(() => null);
 
     const candles = klines.map((k) => new Candle({
