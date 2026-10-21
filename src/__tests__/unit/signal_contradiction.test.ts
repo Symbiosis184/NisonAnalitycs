@@ -78,6 +78,6 @@ describe('нет взаимоисключающих long+short в боковик
       // противоречие недопустимо
       expect(dirs.size).toBe(1);
     }
-    expect(['long', 'short'].some((d) => dirs.has(d)) ? true : true).toBe(true);
+    expect(dirs.size === 0 || dirs.size === 1).toBe(true);
   });
 });

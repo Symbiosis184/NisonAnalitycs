@@ -45,10 +45,11 @@ function computeEdgeReport(candles: Candle[], timeframe: string): EdgeReportDTO 
   try {
     // 1) Собираем «свежие» срабатывания детектора (signal formed at candle i).
     const events: Array<{ i: number; pattern: string; direction: 'long' | 'short'; bounds: FormationBounds }> = [];
+    signalGenerator.resetRun(); // новый прогон — чистый кэш «свежих событий»
     for (let i = 60; i < candles.length; i++) {
       const sigs = signalGenerator.findSignals(candles.slice(0, i + 1), timeframe);
       for (const s of sigs) {
-        if (s.meta.patternEndIdx !== i) continue;
+        if (!(s as import("../utils/signal_generator").Signal & { isFreshEvent?: boolean }).isFreshEvent) continue;
         events.push({
           i,
           pattern: s.pattern,

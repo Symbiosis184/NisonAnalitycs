@@ -61,7 +61,7 @@ describe('signalGenerator.findSignals — инварианты', () => {
     let total = 0;
     for (const seed of [1, 7, 42, 99, 2024, 31337]) {
       const signals = signalGenerator.findSignals(seededSeries(150, seed), 'D');
-      expect(signals.length).toBeLessThanOrEqual(5); // топ-5
+      expect(signals.length).toBeLessThanOrEqual(8); // топ-8 (FIX бэктест-аудита №2: лимит поднят, чтобы свежие события не вытеснялись)
       for (const s of signals) {
         assertSignalInvariants(s);
         total++;

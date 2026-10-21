@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fetchKlines, type Kline } from '../api/bybit';
 import { Candle } from '../utils/candle';
-import { signalGenerator } from '../utils/signal_generator';
+import { signalGenerator, type Signal } from '../utils/signal_generator';
 import { runBacktest, type BacktestResult, type FormationBounds } from '../utils/backtest';
 import { cycleCostFraction, type CostModel } from '../utils/costs';
 import { wilsonWinRate, expectancyCI, hasEdge } from '../utils/stats';
@@ -62,10 +62,15 @@ export default function BacktestPage() {
     // Собираем все срабатывания генератора по истории one-at-a-time.
     // Ключ tf задаёт пороги подтверждения (timeout/дистанция уровней) — фиксируем 'D'.
     const events: Array<{ i: number; pattern: string; direction: 'long' | 'short'; bounds: FormationBounds }> = [];
+    signalGenerator.resetRun(); // новый прогон — чистый кэш «свежих событий»
     for (let i = 60; i < candles.length; i++) {
       const sigs = signalGenerator.findSignals(candles.slice(0, i + 1), 'D');
       for (const s of sigs) {
-        if (s.meta.patternEndIdx !== i) continue; // только свежие сигналы этой свечи
+        // FIX бэктест-аудита №2: событие = ПЕРВОЕ появление формации в выдаче
+        // (момент подтверждения). Флаг isFreshEvent ставит генератор; раньше
+        // фильтр был `patternEndIdx === i`, что ловило только первый бар окна
+        // сканирования (за день до подтверждения) и давал пустую таблицу.
+        if (!(s as Signal & { isFreshEvent?: boolean }).isFreshEvent) continue;
         events.push({ i, pattern: s.pattern, direction: s.direction, bounds: { patternLow: s.meta.patternLow, patternHigh: s.meta.patternHigh } });
       }
     }

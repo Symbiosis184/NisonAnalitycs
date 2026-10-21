@@ -67,6 +67,41 @@ export interface Signal {
 }
 
 export class SignalGenerator {
+  // FIX бэктест-аудита №2: события «первого наблюдения» формации.
+  // findSignals сканирует окно последних 20 баров, поэтому одна и та же
+  // формация возвращается на каждом последующем баре окна; в one-at-a-time
+  // прогонах (Backtest.tsx, computeEdgeReport) фильтр «свежих» событий
+  // patternEndIdx === i ловил бы формацию только на её ПЕРВОМ баре окна —
+  // т.е. за день ДО подтверждения. Здесь фиксируем момент, когда пара
+  // (паттерн|направление|endIdx) появляется в выдаче впервые за прогон,
+  // и помечаем сигнал isFreshEvent. Потребители фильтруют по этому флагу:
+  // вход происходит сразу после подтверждения формации, без lookahead
+  // (весь контекст — только закрытые свечи до текущего бара).
+  // Кэш живёт между вызовами одного one-at-a-time прогона (слайсы растут от
+  // одного стартового бара → длина не убывает); при новом прогоне (длина
+  // уменьшилась) кэш сбрасывается автоматически.
+  private firstSeen = new Map<string, number>();
+  private lastRunLen = -1;
+  private markFresh(arr: Signal[], len: number): void {
+    if (len < this.lastRunLen) this.firstSeen.clear();
+    this.lastRunLen = len;
+    for (const s of arr) {
+      const key = `${s.pattern}|${s.direction}|${s.meta.patternEndIdx}`;
+      if (!this.firstSeen.has(key)) {
+        this.firstSeen.set(key, len);
+        (s as Signal & { isFreshEvent?: boolean }).isFreshEvent = true;
+      }
+    }
+  }
+
+  // Сброс кэша «свежих событий» — вызывается перед новым one-at-a-time прогоном
+  // (страница «Бэктест», computeEdgeReport), чтобы первый бар прогона гарантиро-
+  // ванно считался событием, даже если история пересеклась с предыдущим прогоном.
+  resetRun(): void {
+    this.firstSeen.clear();
+    this.lastRunLen = -1;
+  }
+
   // Оценка качества тени
   private shadowQuality(c: Candle, kind: 'hammer' | 'hanging' | 'star'): number {
     let ratio: number;
@@ -89,14 +124,34 @@ export class SignalGenerator {
     boundsOverride?: { patternLow: number; patternHigh: number; patternCandlesCount?: number; patternStartIdx?: number; patternEndIdx?: number }
   ): Signal | null {
     // Книжные границы формации (FIX аудита №4: берём ГРАНИЦЫ ПАТТЕРНА, а не одной свечи)
+    // FIX бэктест-аудита: раньше при boundsOverride границы брались с полного
+    // массива, но patternStartIdx/patternEndIdx перезаписывались относительными
+    // индексами короткого среза closed (closedCandles.length-1), из-за чего у
+    // потребителей, сверяющих endIdx с индексом бара на ПОЛНОМ массиве
+    // (Backtest.tsx, computeEdgeReport), никогда не было совпадения → 0 событий.
+    // Теперь override целиком авторитетен (он вычислен вызывающим на полном
+    // массиве со смещением i); если индексов нет — считаем их по closed.
     const endIdx = closedCandles.length - 1;
-    const bounds = PatternDetector.getFormationBounds(pattern, closedCandles, endIdx);
-    if (boundsOverride) {
-      bounds.patternLow = boundsOverride.patternLow;
-      bounds.patternHigh = boundsOverride.patternHigh;
-      if (boundsOverride.patternCandlesCount !== undefined) bounds.patternCandlesCount = boundsOverride.patternCandlesCount;
-      if (boundsOverride.patternStartIdx !== undefined) bounds.patternStartIdx = boundsOverride.patternStartIdx;
-      if (boundsOverride.patternEndIdx !== undefined) bounds.patternEndIdx = boundsOverride.patternEndIdx;
+    type Bounds = ReturnType<typeof PatternDetector.getFormationBounds>;
+    let bounds: Bounds;
+    if (boundsOverride && boundsOverride.patternEndIdx !== undefined) {
+      const eIdx = boundsOverride.patternEndIdx;
+      const cnt = boundsOverride.patternCandlesCount ?? 1;
+      bounds = {
+        patternLow: boundsOverride.patternLow,
+        patternHigh: boundsOverride.patternHigh,
+        patternCandlesCount: cnt,
+        patternStartIdx: boundsOverride.patternStartIdx ?? eIdx - (cnt - 1),
+        patternEndIdx: eIdx,
+      };
+    } else {
+      bounds = PatternDetector.getFormationBounds(pattern, closedCandles, endIdx);
+      if (boundsOverride) {
+        bounds.patternLow = boundsOverride.patternLow;
+        bounds.patternHigh = boundsOverride.patternHigh;
+        if (boundsOverride.patternCandlesCount !== undefined) bounds.patternCandlesCount = boundsOverride.patternCandlesCount;
+        if (boundsOverride.patternStartIdx !== undefined) bounds.patternStartIdx = boundsOverride.patternStartIdx;
+      }
     }
     const bookStop = direction === 'long' ? bounds.patternLow : bounds.patternHigh;
 
@@ -228,6 +283,23 @@ export class SignalGenerator {
     })();
 
     const signals: Signal[] = [];
+
+    // FIX бэктест-аудита: дедупликация по (паттерн|направление|endIdx).
+    // findSignals сканирует окно последних 20 баров и возвращает живые сигналы
+    // (pending/confirmed) повторно на каждом последующем баре. В one-at-a-time
+    // прогонах (страница «Бэктест», computeEdgeReport) это раздувало выборку, а
+    // фильтр «свежих» событий `patternEndIdx === i` не совпадал ни с одним
+    // сигналом из-за переиндексации границ формации коротким срезом closed в
+    // makeSignal. Итог — пустая таблица бэктеста. Дедуп + корректный endIdx
+    // решают обе проблемы.
+    const seen = new Set<string>();
+    const pushUnique = (s: Signal): void => {
+      const key = `${s.pattern}|${s.direction}|${s.meta.patternEndIdx}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      signals.push(s);
+    };
+
     
     // Определяем текущий тренд для контекстной фильтрации
     const currentTrend = getTrendMacro(candles, candles[candles.length - 1].close);
@@ -293,7 +365,7 @@ export class SignalGenerator {
           // Запрос «контекст рынка»: порог RR считается по СКОРРЕКТИРОВАННОМУ пути
           // adjustedRR (если передан контекст) — формальный RR больше не самоцель.
           if ((signal.path?.adjustedRR ?? signal.rr) >= 2) {
-            signals.push(signal);
+            pushUnique(signal);
           }
         }
       }
@@ -343,7 +415,7 @@ export class SignalGenerator {
             // FIX аудита №7: неподтверждённые сигналы возвращаются с confirmed=false
             // Порог — по path-aware adjustedRR при наличии рыночного контекста.
             if ((signal.path?.adjustedRR ?? signal.rr) >= 2) {
-              signals.push(signal);
+              pushUnique(signal);
             }
           }
         }
@@ -386,7 +458,7 @@ export class SignalGenerator {
           // FIX аудита №7: неподтверждённые сигналы возвращаются с confirmed=false
           // Порог — по path-aware adjustedRR при наличии рыночного контекста.
           if ((signal.path?.adjustedRR ?? signal.rr) >= 2) {
-            signals.push(signal);
+            pushUnique(signal);
           }
         }
       }
@@ -395,14 +467,19 @@ export class SignalGenerator {
     // FIX аудита №8: детерминированная сортировка.
     // Аудит №11: приоритет жизненного цикла — подтверждённые > ожидает > истёк > отменён.
     const RANK: Record<string, number> = { confirmed: 3, pending: 2, expired: 1, invalidated: 0 };
-    return signals
-      .sort((a, b) =>
-        (RANK[b.status ?? 'pending'] - RANK[a.status ?? 'pending']) ||
-        Number(b.confirmed) - Number(a.confirmed) ||
-        b.quality - a.quality ||
-        b.rr - a.rr
-      )
-      .slice(0, 5);
+    // FIX бэктест-аудита №2: сортировка ДО среза лимита — иначе «свежие» события
+    // (первое появление формации) могли вылетать из top-5 по quality и бэктест
+    // терял их навсегда. Первыми идут свежие события этого прогона.
+    signals.sort((a, b) =>
+      (Number(Boolean((b as Signal & { isFreshEvent?: boolean }).isFreshEvent)) -
+        Number(Boolean((a as Signal & { isFreshEvent?: boolean }).isFreshEvent))) ||
+      (RANK[b.status ?? 'pending'] - RANK[a.status ?? 'pending']) ||
+      Number(b.confirmed) - Number(a.confirmed) ||
+      b.quality - a.quality ||
+      b.rr - a.rr
+    );
+    this.markFresh(signals, candles.length);
+    return signals.slice(0, 8);
   }
 
   // Для обратной совместимости
