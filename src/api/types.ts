@@ -41,6 +41,8 @@ export interface SignalDTO {
   rr: number;
   quality: number;
   timestamp: number;
+  /** openTime (мс) бара, на котором сигнал был впервые обнаружен — маркер на графике */
+  bar_time?: number;
   confirmed: boolean;
   /** Жизненный цикл по Нисону (аудит №11): pending/confirmed/invalidated/expired */
   lifecycle_status?: 'pending' | 'confirmed' | 'invalidated' | 'expired';

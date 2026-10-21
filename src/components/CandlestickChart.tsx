@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
-import type { CandleDTO, PatternDTO, ZoneDTO } from '../api/types';
+import type { CandleDTO, PatternDTO, ZoneDTO, SignalDTO } from '../api/types';
 
 // Единые типы данных графика — из общего контракта src/api/types.ts
 type Candle = CandleDTO;
@@ -30,6 +30,7 @@ interface Props {
   ema50?: number[];
   ema200?: number[];
   patterns?: Pattern[];
+  signals?: SignalDTO[];
   support?: Zone[];
   resistance?: Zone[];
   height?: number;
@@ -42,6 +43,7 @@ export default function CandlestickChart({
   ema50, 
   ema200,
   patterns = [],
+  signals = [],
   support = [],
   resistance = [],
   height = 500,
@@ -190,6 +192,60 @@ export default function CandlestickChart({
     addZoneLines(support.filter(z => z.strong), 'support');
     addZoneLines(resistance.filter(z => z.strong), 'resistance');
 
+    // ── Сигналы: линии входа/стопа/цели + маркер направления на баре сигнала ──
+    // Рисуем только живые сигналы (pending/confirmed): invalidated/expired — мусор истории.
+    const liveSignals = signals.filter(
+      (s) => (s.lifecycle_status ?? (s.confirmed ? 'confirmed' : 'pending')) !== 'invalidated'
+        && (s.lifecycle_status ?? '') !== 'expired',
+    );
+    // lightweight-charts не допускает двух маркеров с одинаковым time —
+    // на одном баре может быть несколько сигналов: объединяем в один,
+    // при конфликте long/short ставим круг.
+    const markerByTime = new Map<number, { dir: 'long' | 'short' | 'mixed' }>();
+    for (const sig of liveSignals.slice(-5)) {
+      const isLong = sig.direction === 'long';
+      candlestickSeries.createPriceLine({
+        price: sig.entry_price,
+        color: 'rgba(148,163,184,0.7)',
+        lineWidth: 1,
+        lineStyle: 1, // пунктир: вход
+        axisLabelVisible: true,
+        title: `${isLong ? '▲' : '▼'} ${sig.pattern} · вход`,
+      });
+      candlestickSeries.createPriceLine({
+        price: sig.stop_loss,
+        color: 'rgba(239,68,68,0.6)',
+        lineWidth: 1,
+        lineStyle: 2,
+        axisLabelVisible: true,
+        title: 'стоп',
+      });
+      candlestickSeries.createPriceLine({
+        price: sig.target,
+        color: 'rgba(34,197,94,0.6)',
+        lineWidth: 1,
+        lineStyle: 2,
+        axisLabelVisible: true,
+        title: `цель 1:${sig.rr.toFixed(1)}`,
+      });
+      if (sig.bar_time) {
+        const t = Math.floor(sig.bar_time / 1000);
+        const prev = markerByTime.get(t);
+        markerByTime.set(t, !prev ? { dir: sig.direction } : prev.dir === sig.direction ? prev : { dir: 'mixed' });
+      }
+    }
+    const signalMarkers = [...markerByTime.entries()].map(([t, { dir }]) => ({
+      time: t as any,
+      position: (dir === 'short' ? 'aboveBar' : 'belowBar') as 'aboveBar' | 'belowBar',
+      color: dir === 'long' ? '#22c55e' : dir === 'short' ? '#ef4444' : '#94a3b8',
+      shape: dir === 'long' ? 'arrowUp' as const : dir === 'short' ? 'arrowDown' as const : 'circle' as const,
+      text: '',
+      size: 1,
+    })).sort((a, b) => (a.time as number) - (b.time as number));
+    if (signalMarkers.length > 0) {
+      createSeriesMarkers(candlestickSeries, signalMarkers);
+    }
+
     // ── Паттерны: компактные маркеры БЕЗ текста, название — в tooltip ─────
     // Стрелки уменьшены (size 1), текст убран с canvas. При наведении мыши
     // (или касании на мобильных) рядом с маркером всплывает тёмная плашка
@@ -328,7 +384,7 @@ export default function CandlestickChart({
         chartRef.current = null;
       }
     };
-  }, [candles, ema20, ema50, ema200, patterns, support, resistance, height]);
+  }, [candles, ema20, ema50, ema200, patterns, signals, support, resistance, height]);
 
   // ── Тихое live-обновление последнего бара (WebSocket) ─────────────────────
   // Не пересоздаём график: обновляем только OHLCV текущего незакрытого бара

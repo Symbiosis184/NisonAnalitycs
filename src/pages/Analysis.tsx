@@ -431,6 +431,7 @@ export default function Analysis() {
         <CandlestickChart
           candles={report.candles}
           patterns={report.patterns}
+          signals={report.signals}
           support={report.support}
           resistance={report.resistance}
           height={chartHeight}

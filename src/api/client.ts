@@ -253,6 +253,8 @@ export class ApiClient {
         rr: s.rr,
         quality: s.quality,
         timestamp: s.timestamp,
+        // openTime бара подтверждения формации — для маркера сигнала на графике
+        bar_time: candles[s.meta?.patternEndIdx ?? -1]?.time ?? s.timestamp,
         confirmed: s.confirmed,
         lifecycle_status: s.status,
         story: s.story,
