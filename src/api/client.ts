@@ -6,6 +6,7 @@ import { signalGenerator } from '../utils/signal_generator';
 import { ZoneVoter, timeframeKey } from '../utils/zone_voter';
 import { detectTrendStart, getTrendContext, getTrendMacro, type TrendContext } from '../utils/trend_detection';
 import { detectRegime } from '../utils/regime';
+import { splitLiveBar } from '../utils/live_bar';
 import { planPosition, toPlanDTO } from '../utils/position_sizing';
 import { loadRiskSettings } from '../utils/risk_settings';
 import { detectPhase } from '../utils/wyckoff';
@@ -135,6 +136,12 @@ export class ApiClient {
       volume: k.volume,
     }));
 
+    // Фикс аномалий live-анализа: последний бар в истории Bybit НЕЗАКРЫТЫЙ.
+    // Структурные алгоритмы (режим рынка, свинги Нисона, голоса зон, паттерны,
+    // HTF-тренд) обязаны видеть только закрытые бары — иначе режим «мерцает»
+    // на каждом WS-тикке, а зоны/сигналы дёргаются. Индикаторы (EMA/RSI/MACD),
+    // цена и тикер-фолбэк считаются по полной истории (включая живой бар).
+    const { closed: closedCandles } = splitLiveBar(candles);
     const closes = candles.map((c: Candle) => c.close);
     const currentPrice = closes[closes.length - 1];
     
@@ -156,14 +163,14 @@ export class ApiClient {
     // (EMA/RSI/MACD — только визуальный контекст). Consensus считается ниже
     // по подтверждённым сценариям (свечи + объём + уровни S/R).
     // Режим рынка/тренд — структурный: свинги HH/HL vs LH/LL (гл. 13), MA — вторичны.
-    const trend = getTrendContext(candles);
+    const trend = getTrendContext(closedCandles);
     // Сила тренда — структурная (по Нисону): насколько выражен направленный
     // импульс относительно шума. Считается по последним 20 барам: суммарное
     // перемещение цены (net move) против суммарных внутрибарных диапазонов.
     // Направленный тренд => близко к 100%; флэт/шум => близко к 0%.
     // Раньше использовалась дивергенция EMA20/EMA50 с коэффициентом ×4: при
     // spread <0.05% округление до целого давало вечные «0%» даже в тренде.
-    const dirWindow = candles.slice(-21);
+    const dirWindow = closedCandles.slice(-21);
     let netMove = 0;
     let pathLength = 0;
     for (let i = 1; i < dirWindow.length; i++) {
@@ -180,10 +187,11 @@ export class ApiClient {
     const trendStrengthPct = Math.min(100, Math.max(0, rawStrength));
     
     // Определение зон поддержки/сопротивления по методологии Нисона
-    const zones = ZoneVoter.collect(currentPrice, candles, timeframeKey(timeframe));
+    const zones = ZoneVoter.collect(currentPrice, closedCandles, timeframeKey(timeframe));
     
-    // Детекция паттернов по Нисону
-    const detectedPatterns = detectPatterns(candles, timeframe);
+    // Детекция паттернов по Нисону — только по закрытым барам (подтверждение
+    // формации фактом закрытия; незакрытый бар порождает призрачные паттерны).
+    const detectedPatterns = detectPatterns(closedCandles, timeframe);
     const apiPatterns: PatternDTO[] = detectedPatterns.map(p => ({
       name: p.name,
       type: toPatternDirection(p.type),
@@ -196,19 +204,21 @@ export class ApiClient {
     }));
     
     // Многомерный объём + фазовый контекст (запрос пользователя): профиль объёма
-    // (POC/VA/HVN/LVN), proxy-дельта агрессии и фаза Вайкоффа. Считаются по закрытым
-    // свечам до текущего момента — без lookahead.
-    const vprofile = buildVolumeProfile(candles, 120);
-    const deltaSummary = summarizeDelta(candles, 60);
+    // (POC/VA/HVN/LVN), proxy-дельта агрессии и фаза Вайкоффа. Считаются по ЗАКРЫТЫМ
+    // свечам — без lookahead и без мерцания незакрытого бара.
+    const vprofile = buildVolumeProfile(closedCandles, 120);
+    const deltaSummary = summarizeDelta(closedCandles, 60);
 
     // Верификация преимущества (пункт 3 запроса): когорты по режимам + деградация 90д.
-    // Считается на той же истории без lookahead; при нехватке наблюдений — null.
-    const edgeReport = computeEdgeReport(candles, timeframe);
+    // Считается на закрытых барах без lookahead; при нехватке наблюдений — null.
+    const edgeReport = computeEdgeReport(closedCandles, timeframe);
 
-    // Генерация торговых сигналов через SignalGenerator
+    // Генерация торговых сигналов через SignalGenerator (только закрытые бары:
+    // сигнал формируется фактом ЗАКРЫТИЯ бара — живой незакрытый бар не должен
+    // порождать «черновики», которые исчезают к концу интервала).
     // opts.context включает «путь цены» (S/R-зоны + HVN) и фазы Вайкоффа в фильтрацию RR.
-    const marketPhase = detectPhase(candles);
-    const detectedSignals = signalGenerator.findSignals(candles, timeframe, {
+    const marketPhase = detectPhase(closedCandles);
+    const detectedSignals = signalGenerator.findSignals(closedCandles, timeframe, {
       context: { zones, volumeBands: vprofile.bands },
     });
 
@@ -221,9 +231,9 @@ export class ApiClient {
     try {
       if (!htfTf) throw new Error('no HTF mapping');
       const htfKlines = await fetchKlines(symbol, htfTf, 250);
-      htfCandles = htfKlines.map((k) => new Candle({
+      htfCandles = splitLiveBar(htfKlines.map((k) => new Candle({
         time: k.openTime, open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume,
-      }));
+      }))).closed; // последний недельный/дневной бар незакрыт — не участвует в HTF-тренде
     } catch {
       htfCandles = null; // нет HTF-данных — не блокируем основной отчёт (fallback в UI)
     }
@@ -254,7 +264,7 @@ export class ApiClient {
         quality: s.quality,
         timestamp: s.timestamp,
         // openTime бара подтверждения формации — для маркера сигнала на графике
-        bar_time: candles[s.meta?.patternEndIdx ?? -1]?.time ?? s.timestamp,
+        bar_time: closedCandles[s.meta?.patternEndIdx ?? -1]?.time ?? s.timestamp,
         confirmed: s.confirmed,
         lifecycle_status: s.status,
         story: s.story,
@@ -293,7 +303,7 @@ export class ApiClient {
     // Тип Regime в DTO = TrendContext (русские метки): UI (Analysis/Dashboard) и
     // getTrendColor сравнивают именно их; английские значения detectRegime —
     // внутренний слой (edge_verification когорты), в DTO попадать не должны.
-    const regimeInfo = detectRegime(candles);
+    const regimeInfo = detectRegime(closedCandles);
     const regime: Regime = trend;
     const regimeLabel =
       regime === 'БОКОВИК' ? 'Боковик (флэт)' : regime === 'ВОСХОДЯЩИЙ' ? 'Восходящий тренд' : 'Нисходящий тренд';
@@ -309,7 +319,7 @@ export class ApiClient {
     // Консенсус = СОГЛАСИЕ факторов в одну сторону, а не сумма голосов
     // (см. src/utils/consensus.ts): противоречивые long+short гасят друг друга
     // и дают низкий балл — раньше «много шума» давало 5/5 («с ума сошёл»).
-    const freshCut = candles.length - 20;
+    const freshCut = closedCandles.length - 20;
     const freshConfirmed = detectedSignals.filter((s) => {
       if (s.status !== 'confirmed') return false;
       const endIdx = s.meta?.patternEndIdx ?? -1;
@@ -384,7 +394,7 @@ export class ApiClient {
       },
       trend_analysis: {
         // Реальная детекция старта тренда (движок trend_detection)
-        trendStart: detectTrendStart(candles, currentPrice),
+        trendStart: detectTrendStart(closedCandles, currentPrice),
         bookTrend: regime,
       },
       ...(edgeReport ? { edge: edgeReport } : {}),
@@ -411,7 +421,9 @@ export class ApiClient {
           }));
           if (candles.length < 30) return null;
           const price = candles[candles.length - 1].close;
-          const zones = ZoneVoter.collect(price, candles, timeframeKey(tf));
+          // Зоны — по закрытым барам: незакрытый хвостовой бар смещал свинги и
+          // зоны «дёргались» между обновлениями мульти-ТФ.
+          const zones = ZoneVoter.collect(price, splitLiveBar(candles).closed, timeframeKey(tf));
           return {
             timeframe: tf,
             scale: timeframeKey(tf),
