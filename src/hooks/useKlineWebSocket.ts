@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { CandleDTO } from '../api/types';
 import { assertValidSymbol, isValidTimeframe } from '../utils/validation';
 
-const WS_URL = 'wss://stream.bybit.com/v5/public/spot';
+const WS_URL = "wss://stream.bybit.com/v5/public/linear";
 
 // Маппинг UI-таймфреймов в интервалы Bybit (совпадает с INTERVAL_MAP в api/bybit.ts)
 const INTERVAL_MAP: Record<string, string> = {
