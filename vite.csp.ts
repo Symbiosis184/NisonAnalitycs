@@ -15,7 +15,7 @@ export const DEV_CSP = [
   "font-src 'self' data:",
   "img-src 'self' data:",
   // Запросы к публичным API бирж
-  "connect-src 'self' https://api.bybit.com wss://stream.binance.com:9443 ws: http://localhost:*",
+  "connect-src 'self' https://api.bybit.com wss://stream.bybit.com wss://stream.binance.com:9443 ws: http://localhost:*",
   "object-src 'none'",
   "frame-ancestors *", // приложение может работать внутри iframe песочницы
   "base-uri 'self'",

@@ -36,6 +36,11 @@ fi
 dpkg --configure -a 2>/dev/null || true
 
 echo "==> 4/6 Сборка фронтенда из GitHub (main)"
+# Гарантируем, что скрипт запущен не из каталога сборки (иначе rm -rf удалит текущий каталог
+# и git упадёт с "Unable to read current working directory")
+if [ "$PWD" = "$BUILD_DIR" ] || [[ "$PWD" == "$BUILD_DIR"/* ]]; then
+    cd /root
+fi
 rm -rf "$BUILD_DIR"
 git clone --depth 50 "$REPO" -b main "$BUILD_DIR"
 cd "$BUILD_DIR"
@@ -49,6 +54,8 @@ cp -r dist/* "$WEB_ROOT/"
 chown -R www-data:www-data "$WEB_ROOT" && chmod -R a+rX "$WEB_ROOT"
 
 echo "==> 6/6 Настройка nginx + запуск"
+# Удаляем старые/конфликтующие конфиги, чтобы не было "duplicate default server for 0.0.0.0:80"
+rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-enabled/nison-analytics
 cat > /etc/nginx/sites-available/nison <<'EOF'
 server {
     listen 80 default_server;
@@ -66,7 +73,7 @@ server {
         add_header Cache-Control "public, immutable";
     }
 
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://api.bybit.com wss://stream.binance.com:9443 https://stream.binance.com; img-src 'self' data:; font-src 'self' data:;" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://api.bybit.com wss://stream.bybit.com wss://stream.binance.com:9443 https://stream.binance.com; img-src 'self' data:; font-src 'self' data:;" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "no-referrer" always;
 
