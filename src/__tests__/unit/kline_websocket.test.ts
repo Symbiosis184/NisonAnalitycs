@@ -73,10 +73,12 @@ describe('useKlineWebSocket', () => {
     const ws = FakeWebSocket.instances[0];
     expect(result.current.connected).toBe(false);
 
+    // Подключён, но данных ещё нет → LIVE не показываем (защита от ложного LIVE)
     act(() => { ws.emitOpen(); });
-    expect(result.current.connected).toBe(true);
+    expect(result.current.connected).toBe(false);
 
     act(() => { ws.emitMessage(snapshotMsg(baseCandle)); });
+    expect(result.current.connected).toBe(true);
     expect(result.current.liveCandle).toEqual({
       time: baseCandle.start, open: 100, high: 102, low: 99, close: 101, volume: 10,
     });
@@ -113,9 +115,33 @@ describe('useKlineWebSocket', () => {
     const { result } = renderHook(() => useKlineWebSocket('SOLUSDT', '1m'));
     const ws = FakeWebSocket.instances[0];
     act(() => { ws.emitOpen(); });
+    act(() => { ws.emitMessage(snapshotMsg(baseCandle)); });
     expect(result.current.connected).toBe(true);
     act(() => { ws.onclose?.(); });
     expect(result.current.connected).toBe(false);
+  });
+
+  it('для таймфрейма "D" подписывается на интервал "D" (топик kline.D, как у Bybit)', () => {
+    const { result } = renderHook(() => useKlineWebSocket('SOLUSDT', 'D'));
+    const ws = FakeWebSocket.instances[0];
+    act(() => { ws.emitOpen(); });
+    expect(JSON.parse(ws.sent[0])).toEqual({ op: 'subscribe', args: ['kline.D.SOLUSDT'] });
+    // Данные приходят в топик kline.D — индикатор должен перейти в LIVE
+    act(() => {
+      ws.emitMessage({ topic: 'kline.D.SOLUSDT', type: 'snapshot', ts: Date.now(), data: [baseCandle] });
+    });
+    expect(result.current.connected).toBe(true);
+  });
+
+  it('для таймфрейма "1H" подписывается на интервал "60" (топик kline.60)', () => {
+    const { result } = renderHook(() => useKlineWebSocket('SOLUSDT', '1H'));
+    const ws = FakeWebSocket.instances[0];
+    act(() => { ws.emitOpen(); });
+    expect(JSON.parse(ws.sent[0])).toEqual({ op: 'subscribe', args: ['kline.60.SOLUSDT'] });
+    act(() => {
+      ws.emitMessage({ topic: 'kline.60.SOLUSDT', type: 'snapshot', ts: Date.now(), data: [baseCandle] });
+    });
+    expect(result.current.connected).toBe(true);
   });
 
   it('не создаёт соединение при недопустивом symbol/timeframe', () => {

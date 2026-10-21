@@ -83,6 +83,17 @@ server {
 EOF
 ln -sf /etc/nginx/sites-available/nison /etc/nginx/sites-enabled/nison
 rm -f /etc/nginx/sites-enabled/default
+# Страховка от "duplicate default server": если в sites-enabled остались другие
+# конфиги с "listen 80 default_server" (например, старый nison-analytics),
+# убираем у них default_server — основной сайт задаёт его сам.
+for f in /etc/nginx/sites-enabled/*; do
+    [ "$f" = "/etc/nginx/sites-enabled/nison" ] && continue
+    [ -e "$f" ] || continue
+    if grep -q "default_server" "$f"; then
+        sed -i 's/ default_server//g' "$f"
+        echo "    removed duplicate default_server from $f"
+    fi
+done
 nginx -t
 systemctl enable --now nginx 2>/dev/null || service nginx start
 systemctl reload nginx 2>/dev/null || nginx -s reload

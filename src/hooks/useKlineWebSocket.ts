@@ -11,7 +11,12 @@ import { assertValidSymbol, isValidTimeframe } from '../utils/validation';
 // индикатор LIVE не появляется.
 const WS_URL = 'wss://stream.bybit.com/v5/public/spot';
 
-// Маппинг UI-таймфреймов в интервалы Bybit (совпадает с INTERVAL_MAP в api/bybit.ts)
+// Маппинг UI-таймфреймов в интервалы Bybit.
+// ВАЖНО: для WebSocket-топиков Bybit использует канонические имена интервалов
+// (минуты: "1","5","15","30"; часы: "60","240"; дни/недели: "D","W").
+// REST /v5/market/kline принимает и "1D", и "D" — а вот WS-подписка на
+// несуществующий топик (например kline.1.SOLUSDT вместо kline.60.SOLUSDT для 1H)
+// молча не возвращает данных, из-за чего индикатор LIVE никогда не появлялся.
 const INTERVAL_MAP: Record<string, string> = {
   '1m': '1',
   '5m': '5',
@@ -65,6 +70,9 @@ export function useKlineWebSocket(symbol: string | undefined, timeframe: string)
   const [liveCandle, setLiveCandle] = useState<CandleDTO | null>(null);
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  // Флаг «получены живые данные»: статус LIVE показывается только когда поток
+  // не просто подключён, но и реально присылает клайны выбранного таймфрейма.
+  const [receiving, setReceiving] = useState(false);
 
   // Валидация до формирования URL потока (защита от инъекции в topic)
   let safeSymbol: string | null = null;
@@ -81,6 +89,7 @@ export function useKlineWebSocket(symbol: string | undefined, timeframe: string)
 
   useEffect(() => {
     setLiveCandle(null);
+    setReceiving(false);
     if (!topic) return;
 
     let disposed = false;
@@ -133,6 +142,7 @@ export function useKlineWebSocket(symbol: string | undefined, timeframe: string)
               close: parseFloat(d.close),
               volume: parseFloat(d.volume),
             });
+            setReceiving(true);
           }
         } catch {
           // повреждённое сообщение — игнорируем
@@ -161,10 +171,11 @@ export function useKlineWebSocket(symbol: string | undefined, timeframe: string)
         wsRef.current = null;
       }
       setConnected(false);
+      setReceiving(false);
     };
   }, [topic]);
 
-  return { liveCandle, connected };
+  return { liveCandle, connected: connected && receiving };
 }
 
 /**
