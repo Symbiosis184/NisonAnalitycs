@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { X, Copy, Check, Heart } from 'lucide-react';
 import QRCode from 'qrcode';
 
-/** Кошелёк TON (address version 0x11 — стандартный wallet-адрес сети TON). */
+/** Кошелёк GRAM (TON-адрес для приёма GRAMUSDT в сети The Open Network). */
 const TON_ADDRESS = 'UQC1vSZHIqeUse_Zsql534hbGKRQEBFgdlk6nEtkKbLo5HX6';
 /** Deep-link кошелька TON: открывается Tonkeeper/TON Wallet по QR. */
 const TON_LINK = `ton://transfer/${TON_ADDRESS}`;
@@ -86,7 +86,7 @@ export default function SupportModal({ open, onClose }: Props) {
         </div>
         <p className="text-sm text-gray-400 mb-5">
           Nison Analytics развивается бесплатно. Если анализ полезен — вы можете поддержать
-          развитие проекта переводом TON в сети The Open Network.
+          развитие проекта переводом GRAM в сети The Open Network.
         </p>
 
         {/* QR с deep-link ton://transfer/<адрес> — сканируется Tonkeeper и другими кошельками TON */}
@@ -95,7 +95,7 @@ export default function SupportModal({ open, onClose }: Props) {
             <img
               ref={imgRef}
               src={qrDataUrl}
-              alt="QR-код для отправки TON"
+              alt="QR-код для отправки GRAM"
               className="w-48 h-48 rounded-xl border-4 border-white bg-white p-1"
             />
           ) : (
@@ -113,7 +113,7 @@ export default function SupportModal({ open, onClose }: Props) {
         {/* Адрес + копирование */}
         <div className="rounded-lg border border-gray-800 bg-[#0a0e17] p-3">
           <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">
-            Адрес кошелька TON
+            Адрес кошелька GRAM
           </div>
           <div className="flex items-center gap-2">
             <code className="flex-1 break-all text-xs text-amber-300 font-mono leading-relaxed">
@@ -135,7 +135,7 @@ export default function SupportModal({ open, onClose }: Props) {
         </div>
 
         <p className="text-[10px] text-gray-600 mt-4 text-center">
-          Переводите только USDT/TON в сети TON. Отправка в другой сети приведёт к потере средств.
+          Переводите только GRAMUSDT в сети TON. Отправка в другой сети приведёт к потере средств.
         </p>
       </div>
     </div>
