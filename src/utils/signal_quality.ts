@@ -15,7 +15,7 @@
 import { Candle } from './candle';
 import { VolumeAnalyzer } from './pattern_engine';
 import { getTrendContext, getTrendMacro } from './trend_detection';
-import { matchesPatternId, PatternId } from './pattern_ids';
+import { matchesPatternId, PatternId, isReversalPatternName } from './pattern_ids';
 import type { SignalStatus } from './signal_lifecycle';
 import { candleDelta } from './volume_profile';
 
@@ -34,16 +34,16 @@ const SHADOW_MODELS: readonly PatternId[] = [
   'HAMMER', 'IMPERFECT_HAMMER', 'INVERTED_HAMMER', 'HANGING_MAN', 'SHOOTING_STAR',
 ];
 
-/** Разворотные модели требуют выраженного предшествующего тренда (Нисон, гл. 3) */
-const REVERSAL_MODELS: readonly PatternId[] = [
-  'BULLISH_ENGULFING', 'BEARISH_ENGULFING', 'DARK_CLOUD_COVER', 'LIGHTING_AT_THE_WELL',
-  'MORNING_STAR', 'EVENING_STAR', 'ABANDONED_BABY_BOTTOM', 'ABANDONED_BABY_TOP',
-  'HAMMER', 'IMPERFECT_HAMMER', 'INVERTED_HAMMER', 'HANGING_MAN', 'SHOOTING_STAR',
-  'TWEEZER_BOTTOM', 'TWEEZER_TOP',
-];
-
+/**
+ * Разворотные модели требуют выраженного предшествующего тренда (Нисон, гл. 3).
+ * FIX противоречий сигналов: список больше НЕ дублируется локально — единый
+ * канонический источник pattern_ids.REVERSAL_PATTERN_IDS используется и здесь,
+ * и в контекстной фильтрации signal_generator. Раньше списки различались
+ * (харами/толчки/башни/три горы), из-за чего одна формация получала взаимо-
+ * исключающие трактовки трендового контекста в двух слоях анализа.
+ */
 export function isReversalModel(pattern: string): boolean {
-  return matchesPatternId(pattern, REVERSAL_MODELS);
+  return isReversalPatternName(pattern);
 }
 
 /**

@@ -125,3 +125,30 @@ export function matchesPatternId(patternName: string, ids: readonly PatternId[])
   const id = getPatternId(patternName);
   return id !== null && ids.includes(id);
 }
+
+/**
+ * Каноническая классификация моделей Нисона: РАЗВОРОТНЫЕ vs ПРОДОЛЖЕНИЕ.
+ * Единый источник истины — раньше signal_generator и signal_quality имели
+ * РАЗНЫЕ списки разворотов, из-за чего одна и та же формация фильтровалась
+ * генератором как «разворот против тренда», а качество мерилось по ней как
+ * по «продолжению по тренду» → взаимоисключающие сценарии в одном отчёте.
+ */
+export const REVERSAL_PATTERN_IDS: readonly PatternId[] = [
+  // односвечные теневые развороты (гл. 3)
+  'HAMMER', 'IMPERFECT_HAMMER', 'INVERTED_HAMMER', 'HANGING_MAN', 'SHOOTING_STAR',
+  // двухсвечные развороты (гл. 4)
+  'BULLISH_ENGULFING', 'BEARISH_ENGULFING', 'DARK_CLOUD_COVER', 'LIGHTING_AT_THE_WELL',
+  'TWEEZER_BOTTOM', 'TWEEZER_TOP',
+  // трёхсвечные развороты (гл. 5–6)
+  'MORNING_STAR', 'EVENING_STAR', 'ABANDONED_BABY_BOTTOM', 'ABANDONED_BABY_TOP',
+  'THREE_MOUNTAINS', 'THREE_RIVERS', 'TOWER_TOP', 'TOWER_BOTTOM',
+  'LAST_EGULFING_BOTTOM', 'LAST_EGULFING_TOP',
+  'THRUSTING', 'DOUBLE_THRUSTING_BULL',
+  // харами — разворотная природа (Нисон относит к разворотам при слабом теле)
+  'BULL_HARAMI', 'BEAR_HARAMI', 'BULL_HARAMI_CROSS', 'BEAR_HARAMI_CROSS',
+];
+
+/** Разворотная ли модель (по канону Нисона)? Неизвестные имена — не разворот. */
+export function isReversalPatternName(patternName: string): boolean {
+  return matchesPatternId(patternName, REVERSAL_PATTERN_IDS);
+}

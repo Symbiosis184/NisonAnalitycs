@@ -5,7 +5,7 @@ import { PatternDetector, VolumeAnalyzer } from './pattern_engine';
 import { getTrendContext, getTrendMacro } from './trend_detection';
 import { ema, atr } from './indicators';
 import { patternStory } from './patterns';
-import { matchesPatternId, PatternId } from './pattern_ids';
+import { isReversalPatternName, PatternId } from './pattern_ids';
 import { nearestStructuralTarget } from './nison_targets';
 import { resolveSignalStatus, SignalStatus } from './signal_lifecycle';
 import { computeSignalQuality } from './signal_quality';
@@ -266,11 +266,8 @@ export class SignalGenerator {
           // Контекстная фильтрация: сигнал должен соответствовать тренду
           // Разворотные паттерны (Morning Star, Evening Star и т.д.) могут идти против тренда
           // П.7: сверка по стабильным ID моделей вместо includes по подстрокам
-          const isReversalPattern = matchesPatternId(check.name, [
-            'MORNING_STAR', 'EVENING_STAR',
-            'ABANDONED_BABY_BOTTOM', 'ABANDONED_BABY_TOP',
-            'TOWER_TOP', 'TOWER_BOTTOM', 'THREE_MOUNTAINS', 'THREE_RIVERS',
-          ]);
+          // FIX противоречий: единый канонический классификатор разворотов
+          const isReversalPattern = isReversalPatternName(check.name);
           
           if (!isReversalPattern) {
             // Для продолжительных паттернов проверяем соответствие тренду
@@ -319,9 +316,8 @@ export class SignalGenerator {
             // Поглощение, завеса и просвет - РАЗВОРОТНЫЕ паттерны
             // Они должны идти ПРОТИВ текущего тренда
             // П.7: сверка по стабильным ID моделей
-            const isReversalPattern = matchesPatternId(check.name, [
-              'BULLISH_ENGULFING', 'BEARISH_ENGULFING', 'DARK_CLOUD_COVER', 'LIGHTING_AT_THE_WELL',
-            ]);
+            // FIX противоречий: единый канонический классификатор разворотов
+            const isReversalPattern = isReversalPatternName(check.name);
             
             if (isReversalPattern) {
               // Разворотные паттерны должны идти против тренда
@@ -363,16 +359,18 @@ export class SignalGenerator {
 
       for (const { check, direction } of oneCandlePatterns) {
         if (check.found) {
-          // Контекстная фильтрация для односвечных паттернов
-          // Молот и перевёрнутый молот - разворотные, могут идти против тренда
-          // Повешенный и падающая звезда - продолжительные, должны соответствовать тренду
-          // П.7: включает обычный, несовершенный и перевёрнутый молот
-          const isReversalPattern = matchesPatternId(check.name, ['HAMMER', 'IMPERFECT_HAMMER', 'INVERTED_HAMMER']);
-          
-          if (!isReversalPattern) {
-            if (direction === 'long' && patternTrend === 'НИСХОДЯЩИЙ') continue;
-            if (direction === 'short' && patternTrend === 'ВОСХОДЯЩИЙ') continue;
-          }
+          // Контекстная фильтрация односвечных паттернов.
+          // FIX противоречий: раньше молот считался разворотом, а повешенный/
+          // падающая звезда — продолжением; в signal_quality они же числились
+          // разворотами → двойная трактовка контекста и взаимоисключающие
+          // сценарии long+short в одном отчёте. По Нисону (гл. 3) ВСЕ теневые
+          // модели — попытки разворота: валидны только после предшествующего
+          // тренда ПРОТИВ направления сигнала (молот — после снижения,
+          // повешенный/падающая звезда — после роста). В боковике модель не
+          // имеет разворотной силы (нет того, что разворачивать).
+          if (patternTrend === 'БОКОВИК') continue;
+          if (direction === 'long' && patternTrend !== 'НИСХОДЯЩИЙ') continue;
+          if (direction === 'short' && patternTrend !== 'ВОСХОДЯЩИЙ') continue;
 
           // FIX аудита №4/№5: единые границы формации (для односвечных = high/low самой свечи)
           const bounds = PatternDetector.getFormationBounds(check.name, candles, i);
