@@ -5,7 +5,11 @@ import { useEffect, useRef, useState } from 'react';
 import type { CandleDTO } from '../api/types';
 import { assertValidSymbol, isValidTimeframe } from '../utils/validation';
 
-const WS_URL = "wss://stream.bybit.com/v5/public/linear";
+// ВАЖНО: категория потока должна совпадать с REST-источником (src/api/bybit.ts
+// запрашивает kline/tickers с category=spot). Иначе для пар, у которых нет
+// линейных фьючерсов (например SOLUSDT), подписка молча не получает данных и
+// индикатор LIVE не появляется.
+const WS_URL = 'wss://stream.bybit.com/v5/public/spot';
 
 // Маппинг UI-таймфреймов в интервалы Bybit (совпадает с INTERVAL_MAP в api/bybit.ts)
 const INTERVAL_MAP: Record<string, string> = {
@@ -21,22 +25,27 @@ const INTERVAL_MAP: Record<string, string> = {
   'W': 'W',
 };
 
+interface KlineRaw {
+  start: number;   // open time, мс
+  end: number;
+  interval: string;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+  turnover?: string;
+  confirm: boolean; // false — свеча ещё формируется
+  timestamp?: number;
+}
+
 interface KlineStreamMessage {
   topic: string;
   type: 'snapshot' | 'delta';
   ts: number;
-  data?: {
-    start: number;   // open time, мс
-    end: number;
-    interval: string;
-    open: string;
-    high: string;
-    low: string;
-    close: string;
-    volume: string;
-    confirm: boolean; // false — свеча ещё формируется
-    status: 'trading' | 'closed';
-  };
+  // По протоколу Bybit v5 поле data — МАССИВ клайнов (в т.ч. public/spot).
+  // Объектный вариант оставлен в типах на случай изменений протокола.
+  data?: KlineRaw[] | KlineRaw;
 }
 
 export interface KlineLiveState {
@@ -103,24 +112,28 @@ export function useKlineWebSocket(symbol: string | undefined, timeframe: string)
 
       ws.onmessage = (event) => {
         try {
-          const msg = JSON.parse(event.data) as KlineStreamMessage;
-          if (msg.topic !== topic || !msg.data) return;
-          const d = msg.data;
-          const start = Number(d.start);
-          if (!Number.isFinite(start) || start <= 0) return;
-          // Пропускаем устаревшие сообщения (после реконнекта поток шлёт snapshot
-          // уже закрытой свечи, которая новее текущей формирующейся — её принимаем)
-          if (lastStart && start < lastStart && d.status !== 'closed') return;
-          lastStart = Math.max(lastStart, start);
+          const msg = JSON.parse(event.data as string) as KlineStreamMessage;
+          if (!msg.topic || msg.topic !== topic || !msg.data) return;
+          // Bybit v5 присылает data как массив клайнов — берём самый свежий.
+          const items = Array.isArray(msg.data) ? msg.data : [msg.data];
+          for (const d of items) {
+            const start = Number(d.start);
+            if (!Number.isFinite(start) || start <= 0) continue;
+            // Пропускаем устаревшие сообщения (старт раньше уже принятой свечи).
+            // Финальные (confirm=true) закрытия принимаем всегда — они могут
+            // приходить с open time, равным уже принятому.
+            if (lastStart && start < lastStart) continue;
+            lastStart = Math.max(lastStart, start);
 
-          setLiveCandle({
-            time: start,
-            open: parseFloat(d.open),
-            high: parseFloat(d.high),
-            low: parseFloat(d.low),
-            close: parseFloat(d.close),
-            volume: parseFloat(d.volume),
-          });
+            setLiveCandle({
+              time: start,
+              open: parseFloat(d.open),
+              high: parseFloat(d.high),
+              low: parseFloat(d.low),
+              close: parseFloat(d.close),
+              volume: parseFloat(d.volume),
+            });
+          }
         } catch {
           // повреждённое сообщение — игнорируем
         }
