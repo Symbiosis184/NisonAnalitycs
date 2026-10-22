@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 // Code-splitting: тяжёлые страницы грузятся лениво отдельными чанками
 const Analysis = lazy(() => import('./pages/Analysis'));
@@ -26,7 +27,10 @@ export default function App() {
             path="analysis/:symbol"
             element={
               <Suspense fallback={<PageFallback />}>
-                <Analysis />
+                {/* Локальная граница ошибок: крах страницы анализа не убивает всё приложение */}
+                <ErrorBoundary key="analysis">
+                  <Analysis />
+                </ErrorBoundary>
               </Suspense>
             }
           />
