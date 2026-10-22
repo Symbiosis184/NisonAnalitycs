@@ -158,9 +158,8 @@ SKIP_CERTBOT=""
 [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ] && SKIP_CERTBOT="yes"
 for host in "$DOMAIN" "$WWW_DOMAIN"; do
     [ -n "$SKIP_CERTBOT" ] && break
-    # проверяем РЕЗОЛВЕР CA (Google DNS), т.к. локальный DNS может отдавать устаревший кеш
-    EXT_RESOLVED=$(getent hosts "$host" 2>/dev/null | awk '{print $1}'; \
-        for r in 8.8.8.8 1.1.1.1; do timeout 5 python3 -c "
+    # проверяем ПУБЛИЧНЫЕ резолверы (Google/Cloudflare), т.к. локальный DNS может отдавать устаревший кеш
+    EXT_RESOLVED=$(for r in 8.8.8.8 1.1.1.1; do timeout 5 python3 -c "
 import dns.resolver
 try:
     res=dns.resolver.Resolver(configure=False); res.nameservers=['$r']
