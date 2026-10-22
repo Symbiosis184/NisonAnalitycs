@@ -11,14 +11,16 @@ BUILD_DIR="/opt/nison-build"
 DOMAIN="kairi.pro"
 WWW_DOMAIN="www.kairi.pro"
 
-echo "==> 1/7 Установка пакетов (nginx, git, curl, certbot)"
+echo "==> 1/8 Установка пакетов (nginx, git, curl, certbot)"
+# v2: bootstrap-fix (certbot webroot, self-signed до выпуска LE)
+export DEPLOY_SCRIPT_REV="v2"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx || {
     echo "Установка прервалась — донастраиваем dpkg и повторяем";
     dpkg --configure -a; apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx; }
 
-echo "==> 2/7 Node.js 22 LTS (нужен для сборки фронтенда)"
+echo "==> 2/8 Node.js 22 LTS (нужен для сборки фронтенда)"
 if ! command -v npm >/dev/null 2>&1; then
     if [ ! -f /etc/apt/sources.list.d/nodesource.list ]; then
         mkdir -p /etc/apt/keyrings
@@ -32,57 +34,81 @@ if ! command -v npm >/dev/null 2>&1; then
 fi
 echo "    node $(node -v), npm $(npm -v)"
 
-echo "==> 3/7 Фикс IPv6 в типовом конфиге nginx (если IPv6 не поддерживается)"
+echo "==> 3/8 Фикс IPv6 в типовом конфиге nginx (если IPv6 не поддерживается)"
 if [ ! -e /proc/net/if_inet6 ]; then
     sed -ri 's/^(\s*)listen\s+\[::\]:80.*/\1# disabled (no IPv6): &/' /etc/nginx/sites-available/default /etc/nginx/conf.d/*.conf 2>/dev/null || true
 fi
 dpkg --configure -a 2>/dev/null || true
 
-echo "==> 4/7 Сборка фронтенда из GitHub (main)"
+echo "==> 4/8 Сборка фронтенда из GitHub (main)"
 rm -rf "$BUILD_DIR"
 git clone --depth 50 "$REPO" -b main "$BUILD_DIR"
 cd "$BUILD_DIR"
 npm ci --silent --no-audit --no-fund
 npm run build
 
-echo "==> 5/7 Публикация статики в $WEB_ROOT"
+echo "==> 5/8 Публикация статики в $WEB_ROOT"
 mkdir -p "$WEB_ROOT"
 rm -rf "${WEB_ROOT:?}/"*
 cp -r dist/* "$WEB_ROOT/"
 chown -R www-data:www-data "$WEB_ROOT" && chmod -R a+rX "$WEB_ROOT"
 
-echo "==> 6/7 Настройка nginx (домен $DOMAIN) + запуск"
-cat > /etc/nginx/sites-available/kairi <<'EOF'
-# HTTP: редирект на HTTPS + ACME-челленджи
+echo "==> 6/8 Настройка nginx (домен $DOMAIN) + запуск"
+write_nginx_conf() {
+    local with_ssl="$1"   # yes|no
+    local ssl_block="" redirect_block=""
+    if [ "$with_ssl" = "yes" ]; then
+        ssl_block="
+    ssl_certificate     /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;"
+    else
+        # самоподписанный временный сертификат — нужен, чтобы nginx вообще
+        # смог запуститься с listen 443 до выпуска сертификата Let's Encrypt
+        mkdir -p /etc/nginx/ssl
+        if [ ! -f /etc/nginx/ssl/kairi-selfsigned.pem ]; then
+            openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+                -keyout /etc/nginx/ssl/kairi-selfsigned.key \
+                -out /etc/nginx/ssl/kairi-selfsigned.pem \
+                -subj "/CN=$DOMAIN" 2>/dev/null || true
+        fi
+        ssl_block="
+    ssl_certificate     /etc/nginx/ssl/kairi-selfsigned.pem;
+    ssl_certificate_key /etc/nginx/ssl/kairi-selfsigned.key;
+    ssl_protocols TLSv1.2 TLSv1.3;"
+    fi
+    cat > /etc/nginx/sites-available/kairi <<EOF
+# HTTP: ACME-челленджи + (при наличии сертификата) редирект на HTTPS
 server {
     listen 80 default_server;
-    server_name kairi.pro www.kairi.pro _;
+    server_name $DOMAIN www.$DOMAIN _;
 
     location /.well-known/acme-challenge/ {
         root /var/www/html;
     }
-
+$( [ "$with_ssl" = "yes" ] && echo '
     location / {
         return 301 https://$host$request_uri;
-    }
+    }' || echo '
+    # сертификат ещё не выпущен — отдаём сайт по HTTP напрямую
+    root /var/www/nison-analytics;
+    index index.html;
+    location / {
+        try_files $uri $uri/ /index.html;
+    }' )
 }
 
 # HTTPS: основное приложение
 server {
     listen 443 ssl default_server;
     http2 on;
-    server_name kairi.pro www.kairi.pro;
-
-    # Пути certbot создаст на шаге 7/7 (или уже существуют после прошлых выпусков)
-    ssl_certificate     /etc/letsencrypt/live/kairi.pro/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/kairi.pro/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
+    server_name $DOMAIN www.$DOMAIN;$ssl_block
 
     root /var/www/nison-analytics;
     index index.html;
 
     location / {
-        try_files $uri $uri/ /index.html;
+        try_files \$uri \$uri/ /index.html;
     }
 
     location /assets/ {
@@ -104,9 +130,18 @@ server {
     gzip_types text/css application/javascript application/json image/svg+xml;
 }
 EOF
-ln -sf /etc/nginx/sites-available/kairi /etc/nginx/sites-enabled/kairi
-rm -f /etc/nginx/sites-enabled/nison /etc/nginx/sites-enabled/default
-mkdir -p /var/www/html
+    ln -sf /etc/nginx/sites-available/kairi /etc/nginx/sites-enabled/kairi
+    rm -f /etc/nginx/sites-enabled/nison /etc/nginx/sites-enabled/default
+    mkdir -p /var/www/html
+}
+
+CERT_DIR="/etc/letsencrypt/live/$DOMAIN"
+if [ -f "$CERT_DIR/fullchain.pem" ]; then
+    write_nginx_conf yes
+else
+    echo "    Сертификата ещё нет — ставим временный самоподписанный (чтобы nginx запустился до шага с certbot)"
+    write_nginx_conf no
+fi
 nginx -t
 systemctl enable --now nginx 2>/dev/null || service nginx start
 systemctl reload nginx 2>/dev/null || nginx -s reload
@@ -116,11 +151,13 @@ if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
     ufw allow 80/tcp >/dev/null; ufw allow 443/tcp >/dev/null || true
 fi
 
-echo "==> 7/7 SSL-сертификат Let's Encrypt для $DOMAIN"
+echo "==> 7/8 SSL-сертификат Let's Encrypt для $DOMAIN"
 ISSUED=""
 for host in "$DOMAIN" "$WWW_DOMAIN"; do
-    if certbot --nginx -d "$host" --non-interactive --agree-tos -m admin@"$DOMAIN" --redirect 2>/dev/null \
-        || certbot --nginx -d "$host" --non-interactive --agree-tos --register-unsafely-without-email --redirect 2>/dev/null; then
+    if certbot certonly --webroot -w /var/www/html -d "$host" \
+        --non-interactive --agree-tos -m "admin@$DOMAIN" --keep-until-expiring 2>&1 \
+        || certbot certonly --webroot -w /var/www/html -d "$host" \
+            --non-interactive --agree-tos --register-unsafely-without-email --keep-until-expiring 2>&1; then
         ISSUED="yes"
         echo "    Сертификат выпущен/обновлён для $host"
     else
@@ -128,8 +165,20 @@ for host in "$DOMAIN" "$WWW_DOMAIN"; do
         echo "       Проверьте A-запись $host -> IP сервера (dig +short $host)."
     fi
 done
+if [ -n "$ISSUED" ] && [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
+    # переписываем конфиг уже с настоящими сертификатами и редиректом HTTP->HTTPS
+    write_nginx_conf yes
+    nginx -t && (systemctl reload nginx 2>/dev/null || nginx -s reload)
+fi
 [ -z "$ISSUED" ] && echo "    WARNING: ни один хост не получил сертификат — сайт будет доступен только по http://"
-systemctl reload nginx 2>/dev/null || nginx -s reload
+systemctl reload nginx 2>/dev/null || nginx -s reload || true
+
+echo "==> 8/8 Автопродление сертификатов (certbot renew)"
+mkdir -p /etc/cron.d
+cat > /etc/cron.d/kairi-certbot-renew <<'EOF'
+0 3 * * * root certbot renew --quiet --deploy-hook "systemctl reload nginx || nginx -s reload"
+EOF
+chmod 0644 /etc/cron.d/kairi-certbot-renew
 
 rm -rf "$BUILD_DIR"
 echo ""
