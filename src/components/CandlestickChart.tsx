@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
 import type { CandleDTO, PatternDTO, ZoneDTO, SignalDTO } from '../api/types';
 
@@ -37,7 +37,7 @@ interface Props {
   live?: LiveCandleProp | null;
 }
 
-export default function CandlestickChart({ 
+function CandlestickChartImpl({ 
   candles, 
   ema20, 
   ema50, 
@@ -407,3 +407,7 @@ export default function CandlestickChart({
 
   return <div ref={chartContainerRef} className="w-full" style={{ touchAction: 'pan-y' }} />;
 }
+
+// Оптимизация: график пересоздаётся только при реальном изменении данных (см. deps
+// эффекта внутри); memo не даёт ему ре-рендериться на каждый live-тиг страницы.
+export default memo(CandlestickChartImpl);

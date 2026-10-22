@@ -7,7 +7,7 @@
 //    волатильность) с CI expectancy + мониторинг деградации за последние 90 дней.
 
 import { AlertTriangle, CheckCircle2, ChevronDown, TrendingDown, TrendingUp } from 'lucide-react';
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import type { AnalysisReport, EdgeCohortDTO, SignalDTO } from '../api/types';
 import { formatPrice } from '../utils/format';
 import { Collapsible } from '../components/Collapsible';
@@ -68,7 +68,7 @@ interface WProps {
   wyckoff: NonNullable<AnalysisReport['wyckoff']>;
 }
 
-export function WyckoffPhasePanel({ wyckoff }: WProps) {
+function WyckoffPhasePanelImpl({ wyckoff }: WProps) {
   const meta = PHASE_META[wyckoff.phase];
   // Позиция цены в диапазоне: 0 = низ консолидации, 1 = верх
   const posPct = Math.round(wyckoff.position_in_range * 100);
@@ -188,7 +188,7 @@ interface PathProps {
 }
 
 /** Карточка «пути цены»: чем отличается честный adjusted RR от формального. */
-export function PricePathCard({ signal }: PathProps) {
+function PricePathCardImpl({ signal }: PathProps) {
   const path = signal.path;
   if (!path) return null;
   const dirColor = signal.direction === 'long' ? 'text-green-400' : 'text-red-400';
@@ -303,7 +303,7 @@ interface EProps {
   edge: NonNullable<AnalysisReport['edge']>;
 }
 
-export function EdgeVerificationPanel({ edge }: EProps) {
+function EdgeVerificationPanelImpl({ edge }: EProps) {
   const v = VERDICT_META[edge.verdict] ?? VERDICT_META.insufficient;
   const Icon = v.icon;
   const d = edge.degradation;
@@ -416,3 +416,15 @@ export function EdgeVerificationPanel({ edge }: EProps) {
     </Collapsible>
   );
 }
+
+// Оптимизация: мемоизация — тяжёлые панели перерисовываются только при смене своих props,
+// а не на каждый WebSocket-тих живой свечи страницы анализа.
+export const WyckoffPhasePanel = memo(WyckoffPhasePanelImpl);
+
+// Оптимизация: мемоизация — тяжёлые панели перерисовываются только при смене своих props,
+// а не на каждый WebSocket-тих живой свечи страницы анализа.
+export const PricePathCard = memo(PricePathCardImpl);
+
+// Оптимизация: мемоизация — тяжёлые панели перерисовываются только при смене своих props,
+// а не на каждый WebSocket-тих живой свечи страницы анализа.
+export const EdgeVerificationPanel = memo(EdgeVerificationPanelImpl);
