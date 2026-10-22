@@ -11,16 +11,16 @@ BUILD_DIR="/opt/nison-build"
 DOMAIN="kairi.pro"
 WWW_DOMAIN="www.kairi.pro"
 
-echo "==> 1/10 Установка пакетов (nginx, git, curl, certbot)"
-# v9: stop docker containers on 80/443 + non-interactive DNS-01 cert issuance
-export DEPLOY_SCRIPT_REV="v9"
+echo "==> 1/11 Установка пакетов (nginx, git, curl, certbot)"
+# v10: server-side signal journal (sqlite API + nginx proxy + systemd unit)
+export DEPLOY_SCRIPT_REV="v10"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx python3-dnspython || {
     echo "Установка прервалась — донастраиваем dpkg и повторяем";
     dpkg --configure -a; apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx python3-dnspython; }
 
-echo "==> 2/10 Остановка docker-контейнеров, занимающих порты 80/443"
+echo "==> 2/11 Остановка docker-контейнеров, занимающих порты 80/443"
 # На сервере docker-proxy держит 0.0.0.0:443 (и, возможно, 80) — nginx не может
 # забиндиться. Находим контейнеры с пробросом этих портов и останавливаем их.
 stop_docker_on_ports() {
@@ -54,7 +54,44 @@ stop_docker_on_ports() {
 }
 stop_docker_on_ports
 
-echo "==> 3/10 Node.js 22 LTS (нужен для сборки фронтенда)"
+echo "==> 3/11 Серверное хранилище журнала сигналов (API + systemd)"
+# Журнал сигналов синхронизируется с сервером (см. src/utils/journalSync.ts):
+# лёгкий python3 http.server + sqlite3 без внешних зависимостей; слушает
+# только 127.0.0.1:8787, наружу отдаётся через nginx location /api/journal/.
+mkdir -p /opt/kairi-journal /etc/kairi
+cp "$BUILD_DIR/server/journal_server.py" /opt/kairi-journal/journal_server.py 2>/dev/null \
+  || curl -fsSL https://raw.githubusercontent.com/Symbiosis184/NisonAnalitycs/main/server/journal_server.py \
+       -o /opt/kairi-journal/journal_server.py
+chmod 644 /opt/kairi-journal/journal_server.py
+# Секрет доступа к API генерируется один раз и больше не меняется
+if [ ! -s /etc/kairi/journal.key ]; then
+    (umask 077 && openssl rand -hex 24 > /etc/kairi/journal.key)
+fi
+chmod 600 /etc/kairi/journal.key
+
+systemctl stop kairi-journal 2>/dev/null || true
+cat > /etc/systemd/system/kairi-journal.service <<UNITEOF
+[Unit]
+Description=Kairi Analytics - journal storage API
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/kairi-journal/journal_server.py
+Restart=on-failure
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+UNITEOF
+systemctl daemon-reload
+systemctl enable --now kairi-journal >/dev/null 2>&1 || systemctl restart kairi-journal || true
+sleep 1
+curl -sf http://127.0.0.1:8787/healthz >/dev/null \
+  && echo "    Journal API работает (127.0.0.1:8787)" \
+  || echo "    !! Journal API не отвечает — журнал останется локальным (localStorage)"
+
+echo "==> 4/11 Node.js 22 LTS (нужен для сборки фронтенда)"
 if ! command -v npm >/dev/null 2>&1; then
     if [ ! -f /etc/apt/sources.list.d/nodesource.list ]; then
         mkdir -p /etc/apt/keyrings
@@ -68,7 +105,7 @@ if ! command -v npm >/dev/null 2>&1; then
 fi
 echo "    node $(node -v), npm $(npm -v)"
 
-echo "==> 4/10 Подготовка окружения nginx (IPv6, конфликты default_server, leftover-конфиги)"
+echo "==> 5/11 Подготовка окружения nginx (IPv6, конфликты default_server, leftover-конфиги)"
 if [ ! -e /proc/net/if_inet6 ]; then
     sed -ri 's/^(\s*)listen\s+\[::\]:80.*/\1# disabled (no IPv6): &/' /etc/nginx/sites-available/default /etc/nginx/conf.d/*.conf 2>/dev/null || true
 fi
@@ -82,20 +119,20 @@ if grep -qsE '^\s*listen\s+(\[::\]:)?80\s+default_server' /etc/nginx/sites-enabl
 fi
 dpkg --configure -a 2>/dev/null || true
 
-echo "==> 5/10 Сборка фронтенда из GitHub (main)"
+echo "==> 6/11 Сборка фронтенда из GitHub (main)"
 rm -rf "$BUILD_DIR"
 git clone --depth 50 "$REPO" -b main "$BUILD_DIR"
 cd "$BUILD_DIR"
 npm ci --silent --no-audit --no-fund
 npm run build
 
-echo "==> 6/10 Публикация статики в $WEB_ROOT"
+echo "==> 7/11 Публикация статики в $WEB_ROOT"
 mkdir -p "$WEB_ROOT"
 rm -rf "${WEB_ROOT:?}/"*
 cp -r dist/* "$WEB_ROOT/"
 chown -R www-data:www-data "$WEB_ROOT" && chmod -R a+rX "$WEB_ROOT"
 
-echo "==> 7/10 Настройка nginx (домен $DOMAIN) + запуск"
+echo "==> 8/11 Настройка nginx (домен $DOMAIN) + запуск"
 write_nginx_conf() {
     local with_ssl="$1"   # yes|no
     local ssl_block="" redirect_block=""
@@ -137,6 +174,11 @@ $( [ "$with_ssl" = "yes" ] && echo '
     index index.html;
     location / {
         try_files $uri $uri/ /index.html;
+    }
+
+    location /api/journal/ {
+        proxy_pass http://127.0.0.1:8787;
+        proxy_set_header Host $host;
     }' )
 }
 
@@ -162,6 +204,13 @@ server {
     # со ссылками на устаревшие чанки (белый экран после деплоя)
     location = /index.html {
         add_header Cache-Control "no-cache, must-revalidate";
+    }
+
+    # серверное хранилище журнала сигналов (python API на localhost:8787)
+    location /api/journal/ {
+        proxy_pass http://127.0.0.1:8787;
+        proxy_set_header Host $host;
+        proxy_read_timeout 15s;
     }
 
     add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://api.bybit.com wss://stream.bybit.com wss://stream.binance.com:9443 https://stream.binance.com; img-src 'self' data:; font-src 'self' data:; frame-ancestors 'none'; upgrade-insecure-requests;" always;
@@ -241,7 +290,7 @@ if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
     ufw allow 80/tcp >/dev/null; ufw allow 443/tcp >/dev/null || true
 fi
 
-echo "==> 8/10 Диагностика доступности портов 80/443 снаружи"
+echo "==> 9/11 Диагностика доступности портов 80/443 снаружи"
 # Проверка идёт через внешний сервис (scan.nmap.org), т.к. локальная проверка
 # не видит файрвол провайдера. Если порт закрыт — сертификат LE получить нельзя,
 # но сайт продолжит работать по http:// и повторится попытка при следующем запуске.
@@ -271,7 +320,7 @@ if command -v iptables >/dev/null 2>&1; then
     fi
 fi
 
-echo "==> 9/10 SSL-сертификат Let's Encrypt для $DOMAIN"
+echo "==> 10/11 SSL-сертификат Let's Encrypt для $DOMAIN"
 SERVER_IP=$(curl -fsS --max-time 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
 ISSUED=""
 SKIP_CERTBOT=""
@@ -373,7 +422,7 @@ fi
 [ -z "$ISSUED" ] && echo "    WARNING: ни один хост не получил сертификат — сайт будет доступен только по http://"
 systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null || true
 
-echo "==> 10/10 Автопродление сертификатов (certbot renew)"
+echo "==> 11/11 Автопродление сертификатов (certbot renew)"
 mkdir -p /etc/cron.d
 cat > /etc/cron.d/kairi-certbot-renew <<'EOF'
 0 3 * * * root certbot renew --quiet --deploy-hook "systemctl reload nginx || nginx -s reload"

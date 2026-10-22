@@ -94,6 +94,11 @@ function saveJournal(entries: SignalEntry[]): void {
   safeSetItem(STORAGE_KEY, JSON.stringify(entries));
 }
 
+/** Публичная запись журнала (используется синхронизацией с сервером). */
+export function saveJournalPublic(entries: SignalEntry[]): void {
+  saveJournal(entries);
+}
+
 // Создаёт снапшот текущего журнала, если последний был старше SNAPSHOT_INTERVAL_MS
 function maybeSnapshot(): void {
   if (!isStorageAvailable()) return;

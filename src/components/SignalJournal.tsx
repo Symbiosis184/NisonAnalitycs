@@ -10,10 +10,12 @@ import {
   settlePendingSignals,
   listSnapshots,
   restoreFromSnapshot,
+  saveJournalPublic,
   type SignalEntry,
   type SignalStats,
   type JournalSnapshot
 } from '../utils/signalJournal';
+import { syncJournal, deleteRemoteSignal, replaceJournal } from '../utils/journalSync';
 import { formatPrice } from '../utils/format';
 import { fetch24hTicker, fetchKlines } from '../api/bybit';
 
@@ -21,9 +23,33 @@ export default function SignalJournal() {
   const [signals, setSignals] = useState<SignalEntry[]>([]);
   const [stats, setStats] = useState<SignalStats | null>(null);
   const [filter, setFilter] = useState<'all' | 'active' | 'closed'>('all');
+  // Индикатор серверного хранилища: undefined = ещё не проверялось
+  const [serverConnected, setServerConnected] = useState<boolean | undefined>(undefined);
+  const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
+
+  // Синхронизация с серверным хранилищем: pull -> merge -> push.
+  // При недоступности сервера журнал остаётся локальным (graceful degradation).
+  const doSync = async () => {
+    try {
+      const local = getAllSignals();
+      const { merged } = await syncJournal(local);
+      saveJournalPublic(merged);
+      setServerConnected(true);
+      setLastSyncAt(Date.now());
+      setSignals(getAllSignals());
+      setStats(getSignalStats());
+    } catch (err) {
+      console.warn('Журнал: серверная синхронизация недоступна (работаем локально):', err);
+      setServerConnected(false);
+    }
+  };
 
   useEffect(() => {
     loadSignals();
+    doSync();
+
+    // Фоновая синхронизация с сервером раз в минуту
+    const syncInterval = setInterval(doSync, 60000);
     
     // Автоматическая проверка статусов сигналов каждые 30 секунд
     const interval = setInterval(() => {
@@ -33,7 +59,7 @@ export default function SignalJournal() {
     // Первоначальная проверка при загрузке
     checkSignalStatuses();
     
-    return () => clearInterval(interval);
+    return () => { clearInterval(interval); clearInterval(syncInterval); };
   }, []);
 
   const [snapshots, setSnapshots] = useState<JournalSnapshot[]>([]);
@@ -119,6 +145,9 @@ export default function SignalJournal() {
   const handleDelete = (id: string) => {
     if (confirm('Удалить сигнал?')) {
       deleteSignal(id);
+      // Удаляем и из серверного хранилища (ошибки не блокируют локальное удаление)
+      deleteRemoteSignal(id).catch(err =>
+        console.warn('Журнал: не удалось удалить сигнал с сервера:', err));
       // Принудительно обновляем состояние после удаления
       setSignals(getAllSignals());
       setStats(getSignalStats());
@@ -147,6 +176,9 @@ export default function SignalJournal() {
           if (rejected > 0) {
             alert(`Импортировано сигналов: ${imported}. Отклонено некорректных записей: ${rejected}.`);
           }
+          // Публикуем импортированный журнал на сервер (источник истины — файл)
+          replaceJournal(getAllSignals()).catch(err =>
+            console.warn('Журнал: импорт не отправлен на сервер:', err));
           loadSignals();
         } catch (err) {
           alert(err instanceof Error ? err.message : 'Не удалось импортировать журнал');
@@ -188,6 +220,27 @@ export default function SignalJournal() {
           title="Журнал в бета-версии: накопленная статистика формируется, интерпретировать метрики с осторожностью"
         >
           beta
+        </span>
+        {/* Индикатор серверного хранилища журнала */}
+        <span
+          className={`px-2 py-0.5 rounded-md text-[11px] font-medium border ${
+            serverConnected === undefined
+              ? 'text-gray-400 border-gray-700 bg-gray-500/10'
+              : serverConnected
+                ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'
+                : 'text-gray-400 border-gray-700 bg-gray-500/10'
+          }`}
+          title={serverConnected
+            ? `Синхронизировано с сервером${lastSyncAt ? ' в ' + new Date(lastSyncAt).toLocaleTimeString('ru-RU') : ''}`
+            : serverConnected === false
+              ? 'Серверное хранилище недоступно — журнал хранится только в этом браузере'
+              : 'Проверяем доступность серверного хранилища...'}
+        >
+          {serverConnected === undefined
+            ? '⏳ синхронизация…'
+            : serverConnected
+              ? '☁ синхронизировано'
+              : '☁ локально'}
         </span>
       </div>
       {/* Статистика */}
