@@ -5,7 +5,7 @@ import { PatternDetector, VolumeAnalyzer } from './pattern_engine';
 import { getTrendContext, getTrendMacro } from './trend_detection';
 import { ema, atr } from './indicators';
 import { patternStory } from './patterns';
-import { isReversalPatternName, PatternId } from './pattern_ids';
+import { isReversalPatternName } from './pattern_ids';
 import { nearestStructuralTarget } from './nison_targets';
 import { resolveSignalStatus, SignalStatus } from './signal_lifecycle';
 import { computeSignalQuality } from './signal_quality';
@@ -20,16 +20,14 @@ const TIMEOUT_D1 = 259200; // 3 дня в секундах
 const DOJI_MAX_FREQ = 0.15;
 const RANGE_PROXIMITY_PCT = 0.015;
 
-// Самодостаточные модели по Нисону (гл. 4-6).
-// П.7: стабильные ID вместо подстрок — переименование отображаемого имени
-// модели больше не сломает эту проверку.
-export const SELF_CONFIRMING: readonly PatternId[] = [
-  'BULLISH_ENGULFING', 'BEARISH_ENGULFING', 'DARK_CLOUD_COVER', 'LIGHTING_AT_THE_WELL',
-  'MORNING_STAR', 'EVENING_STAR', 'THREE_WHITE_SOLDIERS', 'THREE_BLACK_CROWS',
-  'RISE_THREE_METHODS', 'FALL_THREE_METHODS', 'TATAMI', 'SIDE_BY_SIDE_GAP',
-  'SEPARATING_LINE_BULL', 'SEPARATING_LINE_BEAR', 'BELT_HOLD_BULL', 'BELT_HOLD_BEAR',
-  'ADVANCE_BLOCK', 'RETREAT_BLOCK', 'THRUSTING', 'DOUBLE_THRUSTING_BULL',
-];
+// Строго по книге Нисона («Japanese Candlestick Charting Techniques»):
+// НИКАКАЯ свечная модель не является самодостаточной. Любая формация —
+// лишь «сигнал к сигналу»: торговое решение принимается только после
+// подтверждения следующей ЗАКРЫТОЙ свечой в направлении сигнала (гл. 3–10,
+// правило подтверждения). Поэтому раньше существовавший список
+// SELF_CONFIRMING («модели, не требующие подтверждения») удалён — он
+// противоречил канону. Подтверждение теперь единый путь жизненного цикла
+// (signal_lifecycle.resolveSignalStatus) для всех моделей без исключений.
 
 /** Рыночный контекст для «путь-осознанной» фильтрации (запрос: контекст рынка). */
 export interface MarketContext {
@@ -335,13 +333,20 @@ export class SignalGenerator {
 
       for (const { check, direction } of patterns) {
         if (check.found) {
-          // Контекстная фильтрация: сигнал должен соответствовать тренду
-          // Разворотные паттерны (Morning Star, Evening Star и т.д.) могут идти против тренда
-          // П.7: сверка по стабильным ID моделей вместо includes по подстрокам
-          // FIX противоречий: единый канонический классификатор разворотов
+          // Контекстная фильтрация СТРОГО по книгам Нисона:
+          //  • разворотные модели легитимны только ПОСЛЕ выраженного предшествующего
+          //    тренда ПРОТИВ направления сигнала («after a downtrend/uptrend» — часть
+          //    определений гл. 5–6; в боковике разворачивать нечего);
+          //  • модели продолжения имеют силу только ПОПУТНО тренду (гл. 9–10).
+          // П.7: сверка по стабильным ID моделей; единый канонический классификатор.
           const isReversalPattern = isReversalPatternName(check.name);
           
-          if (!isReversalPattern) {
+          if (patternTrend === 'БОКОВИК') continue; // нет ни того, что продолжать, ни того, что разворачивать
+          if (isReversalPattern) {
+            // Разворот требует предшествующего тренда против сигнала
+            if (direction === 'long' && patternTrend !== 'НИСХОДЯЩИЙ') continue;
+            if (direction === 'short' && patternTrend !== 'ВОСХОДЯЩИЙ') continue;
+          } else {
             // Для продолжительных паттернов проверяем соответствие тренду
             if (direction === 'long' && patternTrend === 'НИСХОДЯЩИЙ') continue;
             if (direction === 'short' && patternTrend === 'ВОСХОДЯЩИЙ') continue;
@@ -391,10 +396,12 @@ export class SignalGenerator {
             // FIX противоречий: единый канонический классификатор разворотов
             const isReversalPattern = isReversalPatternName(check.name);
             
+            if (patternTrend === 'БОКОВИК') continue;
             if (isReversalPattern) {
-              // Разворотные паттерны должны идти против тренда
-              if (direction === 'long' && patternTrend === 'ВОСХОДЯЩИЙ') continue;
-              if (direction === 'short' && patternTrend === 'НИСХОДЯЩИЙ') continue;
+              // Строго по Нисону (гл. 4): разворот легитимен только ПОСЛЕ выраженного
+              // предшествующего тренда ПРОТИВ сигнала — в боковике разворачивать нечего
+              if (direction === 'long' && patternTrend !== 'НИСХОДЯЩИЙ') continue;
+              if (direction === 'short' && patternTrend !== 'ВОСХОДЯЩИЙ') continue;
             } else {
               // Продолжительные паттерны должны соответствовать тренду
               if (direction === 'long' && patternTrend === 'НИСХОДЯЩИЙ') continue;
@@ -465,12 +472,43 @@ export class SignalGenerator {
     }
 
     // FIX аудита №8: детерминированная сортировка.
+    // Строго по Нисону (гл. 4–6): взаимоисключающие сигналы на одном и том же
+    // завершении формации (long+short, например бычье и медвежье поглощение)
+    // не сосуществуют — остаётся только реально подтверждённый закрытой свечой;
+    // если подтверждены оба или ни одного — предпочтительнее неподтверждённый
+    // «первый» сигнал модели (бычий/медвежий задаётся направлением тренда).
+    const byEnd = new Map<number, Signal[]>();
+    for (const sig of signals) {
+      const arr = byEnd.get(sig.meta.patternEndIdx) ?? [];
+      arr.push(sig);
+      byEnd.set(sig.meta.patternEndIdx, arr);
+    }
+    const dropKeys = new Set<string>();
+    for (const [, group] of byEnd) {
+      if (group.length < 2) continue;
+      const dirs = new Set(group.map(g => g.direction));
+      if (dirs.size < 2) continue;
+      const confirmeds = group.filter(g => g.status === 'confirmed');
+      let keep: Signal | undefined;
+      if (confirmeds.length === 1) {
+        keep = confirmeds[0];
+      } else if (confirmeds.length >= 2) {
+        keep = confirmeds.find(g => g.direction === 'long') ?? confirmeds[0];
+      } else {
+        keep = group.find(g => g.direction === 'long') ?? group[0];
+      }
+      for (const g of group) {
+        if (g !== keep) dropKeys.add(`${g.pattern}|${g.direction}|${g.meta.patternEndIdx}`);
+      }
+    }
+    const deduped = dropKeys.size ? signals.filter(sg => !dropKeys.has(`${sg.pattern}|${sg.direction}|${sg.meta.patternEndIdx}`)) : signals;
+
     // Аудит №11: приоритет жизненного цикла — подтверждённые > ожидает > истёк > отменён.
     const RANK: Record<string, number> = { confirmed: 3, pending: 2, expired: 1, invalidated: 0 };
     // FIX бэктест-аудита №2: сортировка ДО среза лимита — иначе «свежие» события
     // (первое появление формации) могли вылетать из top-5 по quality и бэктест
     // терял их навсегда. Первыми идут свежие события этого прогона.
-    signals.sort((a, b) =>
+    deduped.sort((a, b) =>
       (Number(Boolean((b as Signal & { isFreshEvent?: boolean }).isFreshEvent)) -
         Number(Boolean((a as Signal & { isFreshEvent?: boolean }).isFreshEvent))) ||
       (RANK[b.status ?? 'pending'] - RANK[a.status ?? 'pending']) ||
@@ -478,8 +516,8 @@ export class SignalGenerator {
       b.quality - a.quality ||
       b.rr - a.rr
     );
-    this.markFresh(signals, candles.length);
-    return signals.slice(0, 8);
+    this.markFresh(deduped, candles.length);
+    return deduped.slice(0, 8);
   }
 
   // Для обратной совместимости

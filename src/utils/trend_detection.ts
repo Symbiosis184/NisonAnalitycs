@@ -1,8 +1,19 @@
 import { Candle } from './candle';
-import { ema, rsi } from './indicators';
+import { ema, sma, rsi } from './indicators';
 import { detectPatterns } from './patterns';
 
 export type TrendContext = 'ВОСХОДЯЩИЙ' | 'НИСХОДЯЩИЙ' | 'БОКОВИК';
+
+// MA по канону Нисона (гл. 13): Стив использует простые скользящие —
+// 10-дневную SMA и 65-дневную SMA ("The Ten-Day Moving Average", "The Sixty-Five
+// Day Moving Average"). EMA даёт иной отклик и раньше «переезжает» цену, поэтому
+// там, где Нисон формулирует правило через MA10/MA65, применяется именно SMA.
+// SMA[0..period-2] = NaN (недостаточно данных) — заменяем на значение EMA на том
+// же индексе, чтобы массив был пригоден для сравнений на короткой истории.
+export function nisonSma(values: number[], period: number): number[] {
+  const base = values.length >= period ? sma(values, period) : ema(values, period);
+  return base.map((v, i) => (Number.isNaN(v) ? ema(values, period)[i] : v));
+}
 
 // Структурный тренд по канону Нисона (гл. 13): направление определяется
 // последовательностью свингов — Higher High/Higher Low (бычий) или
@@ -51,7 +62,7 @@ function isFlatMarket(candles: Candle[]): boolean {
   const rangePct = (hi - lo) / mid;
   if (rangePct > 0.08) return false; // широкий диапазон — не флэт
 
-  const ma65 = ema(closes, Math.min(65, closes.length - 1));
+  const ma65 = nisonSma(closes, 65); // Нисон гл. 13: SMA65
   const lastMa = ma65[ma65.length - 1];
   const prevMa = ma65[Math.max(0, ma65.length - 11)];
   const slopePct = lastMa > 0 ? Math.abs((lastMa - prevMa) / lastMa) : 1;
@@ -99,7 +110,7 @@ export function getTrendMacro(candles: Candle[], price: number): TrendContext {
 
   // Нет выраженной структуры — смотрим на MA65 как на вторичный лагающий фильтр
   const closes = candles.map(c => c.close);
-  const ma65 = ema(closes, Math.min(65, closes.length - 1));
+  const ma65 = nisonSma(closes, 65); // Нисон гл. 13: SMA65
   const ma65Val = ma65[ma65.length - 1];
 
   if (price > ma65Val) {
@@ -187,7 +198,7 @@ export function detectTrendStart(candles: Candle[], price: number): {
   //    ФАКТ пересечения за последние бары, а не «линия выше линии», которая
   //    срабатывала на всём протяжении уже существующего тренда).
   const MA_CROSS_WINDOW = 8; // окно поиска факта пересечения (в барах)
-  const ma65 = ema(closes, Math.min(65, closes.length - 1));
+  const ma65 = nisonSma(closes, 65); // Нисон гл. 13: SMA65
   const ma65Val = ma65[ma65.length - 1];
   const ma65Prev = ma65[ma65.length - 6];
 
@@ -198,7 +209,7 @@ export function detectTrendStart(candles: Candle[], price: number): {
     bear.push('цена ниже MA65, средняя развернулась вниз (гл. 13)');
   }
 
-  const ma10 = ema(closes, 10);
+  const ma10 = nisonSma(closes, 10); // Нисон гл. 13: SMA10
   const ma10Val = ma10[ma10.length - 1];
 
   // Факт пересечения MA10 через MA65: знак разности сменился в последнем окне.

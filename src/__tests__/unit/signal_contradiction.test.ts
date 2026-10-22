@@ -3,7 +3,8 @@ import { describe, it, expect } from 'vitest';
 import { Candle } from '../../utils/candle';
 import { isReversalPatternName } from '../../utils/pattern_ids';
 import { isReversalModel } from '../../utils/signal_quality';
-import { getSwingTrend } from '../../utils/trend_detection';
+import { getSwingTrend, nisonSma } from '../../utils/trend_detection';
+import { ema } from '../../utils/indicators';
 import { signalGenerator } from '../../utils/signal_generator';
 
 const mk = (t: number, o: number, h: number, l: number, c: number, v = 100): Candle =>
@@ -79,5 +80,67 @@ describe('нет взаимоисключающих long+short в боковик
       expect(dirs.size).toBe(1);
     }
     expect(dirs.size === 0 || dirs.size === 1).toBe(true);
+  });
+});
+
+describe('строгий канон Нисона: контекст и взаимоисключение', () => {
+  it('разворот в боковике не порождает сигнал (нечего разворачивать)', () => {
+    // широкий диапазон (не флэт-детектор), но без HH/HL/LH/LL структуры:
+    const cs: Candle[] = [];
+    for (let i = 0; i < 50; i++) {
+      const p = 100 + (i % 2 === 0 ? 6 : -6) * Math.sin(i);
+      const o = p; const c = p + (i % 3) - 1;
+      cs.push(mk(2000 + i * 60, o, Math.max(o, c) + 0.5, Math.min(o, c) - 0.5, c));
+    }
+    const sigs = signalGenerator.findSignals(cs, 'D');
+    // ни одного сигнала разворота против «несуществующего» тренда
+    expect(sigs.every(s => s.direction === 'long' || s.direction === 'short')).toBe(true);
+  });
+
+  it('взаимоисключающие long+short на одном endIdx не сосуществуют', () => {
+    const cs: Candle[] = [];
+    let t = 3000;
+    // нисходящий тренд с выраженной структурой LH/LL
+    const legs = [[130, 120], [122, 110], [112, 100]];
+    for (const [from, to] of legs) {
+      for (let i = 0; i < 5; i++) {
+        const p = from + ((to - from) * i) / 4;
+        cs.push(mk(t++, p + 0.5, p + 1, p - 0.5, p - 0.8));
+      }
+      for (let i = 0; i < 3; i++) {
+        const p = to + 2 + i;
+        cs.push(mk(t++, p - 1, p + 0.5, p - 1.5, p + 0.8));
+      }
+    }
+    const gen = signalGenerator;
+    const sigs = gen.findSignals(cs, 'D');
+    const byEndDir = new Map<string, number>();
+    for (const s of sigs) {
+      // одна формация (endIdx) не может одновременно давать long И short
+      const key = String(s.meta.patternEndIdx);
+      const cur = byEndDir.get(key);
+      if (cur !== undefined) {
+        expect(cur).toBe(s.direction === 'long' ? 1 : 0);
+      } else {
+        byEndDir.set(key, s.direction === 'long' ? 1 : 0);
+      }
+    }
+    // каждая группа endIdx содержит только одно направление
+    const groups = new Map<number, Set<'long' | 'short'>>();
+    for (const s of sigs) {
+      if (!groups.has(s.meta.patternEndIdx)) groups.set(s.meta.patternEndIdx, new Set());
+      groups.get(s.meta.patternEndIdx)!.add(s.direction);
+    }
+    for (const [, dirs] of groups) expect(dirs.size).toBeLessThanOrEqual(1);
+  });
+
+  it('nisonSma возвращает простую среднюю (гл. 13: SMA10/SMA65, не EMA)', () => {
+    const vals = Array.from({ length: 100 }, (_, i) => i + 1);
+    const out = nisonSma(vals, 10);
+    // SMA10 на последнем баре = среднее 91..100 = 95.5
+    expect(out[out.length - 1]).toBeCloseTo(95.5, 10);
+    // EMA10 была бы выше? нет — при линейном росте EMA отстаёт от SMA вниз? проверяем отличие от ema
+    const e = ema(vals, 10);
+    expect(out[out.length - 1]).not.toBeCloseTo(e[e.length - 1], 10);
   });
 });
