@@ -19,7 +19,7 @@ export default function Layout() {
               </div>
               <div className="min-w-0">
                 <h1 className="text-base sm:text-lg font-bold tracking-tight text-white flex items-center gap-2">
-                  <span className="truncate">Nison <span className="text-amber-400">Analytics</span></span>
+                  <span className="truncate">Kairi <span className="text-amber-400">Analytics</span></span>
                   <span
                     className="hidden sm:inline-flex text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30 normal-case tracking-normal flex-shrink-0"
                     title={import.meta.env.VITE_APP_VERSION ? `v${import.meta.env.VITE_APP_VERSION}` : 'v1.0'}
@@ -138,7 +138,7 @@ export default function Layout() {
         <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-6 sm:py-8">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <p className="text-xs sm:text-sm text-gray-500 text-center sm:text-left">
-              © 2026 Nison Analytics v{import.meta.env.VITE_APP_VERSION || '1.0'}. Powered by Steve Nison's methodology.
+              © 2026 Kairi Analytics v{import.meta.env.VITE_APP_VERSION || '1.0'}. Powered by Steve Nison's methodology.
             </p>
             <div className="flex items-center gap-3 sm:gap-4 text-xs text-gray-600">
               <span>Data: Bybit API</span>

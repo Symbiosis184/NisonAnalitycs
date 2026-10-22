@@ -14,7 +14,7 @@ interface MenuState {
 /** Делится ссылкой на текущую страницу: системный шаринг, иначе буфер обмена. */
 async function shareProject() {
   const url = window.location.href;
-  const data = { title: 'Nison Analytics', text: 'Анализ рынка по методу Стива Нисона', url };
+  const data = { title: 'Kairi Analytics', text: 'Анализ рынка по методу Стива Нисона', url };
   try {
     if (navigator.share) {
       await navigator.share(data);
@@ -124,7 +124,7 @@ export default function ContextMenu({ onSupport }: Props) {
         Поддержать
       </button>
       <div className="mt-1 px-3 pt-1.5 border-t border-gray-800/70 text-[10px] text-gray-500">
-        Nison Analytics · правый клик отключён браузером
+        Kairi Analytics · правый клик отключён браузером
       </div>
     </div>
   );
