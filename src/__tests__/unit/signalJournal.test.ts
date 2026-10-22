@@ -224,6 +224,33 @@ describe('Журнал (localStorage)', () => {
       await settlePendingSignals(async () => { throw new Error('network'); });
       expect(getAllSignals()[0].status).toBe('pending');
     });
+    it('просроченный pending без касаний → expired по последней закрытой свече', async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(1_700_000_000_000); // фиксированное «сейчас»
+        const oldBar = Date.now() - 10 * 24 * 60 * 60 * 1000; // давно (>7 дней для D)
+        addSignal(newSig({ barTime: oldBar }))!;
+        const provider = async () => [
+          { openTime: oldBar + 3600_000, high: 52000, low: 50500, close: 51200 },
+          { openTime: oldBar + 7200_000, high: 52100, low: 50600, close: 51800 },
+        ];
+        await settlePendingSignals(provider);
+        const updated = getAllSignals()[0];
+        expect(updated.status).toBe('expired');
+        expect(updated.exitPrice).toBe(51800);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+    it('непросроченный pending без касаний остаётся pending', async () => {
+      const recentBar = Date.now() - 60 * 60 * 1000; // час назад — живой сигнал
+      addSignal(newSig({ barTime: recentBar }))!;
+      const provider = async () => [
+        { openTime: recentBar + 1, high: 52000, low: 50500, close: 51200 },
+      ];
+      await settlePendingSignals(provider);
+      expect(getAllSignals()[0].status).toBe('pending');
+    });
   });
 
   it('export/import round-trip', () => {

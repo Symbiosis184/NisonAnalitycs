@@ -481,6 +481,17 @@ export async function settlePendingSignals(
       entry.status = outcome.status;
       applyExit(entry, outcome.exitPrice);
       changed = true;
+    } else if (after.length > 0) {
+      // Ни цель, ни стоп так и не были достигнуты, а формация отработала свой
+      // срок жизни — фиксируем исход по последней закрытой свече (Нисон:
+      // неподтверждённый сигнал аннулируется). Иначе запись вечно висела бы
+      // pending без возможности попасть в статистику.
+      const maxAge = entry.timeframe === 'D' ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+      if (Date.now() - cutoff > maxAge) {
+        entry.status = 'expired';
+        applyExit(entry, after[after.length - 1].close);
+        changed = true;
+      }
     }
   }
 
