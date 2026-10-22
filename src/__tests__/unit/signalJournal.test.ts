@@ -121,6 +121,26 @@ describe('Журнал (localStorage)', () => {
     expect(getAllSignals()).toHaveLength(1);
   });
 
+  it('дедупликация по barTime: та же формация на том же баре не записывается повторно', () => {
+    const bt = 1700000000000;
+    // Сценарий live-дублей: движок переизлучает формацию при каждом реанализе,
+    // цена входа слегка «дрейфует» — старый фильтр по entryPrice её не ловил.
+    addSignal(newSig({ barTime: bt, entryPrice: 50000 } as any));
+    expect(addSignal(newSig({ barTime: bt, entryPrice: 50012.5 } as any))).toBeNull();
+    expect(getAllSignals()).toHaveLength(1);
+    // Но та же формация на НОВОМ баре подтверждения — новый сигнал
+    expect(addSignal(newSig({ barTime: bt + 86400000, entryPrice: 50012.5 } as any))).not.toBeNull();
+    expect(getAllSignals()).toHaveLength(2);
+  });
+
+  it('barTime сохраняется в записи и проходит санитизацию', () => {
+    const e = addSignal(newSig({ barTime: 1700000000123.7 } as any))!;
+    expect(e.barTime).toBe(1700000000123); // floor
+    // Некорректный barTime (NaN/строка) просто отбрасывается, запись валидна
+    const e2 = addSignal(newSig({ barTime: NaN, entryPrice: 60000 } as any))!;
+    expect(e2.barTime).toBeUndefined();
+  });
+
   it('addSignal не допускает вредный symbol в журнале (возвращает null либо бросает)', () => {
     for (const bad of ['BAD SYMBOL!', 'BTC&x=1', '<script>']) {
       let result: unknown = 'threw';

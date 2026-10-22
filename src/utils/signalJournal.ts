@@ -28,6 +28,8 @@ export interface SignalEntry {
   /** Эффект издержки цикла, выраженный в единицах риска R */
   costsR?: number;
   notes?: string;
+  /** openTime (мс) бара подтверждения формации — ключ дедупликации сигналов */
+  barTime?: number;
 }
 
 export interface SignalStats {
@@ -210,6 +212,12 @@ export function sanitizeSignalEntry(raw: any): SignalEntry | null {
   const notes = sanitizeText(raw.notes, 500);
   if (notes) sanitized.notes = notes;
 
+  // barTime — openTime бара подтверждения (ключ дедупликации). Не обязателен:
+  // старые записи журнала его не содержат.
+  if (typeof raw.barTime === 'number' && Number.isFinite(raw.barTime) && raw.barTime > 0) {
+    sanitized.barTime = Math.floor(raw.barTime);
+  }
+
   return sanitized;
 }
 
@@ -236,6 +244,25 @@ export function addSignal(signal: Omit<SignalEntry, 'id' | 'timestamp' | 'status
   }
 
   const entries = loadJournal();
+
+  // Дедупликация по «идентификатору события»: тот же символ, ТФ, паттерн и
+  // направление на том же баре подтверждения (barTime) — это ОДНА И ТА ЖЕ
+  // формация. Движок возвращает её на каждом реанализе в пределах окна
+  // сканирования (~20 баров), поэтому без barTime одна формация записывалась
+  // повторно после закрытия каждого следующего бара (дубли в журнале).
+  if (clean.barTime !== undefined) {
+    const sameEvent = entries.some(entry =>
+      entry.symbol === clean.symbol &&
+      entry.timeframe === clean.timeframe &&
+      entry.pattern === clean.pattern &&
+      entry.direction === clean.direction &&
+      entry.barTime === clean.barTime
+    );
+    if (sameEvent) {
+      console.warn('Дубликат сигнала (та же формация на том же баре) пропущен');
+      return null;
+    }
+  }
 
   // Проверка на дубликаты: тот же символ, паттерн, направление и цена входа
   const isDuplicate = entries.some(entry =>

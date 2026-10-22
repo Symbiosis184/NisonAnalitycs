@@ -239,6 +239,9 @@ export default function Analysis() {
             target: signal.target,
             riskReward: signal.rr,
             confidence: signal.quality * 100,
+            // Бар подтверждения формации — ключ дедупликации: движок отдаёт ту
+            // же формацию на каждом реанализе в пределах окна сканирования.
+            barTime: signal.bar_time,
           });
           
           if (result) {
