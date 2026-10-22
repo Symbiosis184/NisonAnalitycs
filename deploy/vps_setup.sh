@@ -13,7 +13,7 @@ WWW_DOMAIN="www.kairi.pro"
 
 echo "==> 1/8 Установка пакетов (nginx, git, curl, certbot)"
 # v2: bootstrap-fix (certbot webroot, self-signed до выпуска LE)
-export DEPLOY_SCRIPT_REV="v4"
+export DEPLOY_SCRIPT_REV="v5"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx python3-dnspython || {
@@ -84,7 +84,7 @@ server {
     server_name $DOMAIN www.$DOMAIN _;
 
     location /.well-known/acme-challenge/ {
-        root /var/www/html;
+        root $WEB_ROOT;
     }
 $( [ "$with_ssl" = "yes" ] && echo '
     location / {
@@ -172,20 +172,39 @@ except Exception: pass" 2>/dev/null; done | sort -u | tr '\n' ' ')
     # если домен ведёт НЕ только на нас — HTTP-челлендж может уйти на чужой сервер, ставим standalone
     MULTI_IP="no"
     [ "$(echo "$EXT_RESOLVED" | wc -w)" -gt 1 ] && MULTI_IP="yes"
-    systemctl stop nginx 2>/dev/null || true
     OK=""
+    issue_cert() {
+        # $1 = authenticator: webroot | standalone
+        if [ "$1" = "standalone" ]; then
+            # временная остановка nginx, чтобы освободить порт 80
+            systemctl stop nginx 2>/dev/null || true
+            sleep 1
+            certbot certonly --standalone --preferred-port 80 -d "$host" \
+                --non-interactive --agree-tos -m "admin@$DOMAIN" --keep-until-expiring 2>&1 \
+            || certbot certonly --standalone --preferred-port 80 -d "$host" \
+                --non-interactive --agree-tos --register-unsafely-without-email --keep-until-expiring 2>&1
+            RC=$?
+            systemctl start nginx 2>/dev/null || nginx 2>/dev/null || true
+            return $RC
+        else
+            mkdir -p "$WEB_ROOT/.well-known/acme-challenge"
+            certbot certonly --webroot -w "$WEB_ROOT" -d "$host" \
+                --non-interactive --agree-tos -m "admin@$DOMAIN" --keep-until-expiring 2>&1 \
+            || certbot certonly --webroot -w "$WEB_ROOT" -d "$host" \
+                --non-interactive --agree-tos --register-unsafely-without-email --keep-until-expiring 2>&1
+            return $?
+        fi
+    }
     if [ "$MULTI_IP" = "yes" ]; then
-        certbot certonly --standalone --preferred-port 80 -d "$host" \
-            --non-interactive --agree-tos -m "admin@$DOMAIN" --keep-until-expiring 2>&1 \
-        || certbot certonly --standalone --preferred-port 80 -d "$host" \
-            --non-interactive --agree-tos --register-unsafely-without-email --keep-until-expiring 2>&1 \
-        && OK="yes"
+        issue_cert standalone && OK="yes"
     else
-        certbot certonly --webroot -w /var/www/html -d "$host" \
-            --non-interactive --agree-tos -m "admin@$DOMAIN" --keep-until-expiring 2>&1 \
-        || certbot certonly --webroot -w /var/www/html -d "$host" \
-            --non-interactive --agree-tos --register-unsafely-without-email --keep-until-expiring 2>&1 \
-        && OK="yes"
+        # основной путь: webroot (nginx остаётся запущенным)
+        issue_cert webroot && OK="yes"
+        # запасной путь: standalone (если LE не смог достучаться до nginx: firewall/хостинг)
+        if [ -z "$OK" ]; then
+            echo "    webroot не сработал — пробую standalone (кратковременная остановка nginx)"
+            issue_cert standalone && OK="yes"
+        fi
     fi
     systemctl start nginx 2>/dev/null || nginx 2>/dev/null || true
     if [ -n "$OK" ]; then
