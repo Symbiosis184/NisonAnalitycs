@@ -13,7 +13,7 @@ WWW_DOMAIN="www.kairi.pro"
 
 echo "==> 1/9 Установка пакетов (nginx, git, curl, certbot)"
 # v2: bootstrap-fix (certbot webroot, self-signed до выпуска LE)
-export DEPLOY_SCRIPT_REV="v7"
+export DEPLOY_SCRIPT_REV="v8"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx python3-dnspython || {
@@ -151,22 +151,56 @@ else
     write_nginx_conf no
 fi
 nginx -t
-# Корректный (пере)запуск nginx: enable --now не работает, если юнит уже
-# «активен» после предыдущих прогонов скрипта, а старый мастер-процесс мог
-# остаться запущенным вручную (без systemd) — тогда старт падает с ошибкой.
+
+who_listens() {
+    # $1 = порт; показать, кто занимает порт (для диагностики)
+    if command -v ss >/dev/null 2>&1; then
+        ss -ltnp 2>/dev/null | grep -E ":$1\b" || true
+    else
+        netstat -ltnp 2>/dev/null | grep -E ":$1\b" || true
+    fi
+}
+
+free_nginx_procs() {
+    # Полностью гасим ВСЕ процессы nginx (в т.ч. осиротевшие мастера,
+    # оставшиеся от ручного запуска в прошлых прогонах — они держат порты
+    # и не видны systemctl). Дождитесь завершения, затем SIGKILL.
+    for i in 1 2 3; do
+        pgrep -x nginx >/dev/null 2>&1 || return 0
+        pkill -x nginx >/dev/null 2>&1 || true
+        sleep 1
+    done
+    pkill -9 -x nginx >/dev/null 2>&1 || true
+    sleep 1
+}
+
+start_nginx_via_systemd() {
+    systemctl reset-failed nginx 2>/dev/null || true
+    if systemctl start nginx 2>/dev/null; then
+        sleep 1
+        systemctl is-active --quiet nginx && return 0
+    fi
+    return 1
+}
+
+# Корректный (пере)запуск nginx: сначала пробуем штатный restart; если порт
+# занят осиротевшим процессом — убиваем ВСЕ nginx и стартуем через systemd.
 systemctl enable nginx >/dev/null 2>&1 || true
 if ! systemctl restart nginx; then
-    echo "    systemctl restart не удался — останавливаем все процессы nginx и поднимаем заново"
-    pkill -x nginx 2>/dev/null || true
-    sleep 1
-    systemctl reset-failed nginx 2>/dev/null || true
-    systemctl restart nginx || {
-        echo "    !! nginx не удалось запустить через systemd, пробуем напрямую:"
-        journalctl -u nginx --no-pager -n 20 2>/dev/null || true
-        nginx
-    }
+    echo "    systemctl restart не удался — показываем, кто занимает порты, и убиваем все процессы nginx"
+    journalctl -u nginx --no-pager -n 5 2>/dev/null | grep emerg || true
+    echo "    Занято портов: [80] $(who_listens 80 | tr '\n' ' ') [443] $(who_listens 443 | tr '\n' ' ')"
+    free_nginx_procs
+    if ! start_nginx_via_systemd; then
+        echo "    !! systemd не поднимает nginx — запускаем напрямую (после полной очистки процессов):"
+        nginx || {
+            echo "    !! Прямой запуск тоже не удался. Кто слушает 80/443 сейчас:"
+            who_listens 80; who_listens 443
+            echo "       Попробуйте найти чужой сервис: systemctl list-units --type=service --state=running"
+        }
+    fi
 fi
-systemctl reload nginx 2>/dev/null || nginx -s reload || true
+systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null || true
 
 # фаервол (если ufw активен)
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
@@ -230,13 +264,13 @@ except Exception: pass" 2>/dev/null; done | sort -u | tr '\n' ' ')
         if [ "$1" = "standalone" ]; then
             # временная остановка nginx, чтобы освободить порт 80
             systemctl stop nginx 2>/dev/null || true
-            sleep 1
+            free_nginx_procs
             certbot certonly --standalone --preferred-port 80 -d "$host" \
                 --non-interactive --agree-tos -m "admin@$DOMAIN" --keep-until-expiring 2>&1 \
             || certbot certonly --standalone --preferred-port 80 -d "$host" \
                 --non-interactive --agree-tos --register-unsafely-without-email --keep-until-expiring 2>&1
             RC=$?
-            systemctl start nginx 2>/dev/null || nginx 2>/dev/null || true
+            start_nginx_via_systemd || nginx 2>/dev/null || true
             return $RC
         else
             mkdir -p "$WEB_ROOT/.well-known/acme-challenge"
@@ -248,14 +282,13 @@ except Exception: pass" 2>/dev/null; done | sort -u | tr '\n' ' ')
         fi
     }
     ensure_nginx() {
-        # nginx должен работать через systemd; старый мастер-процесс, запущенный
-        # вручную (без /run/nginx.pid), не даёт systemctl start — чистим и поднимаем заново
+        # nginx должен работать через systemd; осиротевшие процессы от
+        # предыдущих прогонов держат порты — полная очистка + старт
         if ! pgrep -x nginx >/dev/null 2>&1; then
-            systemctl reset-failed nginx 2>/dev/null || true
-            systemctl start nginx 2>/dev/null || nginx 2>/dev/null || true
-        elif [ ! -f /run/nginx.pid ]; then
-            pkill -x nginx 2>/dev/null || true; sleep 1
-            systemctl restart nginx 2>/dev/null || nginx 2>/dev/null || true
+            start_nginx_via_systemd || nginx 2>/dev/null || true
+        elif [ ! -f /run/nginx.pid ] || ! systemctl is-active --quiet nginx 2>/dev/null; then
+            free_nginx_procs
+            start_nginx_via_systemd || nginx 2>/dev/null || true
         fi
     }
     if [ "$MULTI_IP" = "yes" ]; then
@@ -277,10 +310,10 @@ done
 if [ -n "$ISSUED" ] && [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
     # переписываем конфиг уже с настоящими сертификатами и редиректом HTTP->HTTPS
     write_nginx_conf yes
-    nginx -t && (systemctl reload nginx 2>/dev/null || nginx -s reload)
+    nginx -t && (systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null)
 fi
 [ -z "$ISSUED" ] && echo "    WARNING: ни один хост не получил сертификат — сайт будет доступен только по http://"
-systemctl reload nginx 2>/dev/null || nginx -s reload || true
+systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null || true
 
 echo "==> 9/9 Автопродление сертификатов (certbot renew)"
 mkdir -p /etc/cron.d
