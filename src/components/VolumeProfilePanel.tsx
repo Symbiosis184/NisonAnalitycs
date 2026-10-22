@@ -4,7 +4,6 @@
 // 2) DeltaChart — proxy-дельта по свечам окна + накопленная дельта (cumulative delta).
 // Данные берутся из готового отчёта анализа (report.volume_profile / delta_summary / signals[].path).
 
-import { memo } from 'react';
 import { formatPrice } from '../utils/format';
 import type { AnalysisReport, SignalDTO } from '../api/types';
 
@@ -79,7 +78,7 @@ export function VolumeProfileNotes({ profile, price }: Pick<VPProps, 'profile' |
   );
 }
 
-function VolumeProfileChartImpl({ profile, price, signal }: VPProps) {
+export function VolumeProfileChart({ profile, price, signal }: VPProps) {
   const bins = profile.bins ?? [];
   if (bins.length === 0) return null;
 
@@ -279,7 +278,7 @@ export function DeltaNotes({ summary, priceChangePct }: { summary: DeltaSummary;
   );
 }
 
-function DeltaChartImpl({ summary }: DeltaProps) {
+export function DeltaChart({ summary }: DeltaProps) {
   const points = summary.points ?? [];
   if (points.length === 0) return null;
 
@@ -342,9 +341,3 @@ function DeltaChartImpl({ summary }: DeltaProps) {
     </div>
   );
 }
-
-// Оптимизация: SVG-профили дорогие; memo отсекает ре-рендер на live-тикках страницы.
-export const VolumeProfileChart = memo(VolumeProfileChartImpl);
-
-// Оптимизация: SVG-профили дорогие; memo отсекает ре-рендер на live-тикках страницы.
-export const DeltaChart = memo(DeltaChartImpl);

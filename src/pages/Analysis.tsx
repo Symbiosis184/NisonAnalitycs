@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, TrendingUp, TrendingDown, Activity, AlertTriangle, RefreshCw, Target, Shield, BarChart2, Zap, CandlestickChart as ChartIcon } from 'lucide-react';
 import { api, type AnalysisReport } from '../api/client';
@@ -162,6 +162,21 @@ export default function Analysis() {
   const [riskSettings, setRiskSettings] = useState(loadRiskSettings);
   const [showRiskPanel, setShowRiskPanel] = useState(false);
 
+  const applyRiskSettings = (capitalUsd: number, riskPct: number) => {
+    const clean = saveRiskSettings({ capitalUsd, riskPct });
+    setRiskSettings(clean);
+    // Пересчитываем планы позиций уже загруженных сигналов без нового сетевого запроса
+    setReport((prev) => prev && ({
+      ...prev,
+      signals: prev.signals.map((s) => {
+        const plan = api.planForSignal(s, clean);
+        const next = { ...s };
+        delete next.position_plan;
+        return plan ? { ...next, position_plan: plan } : next;
+      }),
+    }));
+  };
+
   const loadAnalysis = async (opts: { force?: boolean } = {}) => {
     if (!symbol) return;
     
@@ -178,47 +193,20 @@ export default function Analysis() {
     }
   };
 
-  // Стабильные ссылки на колбэки: без useCallback каждое изменение live-свечи
-  // создавало бы новые функции и ломало мемоизацию дочерних компонентов.
-  const applyRiskSettings = useCallback((capitalUsd: number, riskPct: number) => {
-    const clean = saveRiskSettings({ capitalUsd, riskPct });
-    setRiskSettings(clean);
-    // Пересчитываем планы позиций уже загруженных сигналов без нового сетевого запроса
-    setReport((prev) => prev && ({
-      ...prev,
-      signals: prev.signals.map((s) => {
-        const plan = api.planForSignal(s, clean);
-        const next = { ...s };
-        delete next.position_plan;
-        return plan ? { ...next, position_plan: plan } : next;
-      }),
-    }));
-  }, []);
-
-  const loadAnalysisRef = useRef(loadAnalysis);
-  loadAnalysisRef.current = loadAnalysis;
-
   useEffect(() => {
     loadAnalysis();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol, timeframe]);
 
   // ── Живая цена и свеча через WebSocket Bybit (kline-поток спота) ──────────
   // Обновляет заголовок цены и последний бар графика в реальном времени без
   // REST-поллинга. По закрытию бара — автоматический полный реанализ.
   const [lastBarCloseTs, setLastBarCloseTs] = useState(0);
-  const onBarClose = useCallback(() => setLastBarCloseTs(Date.now()), []);
-  const liveCandle = useBybitLiveCandle(symbol, timeframe, onBarClose);
-  // «Живым» считается тик не старше 30 с; стабильная ссылка на объект нужна,
-  // чтобы CandlestickChart не пересобирал график на каждое обновление ts.
-  const isLiveFresh = !!liveCandle && Date.now() - liveCandle.ts < 30_000;
-  const freshLiveCandle = isLiveFresh ? liveCandle : null;
-  const livePrice = isLiveFresh && liveCandle ? liveCandle.close : report?.price ?? 0;
-  const toggleRiskPanel = useCallback(() => setShowRiskPanel((v) => !v), []);
+  const liveCandle = useBybitLiveCandle(symbol, timeframe, () => setLastBarCloseTs(Date.now()));
   useEffect(() => {
     if (lastBarCloseTs === 0 || !symbol) return;
-    const t = setTimeout(() => { loadAnalysisRef.current({ force: true }); }, 1500); // даём бирже зафиксировать бар
+    const t = setTimeout(() => { loadAnalysis({ force: true }); }, 1500); // даём бирже зафиксировать бар
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastBarCloseTs, symbol, timeframe]);
 
   // Мульти-ТФ карта зон: грузится параллельно с основным анализом, ошибки не блокируют страницу
@@ -284,15 +272,11 @@ export default function Analysis() {
 
   const baseAsset = symbol?.replace('USDT', '') || '';
   const isPositive = report.change_24h >= 0;
-  // Оптимизация: тяжёлые производные данные считаются только при смене отчёта,
-  // а не на каждый WebSocket-тиг живой свечи (страница перерисовывается ~1–3 р/с).
-  const confirmedPatterns = useMemo(() => report.patterns.filter((p) => p.confirmed), [report]);
-  const volumeRatio = useMemo(() => (
-    report.candles.length > 0
-      ? report.candles[report.candles.length - 1].volume /
-        (report.candles.reduce((sum: number, c) => sum + c.volume, 0) / report.candles.length)
-      : 1
-  ), [report]);
+  const confirmedPatterns = report.patterns.filter((p) => p.confirmed);
+  const volumeRatio = report.candles.length > 0 
+    ? report.candles[report.candles.length - 1].volume / 
+      (report.candles.reduce((sum: number, c) => sum + c.volume, 0) / report.candles.length)
+    : 1;
 
   const getConsensusColor = (score: number) => {
     if (score >= 4) return 'text-green-400 bg-green-500/10 border-green-500/20';
@@ -301,23 +285,9 @@ export default function Analysis() {
   };
 
   // Сигналы с рассчитанным «путём цены» — для selectable-оверлея на профиле объёма
-  const pathSignals = useMemo(() => report.signals.filter((s) => s.path), [report]);
+  const pathSignals = report.signals.filter((s) => s.path);
   const activePathSignal =
     activePathSignalIdx >= 0 ? pathSignals[Math.min(activePathSignalIdx, pathSignals.length - 1)] : undefined;
-
-  // Живые сигналы (не invalidated) — стабильная ссылка для memo-детей (PricePathCard)
-  const activeSignals = useMemo(
-    () => report.signals.filter((s) => (s.lifecycle_status ?? (s.confirmed ? 'confirmed' : 'pending')) !== 'invalidated'),
-    [report],
-  );
-  const confirmedCount = useMemo(
-    () => report.signals.filter((s) => s.lifecycle_status === 'confirmed').length,
-    [report],
-  );
-  const pendingCount = useMemo(
-    () => report.signals.filter((s) => (s.lifecycle_status ?? 'pending') === 'pending').length,
-    [report],
-  );
 
   return (
     <div className="space-y-6">
@@ -341,8 +311,8 @@ export default function Analysis() {
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2">
-            <span className="text-xl sm:text-2xl font-bold text-white">${formatPrice(livePrice)}</span>
-            {isLiveFresh && (
+            <span className="text-xl sm:text-2xl font-bold text-white">${formatPrice(liveCandle && Date.now() - liveCandle.ts < 30_000 ? liveCandle.close : report.price)}</span>
+            {liveCandle && Date.now() - liveCandle.ts < 30_000 && (
               <span className="animate-live-pulse inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-500/10 border border-green-500/20 text-green-400 text-[11px] font-medium" title="Цена и свеча обновляются в реальном времени через WebSocket Bybit">
                 <span className="relative flex w-1.5 h-1.5">
                   <span className="absolute inline-flex w-full h-full rounded-full bg-green-400 opacity-60 animate-ping" />
@@ -465,7 +435,7 @@ export default function Analysis() {
           support={report.support}
           resistance={report.resistance}
           height={chartHeight}
-          live={freshLiveCandle}
+          live={liveCandle && Date.now() - liveCandle.ts < 30_000 ? liveCandle : null}
         />
       </Collapsible>
 
@@ -732,15 +702,15 @@ export default function Analysis() {
       {report.edge && <EdgeVerificationPanel edge={report.edge} />}
 
       {/* 5. ТОРГОВЫЕ СИГНАЛЫ — аудит №11: живой список со статусами жизненного цикла */}
-      {activeSignals.length > 0 && (
+      {report.signals.filter((s) => (s.lifecycle_status ?? (s.confirmed ? 'confirmed' : 'pending')) !== 'invalidated').length > 0 && (
         <Collapsible
           storageKey="signals"
           icon={<Target className="w-5 h-5 text-amber-400" />}
           title="Сценарии (Нисон: ожидание → подтверждение)"
           badge={
             <>
-              <span className="text-xs text-green-400">✓ {confirmedCount}</span>
-              <span className="text-xs text-yellow-400">⏳ {pendingCount}</span>
+              <span className="text-xs text-green-400">✓ {report.signals.filter((s) => s.lifecycle_status === 'confirmed').length}</span>
+              <span className="text-xs text-yellow-400">⏳ {report.signals.filter((s) => (s.lifecycle_status ?? 'pending') === 'pending').length}</span>
             </>
           }
         >
@@ -749,11 +719,11 @@ export default function Analysis() {
             <Target className="w-5 h-5 text-amber-400" />
             Сценарии (Нисон: ожидание → подтверждение)
             <span className="text-xs text-gray-500 font-normal ml-2">
-              подтверждено {confirmedCount} · ждёт {pendingCount} из {report.signals.length}
+              подтверждено {report.signals.filter((s) => s.lifecycle_status === 'confirmed').length} · ждёт {report.signals.filter((s) => (s.lifecycle_status ?? 'pending') === 'pending').length} из {report.signals.length}
             </span>
             {/* Аудит №10: редактор риск-настроек для расчёта размера позиции */}
             <button
-              onClick={toggleRiskPanel}
+              onClick={() => setShowRiskPanel((v) => !v)}
               className="ml-auto px-2 py-1 rounded text-xs font-medium bg-gray-800/60 text-gray-300 hover:text-white border border-gray-700/50"
             >
               Риск: {(riskSettings.riskPct * 100).toFixed(1)}% · {riskSettings.capitalUsd.toLocaleString('ru-RU')} $
@@ -763,7 +733,7 @@ export default function Analysis() {
             <RiskSettingsPanel settings={riskSettings} onApply={applyRiskSettings} />
           )}
           <div className="space-y-3">
-            {activeSignals.map((signal, idx: number) => (
+            {report.signals.filter((signal) => (signal.lifecycle_status ?? (signal.confirmed ? 'confirmed' : 'pending')) !== 'invalidated').map((signal, idx: number) => (
               <div
                 key={idx}
                 className={`p-4 rounded-lg border ${
