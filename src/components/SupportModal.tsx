@@ -130,7 +130,7 @@ export default function SupportModal({ open, onClose }: Props) {
           <h3 className="text-lg font-bold text-white">Поддержать проект</h3>
         </div>
         <p className="text-sm text-gray-400 mb-5">
-          Nison Analytics развивается бесплатно. Если анализ полезен — вы можете поддержать
+          Kairi Analytics развивается бесплатно. Если анализ полезен — вы можете поддержать
           развитие проекта переводом GRAM в сети The Open Network.
         </p>
 

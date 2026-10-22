@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Nison Analytics — скрипт сборки и деплоя (П.4)
+# Kairi Analytics — скрипт сборки и деплоя (П.4)
 # Использование:
 #   ./deploy.sh                 # только проверка качества + сборка в dist/
 #   ./deploy.sh netlify         # то же + публикация через Netlify CLI (нужен NETLIFY_AUTH_TOKEN)
