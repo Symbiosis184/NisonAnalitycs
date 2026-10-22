@@ -68,7 +68,7 @@ server {
 
     # index.html не кешируем: иначе браузер показывает старый билд
     # со ссылками на устаревшие чанки (белый экран после деплоя)
-    location = /index.html {   # v2
+    location = /index.html {
         add_header Cache-Control "no-cache, must-revalidate";
     }
 
