@@ -11,16 +11,50 @@ BUILD_DIR="/opt/nison-build"
 DOMAIN="kairi.pro"
 WWW_DOMAIN="www.kairi.pro"
 
-echo "==> 1/9 Установка пакетов (nginx, git, curl, certbot)"
-# v2: bootstrap-fix (certbot webroot, self-signed до выпуска LE)
-export DEPLOY_SCRIPT_REV="v8"
+echo "==> 1/10 Установка пакетов (nginx, git, curl, certbot)"
+# v9: stop docker containers on 80/443 + non-interactive DNS-01 cert issuance
+export DEPLOY_SCRIPT_REV="v9"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx python3-dnspython || {
     echo "Установка прервалась — донастраиваем dpkg и повторяем";
     dpkg --configure -a; apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx python3-dnspython; }
 
-echo "==> 2/9 Node.js 22 LTS (нужен для сборки фронтенда)"
+echo "==> 2/10 Остановка docker-контейнеров, занимающих порты 80/443"
+# На сервере docker-proxy держит 0.0.0.0:443 (и, возможно, 80) — nginx не может
+# забиндиться. Находим контейнеры с пробросом этих портов и останавливаем их.
+stop_docker_on_ports() {
+    if ! command -v docker >/dev/null 2>&1; then
+        echo "    docker не установлен — проускаем"
+        return 0
+    fi
+    local stopped=0
+    # docker ps --format '{{.ID}} {{.Ports}}' -> строки вида "... 0.0.0.0:443->80/tcp ..."
+    while read -r cid ports; do
+        [ -z "$cid" ] && continue
+        if echo "$ports" | grep -qE '0\.0\.0\.0:(80|443)->|\[::\]:(80|443)->'; then
+            local name
+            name=$(docker inspect --format '{{.Name}}' "$cid" 2>/dev/null | sed 's|^/||')
+            echo "    Останавливаю контейнер $name ($cid), порты: $ports"
+            docker stop "$cid" >/dev/null 2>&1 && stopped=$((stopped+1))
+        fi
+    done < <(docker ps --format '{{.ID}} {{.Ports}}' 2>/dev/null)
+    if [ "$stopped" -gt 0 ]; then
+        echo "    Остановлено контейнеров: $stopped"
+        # отключаем автоперезапуск, чтобы после ребута они не вернулись на порты
+        while read -r cid ports; do
+            [ -z "$cid" ] && continue
+            if echo "$ports" | grep -qE '0\.0\.0\.0:(80|443)->|\[::\]:(80|443)->'; then
+                docker update --restart=no "$cid" >/dev/null 2>&1 || true
+            fi
+        done < <(docker ps -a --format '{{.ID}} {{.Ports}}' 2>/dev/null | awk '!seen[$1]++')
+    else
+        echo "    Контейнеры на 80/443 не найдены"
+    fi
+}
+stop_docker_on_ports
+
+echo "==> 3/10 Node.js 22 LTS (нужен для сборки фронтенда)"
 if ! command -v npm >/dev/null 2>&1; then
     if [ ! -f /etc/apt/sources.list.d/nodesource.list ]; then
         mkdir -p /etc/apt/keyrings
@@ -34,7 +68,7 @@ if ! command -v npm >/dev/null 2>&1; then
 fi
 echo "    node $(node -v), npm $(npm -v)"
 
-echo "==> 3/9 Подготовка окружения nginx (IPv6, конфликты default_server, leftover-конфиги)"
+echo "==> 4/10 Подготовка окружения nginx (IPv6, конфликты default_server, leftover-конфиги)"
 if [ ! -e /proc/net/if_inet6 ]; then
     sed -ri 's/^(\s*)listen\s+\[::\]:80.*/\1# disabled (no IPv6): &/' /etc/nginx/sites-available/default /etc/nginx/conf.d/*.conf 2>/dev/null || true
 fi
@@ -48,20 +82,20 @@ if grep -qsE '^\s*listen\s+(\[::\]:)?80\s+default_server' /etc/nginx/sites-enabl
 fi
 dpkg --configure -a 2>/dev/null || true
 
-echo "==> 4/9 Сборка фронтенда из GitHub (main)"
+echo "==> 5/10 Сборка фронтенда из GitHub (main)"
 rm -rf "$BUILD_DIR"
 git clone --depth 50 "$REPO" -b main "$BUILD_DIR"
 cd "$BUILD_DIR"
 npm ci --silent --no-audit --no-fund
 npm run build
 
-echo "==> 5/9 Публикация статики в $WEB_ROOT"
+echo "==> 6/10 Публикация статики в $WEB_ROOT"
 mkdir -p "$WEB_ROOT"
 rm -rf "${WEB_ROOT:?}/"*
 cp -r dist/* "$WEB_ROOT/"
 chown -R www-data:www-data "$WEB_ROOT" && chmod -R a+rX "$WEB_ROOT"
 
-echo "==> 6/9 Настройка nginx (домен $DOMAIN) + запуск"
+echo "==> 7/10 Настройка nginx (домен $DOMAIN) + запуск"
 write_nginx_conf() {
     local with_ssl="$1"   # yes|no
     local ssl_block="" redirect_block=""
@@ -207,7 +241,7 @@ if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
     ufw allow 80/tcp >/dev/null; ufw allow 443/tcp >/dev/null || true
 fi
 
-echo "==> 7/9 Диагностика доступности портов 80/443 снаружи"
+echo "==> 8/10 Диагностика доступности портов 80/443 снаружи"
 # Проверка идёт через внешний сервис (scan.nmap.org), т.к. локальная проверка
 # не видит файрвол провайдера. Если порт закрыт — сертификат LE получить нельзя,
 # но сайт продолжит работать по http:// и повторится попытка при следующем запуске.
@@ -237,7 +271,7 @@ if command -v iptables >/dev/null 2>&1; then
     fi
 fi
 
-echo "==> 8/9 SSL-сертификат Let's Encrypt для $DOMAIN"
+echo "==> 9/10 SSL-сертификат Let's Encrypt для $DOMAIN"
 SERVER_IP=$(curl -fsS --max-time 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
 ISSUED=""
 SKIP_CERTBOT=""
@@ -298,6 +332,30 @@ except Exception: pass" 2>/dev/null; done | sort -u | tr '\n' ' ')
         issue_cert webroot && OK="yes"
     fi
     ensure_nginx
+    if [ -z "$OK" ]; then
+        # Финальная попытка: DNS-01 — порт 80 снаружи не нужен вообще.
+        # Certbot сам создаст TXT-запись _acme-challenge в Temporary ACME DNS
+        # (https://temporaryacme.diafore.com), LE проверит её публично.
+        echo "    Пробую выпуск через DNS (Temporary ACME DNS, порт 80 не нужен)..."
+        mkdir -p /etc/letsencrypt
+        cat > /etc/letsencrypt/temp-acme.ini <<'EOF'
+certbot-plugin = certbot_dns_tempacme.dns_tempacme:DNSCreator
+EOF
+        if ! python3 -c "import certbot_dns_tempacme" 2>/dev/null; then
+            (pip3 install --break-system-packages -q certbot-dns-tempacme 2>/dev/null \
+              || pip3 install -q certbot-dns-tempacme 2>/dev/null \
+              || python3 -m pip install --break-system-packages -q certbot-dns-tempacme 2>/dev/null) || true
+        fi
+        if python3 -c "import certbot_dns_tempacme" 2>/dev/null; then
+            certbot certonly --configurator nginx --non-interactive --agree-tos \
+                -m "admin@$DOMAIN" --keep-until-expiring -d "$host" \
+                --dns-tempacme-propagation-seconds 15 \
+                --server "https://diafore-temp-acme.diafore.com/directory" \
+                --dns-credential /etc/letsencrypt/temp-acme.ini 2>&1 && OK="yes"
+        else
+            echo "    Plugin certbot-dns-tempacme не установлен — DNS-выпуск пропущен."
+        fi
+    fi
     if [ -n "$OK" ]; then
         ISSUED="yes"
         echo "    Сертификат выпущен/обновлён для $host"
@@ -315,7 +373,7 @@ fi
 [ -z "$ISSUED" ] && echo "    WARNING: ни один хост не получил сертификат — сайт будет доступен только по http://"
 systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null || true
 
-echo "==> 9/9 Автопродление сертификатов (certbot renew)"
+echo "==> 10/10 Автопродление сертификатов (certbot renew)"
 mkdir -p /etc/cron.d
 cat > /etc/cron.d/kairi-certbot-renew <<'EOF'
 0 3 * * * root certbot renew --quiet --deploy-hook "systemctl reload nginx || nginx -s reload"
