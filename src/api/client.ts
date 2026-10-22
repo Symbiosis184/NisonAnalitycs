@@ -4,7 +4,7 @@ import { ema, rsi, macd } from '../utils/indicators';
 import { detectPatterns, patternStory } from '../utils/patterns';
 import { signalGenerator } from '../utils/signal_generator';
 import { ZoneVoter, timeframeKey } from '../utils/zone_voter';
-import { detectTrendStart, getTrendContext, getTrendMacro, type TrendContext } from '../utils/trend_detection';
+import { detectTrendStart, getTrendContext, getTrendMacro, getTrendCascade, type TrendContext, type TrendCascadeResult } from '../utils/trend_detection';
 import { detectRegime } from '../utils/regime';
 import { splitLiveBar } from '../utils/live_bar';
 import { planPosition, toPlanDTO } from '../utils/position_sizing';
@@ -122,6 +122,24 @@ export function higherTimeframe(tf: string): string | null {
   return map[tf] ?? null;
 }
 
+/**
+ * Каскад СТАРШИХ таймфреймов для определения тренда-контекста (по книгам
+ * Нисона: направление задаёт старший ТФ, младший даёт вход). Возвращает
+ * цепочку строго старше текущего — от самого старшего к самому младшему
+ * из старших (например, для 1H: ['D', '4H']). Упорядочено по убыванию ТФ.
+ */
+export function timeframeCascade(tf: string): string[] {
+  const ORDER = ['1', '5', '15', '30', '1H', '4H', 'D', 'W'];
+  const idx = ORDER.indexOf(tf);
+  if (idx === -1 || idx === ORDER.length - 1) return [];
+  // Все вышестоящие ТФ, от старшего к младшему; максимум 3 ступени вверх
+  // (глубина каскада), чтобы не раздувать число сетевых запросов.
+  const higher = ORDER.slice(idx + 1);
+  const MAX_STEPS = 3;
+  const picked = higher.slice(Math.max(0, higher.length - MAX_STEPS));
+  return [...picked].reverse(); // W -> D -> 4H (от старшего к младшему)
+}
+
 export class ApiClient {
   async getAnalysis(symbol: string, timeframe: string = 'D', opts: { force?: boolean } = {}): Promise<AnalysisReport> {
     const klines = await fetchKlines(symbol, timeframe, 250, opts);
@@ -225,18 +243,38 @@ export class ApiClient {
     // Аудит №10: план размера позиции по правилу фиксированного риска.
     // Настройки (капитал/риск) берутся из localStorage; риск-расчёт учитывает издержки цикла.
     const riskSettings = loadRiskSettings();
-    // Аудит №9: контекст старшего ТФ (HTF) — отдельный запрос кэшируется http-слоем.
+    // Каскад ТФ по книгам Нисона (пункт 1 «Контекст»): направление задаёт СТАРШИЙ
+    // ТФ, младший даёт вход. Раньше использовался только один HTF; теперь
+    // опрашиваются все доступные старшие ступени (до 3 вверх), и итоговый
+    // контекст определяется голосом самого старшего ТФ с выраженной структурой.
+    // Всего в каскаде до 4 таймфреймов: текущий + W/D/4H (или D/4H/1H и т.д.).
+    const cascadeTfs = timeframeCascade(timeframe);
+    const higherSeries: Array<[string, Candle[]]> = [];
+    await Promise.all(
+      cascadeTfs.map(async (tf) => {
+        try {
+          const klines = await fetchKlines(symbol, tf, 250);
+          const closed = splitLiveBar(klines.map((k) => new Candle({
+            time: k.openTime, open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume,
+          }))).closed; // незакрытый бар старшего ТФ не участвует (без lookahead)
+          higherSeries.push([tf, closed]);
+        } catch {
+          /* нет данных ТФ — пропускаем ступень, каскад деградирует корректно */
+        }
+      }),
+    );
+    // Сортировка ступеней от старшего к младшему по таблице ORDER (higherSeries
+    // может прийти из Promise.all в любом порядке).
+    const TF_ORDER = ['1', '5', '15', '30', '1H', '4H', 'D', 'W'];
+    higherSeries.sort((a, b) => TF_ORDER.indexOf(b[0]) - TF_ORDER.indexOf(a[0]));
+    const cascadeEntries: Array<[string, Candle[]]> = [
+      ...higherSeries,
+      [timeframe, closedCandles], // текущий ТФ — последняя (младшая) ступень
+    ];
+    const trendCascade: TrendCascadeResult = getTrendCascade(cascadeEntries);
+    // Обратная совместимость: одиночный HTF = ближайшая старшая ступень.
     const htfTf = higherTimeframe(timeframe);
-    let htfCandles: Candle[] | null = null;
-    try {
-      if (!htfTf) throw new Error('no HTF mapping');
-      const htfKlines = await fetchKlines(symbol, htfTf, 250);
-      htfCandles = splitLiveBar(htfKlines.map((k) => new Candle({
-        time: k.openTime, open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume,
-      }))).closed; // последний недельный/дневной бар незакрыт — не участвует в HTF-тренде
-    } catch {
-      htfCandles = null; // нет HTF-данных — не блокируем основной отчёт (fallback в UI)
-    }
+    const htfCandles = higherSeries.find(([tf]) => tf === htfTf)?.[1] ?? null;
     const htfTrend: TrendContext | null = htfCandles ? getTrendMacro(htfCandles, currentPrice) : null;
 
     const apiSignals: SignalDTO[] = detectedSignals.map(s => {
@@ -304,7 +342,11 @@ export class ApiClient {
     // getTrendColor сравнивают именно их; английские значения detectRegime —
     // внутренний слой (edge_verification когорты), в DTO попадать не должны.
     const regimeInfo = detectRegime(closedCandles);
-    const regime: Regime = trend;
+    // Итоговый тренд-контекст — по КАСКАДУ ТФ (по Нисону направление задаёт
+    // старший интервал), а не по одному текущему ТФ. Текущий ТФ остаётся
+    // младшей ступенью каскада и влияет на контекст только когда старшие
+    // молчат (БОКОВИК).
+    const regime: Regime = trendCascade.context;
     const regimeLabel =
       regime === 'БОКОВИК' ? 'Боковик (флэт)' : regime === 'ВОСХОДЯЩИЙ' ? 'Восходящий тренд' : 'Нисходящий тренд';
     const regimeDescription =
@@ -396,7 +438,16 @@ export class ApiClient {
         // Реальная детекция старта тренда (движок trend_detection)
         trendStart: detectTrendStart(closedCandles, currentPrice),
         bookTrend: regime,
+        // Бета: каскад ТФ (4 ступени: текущий + до 3 старших) — контекст по книгам Нисона
+        cascade: {
+          context: trendCascade.context,
+          higherConfirmed: trendCascade.higherConfirmed,
+          decidedByTimeframe: trendCascade.decidedByTimeframe,
+          votes: trendCascade.votes.map((v) => ({ timeframe: v.timeframe, trend: v.trend })),
+        },
       },
+      // Журнал сигналов и эмпирический бэктест — бета (статистика накапливается)
+      beta: { journal: 'beta', backtest: 'beta' },
       ...(edgeReport ? { edge: edgeReport } : {}),
       generated: Date.now(),
     };

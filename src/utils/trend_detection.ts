@@ -37,13 +37,38 @@ export function getSwingTrend(candles: Candle[], k: number = 3): TrendContext {
   return 'БОКОВИК';
 }
 
+// Строгий боковик: цена внутри диапазона последних lookback баров и MA65
+// горизонтальна (наклон за последние ~10 баров меньше порога). Нисон: в
+// flat-рынке направление не определяется — торговать продолжение нельзя.
+function isFlatMarket(candles: Candle[]): boolean {
+  if (candles.length < 40) return false;
+  const closes = candles.map(c => c.close);
+  const win = closes.slice(-Math.min(60, closes.length));
+  const hi = Math.max(...win);
+  const lo = Math.min(...win);
+  const mid = (hi + lo) / 2;
+  if (mid <= 0) return false;
+  const rangePct = (hi - lo) / mid;
+  if (rangePct > 0.08) return false; // широкий диапазон — не флэт
+
+  const ma65 = ema(closes, Math.min(65, closes.length - 1));
+  const lastMa = ma65[ma65.length - 1];
+  const prevMa = ma65[Math.max(0, ma65.length - 11)];
+  const slopePct = lastMa > 0 ? Math.abs((lastMa - prevMa) / lastMa) : 1;
+  return slopePct < 0.005; // MA65 горизонтальна
+}
+
 // Контекст тренда: структура свингов (первична по Нисону) с MA-подтверждением.
 // Свечи опережают индикаторы, поэтому расхождение со скользящими трактуется
 // как ранний признак нового тренда, а не шум; БОКОВИК — при отсутствии обоих.
+// В явном флэте (узкий диапазон + горизонтальная MA65) MA-фильтр отключается:
+// он даёт случайное направление там, где направления нет.
 export function getTrendContext(candles: Candle[]): TrendContext {
   const swing = getSwingTrend(candles, 3);
 
   if (candles.length < 20) return swing;
+
+  if (isFlatMarket(candles)) return 'БОКОВИК';
 
   const closes = candles.map(c => c.close);
   const e10 = ema(closes, 10);
@@ -68,6 +93,9 @@ export function getTrendMacro(candles: Candle[], price: number): TrendContext {
   // Первичен структурный признак (свинги HH/HL или LH/LL)
   const swing = getSwingTrend(candles, 4);
   if (swing !== 'БОКОВИК') return swing;
+
+  // Явный флэт: узкий диапазон + горизонтальная MA65 -> БОКОВИК без голоса.
+  if (isFlatMarket(candles)) return 'БОКОВИК';
 
   // Нет выраженной структуры — смотрим на MA65 как на вторичный лагающий фильтр
   const closes = candles.map(c => c.close);
@@ -155,27 +183,39 @@ export function detectTrendStart(candles: Candle[], price: number): {
     }
   }
   
-  // 5) MA65 и пересечения
-  const ma65 = ema(closes, 65);
+  // 5) MA65 и пересечения (по канону Нисона: MA10 пересекает MA65; сигнал —
+  //    ФАКТ пересечения за последние бары, а не «линия выше линии», которая
+  //    срабатывала на всём протяжении уже существующего тренда).
+  const MA_CROSS_WINDOW = 8; // окно поиска факта пересечения (в барах)
+  const ma65 = ema(closes, Math.min(65, closes.length - 1));
   const ma65Val = ma65[ma65.length - 1];
   const ma65Prev = ma65[ma65.length - 6];
-  
+
   if (price > ma65Val && ma65Val > ma65Prev && candles.slice(-12, -1).some(c => c.close <= ma65Val)) {
     bull.push('цена выше MA65, средняя развернулась вверх (гл. 13)');
   }
   if (price < ma65Val && ma65Val < ma65Prev && candles.slice(-12, -1).some(c => c.close >= ma65Val)) {
     bear.push('цена ниже MA65, средняя развернулась вниз (гл. 13)');
   }
-  
+
   const ma10 = ema(closes, 10);
   const ma10Val = ma10[ma10.length - 1];
-  const ma10Prev = ma10[ma10.length - 4];
-  
-  if (ma10Val > ma65Val && ma65Val >= ma10Prev) {
-    bull.push('золотой крест MA10/MA65 (гл. 13)');
+
+  // Факт пересечения MA10 через MA65: знак разности сменился в последнем окне.
+  let goldenCross = false;
+  let deathCross = false;
+  for (let i = Math.max(1, ma10.length - 1 - MA_CROSS_WINDOW); i < ma10.length; i++) {
+    const diffPrev = ma10[i - 1] - ma65[i - 1];
+    const diffNow = ma10[i] - ma65[i];
+    if (diffPrev <= 0 && diffNow > 0) goldenCross = true;
+    if (diffPrev >= 0 && diffNow < 0) deathCross = true;
   }
-  if (ma10Val < ma65Val && ma65Val <= ma10Prev) {
-    bear.push('мёртвый крест MA10/MA65 (гл. 13)');
+
+  if (goldenCross && ma10Val > ma65Val) {
+    bull.push('золотой крест MA10/MA65 — свежее пересечение (гл. 13)');
+  }
+  if (deathCross && ma10Val < ma65Val) {
+    bear.push('мёртвый крест MA10/MA65 — свежее пересечение (гл. 13)');
   }
   
   // 6) Дивергенция RSI
@@ -237,6 +277,74 @@ export function detectTrendStart(candles: Candle[], price: number): {
   }
   
   return { detected: false, trend: null, reasons: [], confidence: 0 };
+}
+
+// ============================================================
+// Каскад таймфреймов (по книгам Стива Нисона)
+// ============================================================
+// «Торгуй в направлении тренда» для Нисона означает тренд СТАРШЕГО ТФ:
+// старший интервал задаёт направление (context), младший даёт точку входа.
+// Поэтому контекст определяется не одним ТФ, а каскадом всех доступных
+// интервалов — от старшего к младшему:
+//   • голос самого старшего ТФ с выраженной структурой (не БОКОВИК) — решающий;
+//   • БОКОВИК на старших ТФ не блокирует сигнал с младших, но помечает его
+//     как неподтверждённый (higherConfirmed = false);
+//   • если все ТФ в боковике — рынок без направления, торговать продолжение
+//     нельзя (только развороты у границ диапазона).
+export interface TimeframeTrendVote {
+  timeframe: string;
+  trend: TrendContext;
+}
+
+export interface TrendCascadeResult {
+  /** Итоговый контекст каскада: направление со старшего значимого ТФ */
+  context: TrendContext;
+  /** Есть ли подтверждение на ТФ старше того, что дал направление */
+  higherConfirmed: boolean;
+  /** Голоса по каждому ТФ (от старшего к младшему) */
+  votes: TimeframeTrendVote[];
+  /** ТФ, чья структура определила контекст (null — все в боковике) */
+  decidedByTimeframe: string | null;
+}
+
+/**
+ * Определение тренда по каскаду ТФ. Входы идут ОТ СТАРШЕГО к МЛАДШЕМУ
+ * (например: [['W', wCandles], ['D', dCandles], ['4H', h4], ['1H', h1]]).
+ * Первый же старший ТФ с выраженной структурой (HH/HL или LH/LL) задаёт
+ * направление; MA65-фильтр применяется только если структура молчит.
+ */
+export function getTrendCascade(
+  entries: Array<[string, Candle[]]>,
+): TrendCascadeResult {
+  const votes: TimeframeTrendVote[] = [];
+
+  for (const [tf, candles] of entries) {
+    if (!candles || candles.length < 40) {
+      votes.push({ timeframe: tf, trend: 'БОКОВИК' });
+      continue;
+    }
+    // Структура первична (гл. 13); price передаём через getTrendMacro internally.
+    const t = getTrendMacro(candles, candles[candles.length - 1].close);
+    votes.push({ timeframe: tf, trend: t });
+  }
+
+  const decisiveIdx = votes.findIndex(v => v.trend !== 'БОКОВИК');
+  if (decisiveIdx === -1) {
+    return { context: 'БОКОВИК', higherConfirmed: false, votes, decidedByTimeframe: null };
+  }
+
+  const decisive = votes[decisiveIdx];
+  // Подтверждение «сверху»: любой ТФ СТАРШЕ решающего согласен с направлением.
+  const higherConfirmed = votes
+    .slice(0, decisiveIdx)
+    .some(v => v.trend === decisive.trend);
+
+  return {
+    context: decisive.trend,
+    higherConfirmed,
+    votes,
+    decidedByTimeframe: decisive.timeframe,
+  };
 }
 
 function findLevels(candles: Candle[], lookback: number = 50) {

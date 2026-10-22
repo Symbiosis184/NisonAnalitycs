@@ -117,7 +117,15 @@ export default function BacktestPage() {
 
   return (
     <div className="p-4 space-y-4">
-      <h1 className="text-xl font-bold text-slate-100">🧪 Бэктест паттернов Нисона</h1>
+      <div className="flex items-center gap-2 flex-wrap">
+        <h1 className="text-xl font-bold text-slate-100">🧪 Бэктест паттернов Нисона</h1>
+        <span
+          className="px-2 py-0.5 rounded-md text-[11px] font-semibold uppercase tracking-wide bg-amber-500/10 text-amber-400 border border-amber-500/30"
+          title="Бэктест в бета-версии: методика и выборка дорабатываются, результаты — ориентировочные"
+        >
+          beta
+        </span>
+      </div>
       <p className="text-sm text-slate-400 max-w-3xl">
         Эмпирическая проверка «ребра»: каждый сигнал детектора открывается по close свечи сигнала,
         стоп = граница формации, тейк = 2R, максимум удержания 60 свечей. Результат каждой сделки

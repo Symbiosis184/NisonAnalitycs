@@ -159,6 +159,17 @@ export default function SignalJournal() {
 
   return (
     <div className="space-y-6">
+      {/* Бета-статус журнала: накопление статистики сигналов только началось,
+          win rate / R:R на малой выборке не являются надёжной оценкой ребра. */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <h2 className="text-lg font-bold text-white">Журнал сигналов</h2>
+        <span
+          className="px-2 py-0.5 rounded-md text-[11px] font-semibold uppercase tracking-wide bg-amber-500/10 text-amber-400 border border-amber-500/30"
+          title="Журнал в бета-версии: накопленная статистика формируется, интерпретировать метрики с осторожностью"
+        >
+          beta
+        </span>
+      </div>
       {/* Статистика */}
       {stats && (
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 sm:gap-4">

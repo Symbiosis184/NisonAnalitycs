@@ -122,6 +122,12 @@ export interface ConsensusDTO {
   confidence: number;   // 0–100
 }
 
+/** Голос одной ступени каскада таймфреймов (по Нисону контекст задаёт старший ТФ) */
+export interface TimeframeTrendVoteDTO {
+  timeframe: string;
+  trend: TrendContext;
+}
+
 /** Анализ тренда (детекция старта тренда по книге Нисона) */
 export interface TrendAnalysisDTO {
   trendStart: {
@@ -131,6 +137,13 @@ export interface TrendAnalysisDTO {
     confidence: number;
   };
   bookTrend: TrendContext;
+  /** Бета: каскад всех доступных ТФ (от старшего к младшему) — итоговый контекст */
+  cascade?: {
+    context: TrendContext;
+    higherConfirmed: boolean;
+    decidedByTimeframe: string | null;
+    votes: TimeframeTrendVoteDTO[];
+  };
 }
 
 export type Regime = TrendContext;
@@ -201,6 +214,8 @@ export interface AnalysisReport {
   };
   consensus: ConsensusDTO;
   trend_analysis: TrendAnalysisDTO;
+  /** Бета: журнал сигналов и эмпирический бэктест находятся в бета-статусе */
+  beta?: { journal: 'beta'; backtest: 'beta' };
   /** Бэктест-сводка по найденным сигналам (заглушка до подключения движка — П.3) */
   backtest?: BacktestSummaryDTO[];
   /** Верификация преимущества (utils/edge_verification): деградация + когорты режимов */

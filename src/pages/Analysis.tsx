@@ -374,6 +374,39 @@ export default function Analysis() {
             {report.regime}
           </div>
           <div className="text-xs text-gray-500 mt-1">{report.regime_description}</div>
+          {/* Бета: каскад таймфреймов (по Нисону контекст задаёт старший ТФ).
+              Голоса идут от старшего к младшему; направление определяет первый
+              ТФ с выраженной структурой; «↑ подтверждён» — согласен ещё более
+              старший интервал. */}
+          {report.trend_analysis.cascade && report.trend_analysis.cascade.votes.length > 1 && (
+            <div className="mt-3 pt-3 border-t border-gray-800/60">
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                  Каскад ТФ · бета
+                </span>
+                {!report.trend_analysis.cascade.higherConfirmed && report.trend_analysis.cascade.context !== 'БОКОВИК' && (
+                  <span className="text-[10px] text-amber-400" title="Нет подтверждения на ТФ старше того, что дало направление">
+                    ⚠ не подтверждён сверху
+                  </span>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {report.trend_analysis.cascade.votes.map((v) => (
+                  <span
+                    key={v.timeframe}
+                    title={`Тренд на ${v.timeframe}: ${v.trend}`}
+                    className={`px-2 py-0.5 rounded-md text-[11px] font-medium border ${
+                      v.trend === 'ВОСХОДЯЩИЙ' ? 'text-green-400 border-green-500/30 bg-green-500/5' :
+                      v.trend === 'НИСХОДЯЩИЙ' ? 'text-red-400 border-red-500/30 bg-red-500/5' :
+                      'text-yellow-400 border-yellow-500/30 bg-yellow-500/5'
+                    } ${v.timeframe === report.trend_analysis.cascade!.decidedByTimeframe ? 'ring-1 ring-sky-400/50' : ''}`}
+                  >
+                    {v.timeframe}: {v.trend === 'ВОСХОДЯЩИЙ' ? '▲' : v.trend === 'НИСХОДЯЩИЙ' ? '▼' : '→'}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Consensus Score */}
