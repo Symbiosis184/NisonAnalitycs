@@ -13,12 +13,12 @@ WWW_DOMAIN="www.kairi.pro"
 
 echo "==> 1/8 Установка пакетов (nginx, git, curl, certbot)"
 # v2: bootstrap-fix (certbot webroot, self-signed до выпуска LE)
-export DEPLOY_SCRIPT_REV="v3"
+export DEPLOY_SCRIPT_REV="v4"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx || {
+apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx python3-dnspython || {
     echo "Установка прервалась — донастраиваем dpkg и повторяем";
-    dpkg --configure -a; apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx; }
+    dpkg --configure -a; apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx python3-dnspython; }
 
 echo "==> 2/8 Node.js 22 LTS (нужен для сборки фронтенда)"
 if ! command -v npm >/dev/null 2>&1; then
@@ -152,23 +152,49 @@ if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
 fi
 
 echo "==> 7/8 SSL-сертификат Let's Encrypt для $DOMAIN"
+SERVER_IP=$(curl -fsS --max-time 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
 ISSUED=""
+SKIP_CERTBOT=""
+[ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ] && SKIP_CERTBOT="yes"
 for host in "$DOMAIN" "$WWW_DOMAIN"; do
-    RESOLVED=$(getent ahosts "$host" 2>/dev/null | awk '{print $1}' | sort -u | tr '\n' ' ')
-    SERVER_IP=$(curl -fsS --max-time 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
-    case " $RESOLVED " in
+    [ -n "$SKIP_CERTBOT" ] && break
+    # проверяем РЕЗОЛВЕР CA (Google DNS), т.к. локальный DNS может отдавать устаревший кеш
+    EXT_RESOLVED=$(getent hosts "$host" 2>/dev/null | awk '{print $1}'; \
+        for r in 8.8.8.8 1.1.1.1; do timeout 5 python3 -c "
+import dns.resolver
+try:
+    res=dns.resolver.Resolver(configure=False); res.nameservers=['$r']
+    print('\n'.join(a.to_text() for a in res.resolve('$host','A')))
+except Exception: pass" 2>/dev/null; done | sort -u | tr '\n' ' ')
+    case " $EXT_RESOLVED " in
         *" $SERVER_IP "*) ;;
-        *) echo "    !! $host резолвится на [$RESOLVED], а не на IP сервера [$SERVER_IP] — выпуск пропускаем. Исправьте A-запись у регистратора."; continue ;;
+        *) echo "    !! $host резолвится на [$EXT_RESOLVED], а не на IP сервера [$SERVER_IP] — выпуск пропускаем. Исправьте/удалите лишние A-записи у регистратора."; continue ;;
     esac
-    if certbot certonly --webroot -w /var/www/html -d "$host" \
-        --non-interactive --agree-tos -m "admin@$DOMAIN" --keep-until-expiring 2>&1 \
+    # если домен ведёт НЕ только на нас — HTTP-челлендж может уйти на чужой сервер, ставим standalone
+    MULTI_IP="no"
+    [ "$(echo "$EXT_RESOLVED" | wc -w)" -gt 1 ] && MULTI_IP="yes"
+    systemctl stop nginx 2>/dev/null || true
+    OK=""
+    if [ "$MULTI_IP" = "yes" ]; then
+        certbot certonly --standalone --preferred-port 80 -d "$host" \
+            --non-interactive --agree-tos -m "admin@$DOMAIN" --keep-until-expiring 2>&1 \
+        || certbot certonly --standalone --preferred-port 80 -d "$host" \
+            --non-interactive --agree-tos --register-unsafely-without-email --keep-until-expiring 2>&1 \
+        && OK="yes"
+    else
+        certbot certonly --webroot -w /var/www/html -d "$host" \
+            --non-interactive --agree-tos -m "admin@$DOMAIN" --keep-until-expiring 2>&1 \
         || certbot certonly --webroot -w /var/www/html -d "$host" \
-            --non-interactive --agree-tos --register-unsafely-without-email --keep-until-expiring 2>&1; then
+            --non-interactive --agree-tos --register-unsafely-without-email --keep-until-expiring 2>&1 \
+        && OK="yes"
+    fi
+    systemctl start nginx 2>/dev/null || nginx 2>/dev/null || true
+    if [ -n "$OK" ]; then
         ISSUED="yes"
         echo "    Сертификат выпущен/обновлён для $host"
     else
         echo "    !! Не удалось получить сертификат для $host"
-        echo "       Проверьте A-запись $host -> IP сервера (dig +short $host)."
+        echo "       Проверьте A-запись $host -> IP сервера (проверка через Google DNS: $EXT_RESOLVED)."
     fi
 done
 if [ -n "$ISSUED" ] && [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
