@@ -7,6 +7,7 @@ import {
   exportJournal,
   importJournal,
   checkActiveSignals,
+  settlePendingSignals,
   listSnapshots,
   restoreFromSnapshot,
   type SignalEntry,
@@ -14,7 +15,7 @@ import {
   type JournalSnapshot
 } from '../utils/signalJournal';
 import { formatPrice } from '../utils/format';
-import { fetch24hTicker } from '../api/bybit';
+import { fetch24hTicker, fetchKlines } from '../api/bybit';
 
 export default function SignalJournal() {
   const [signals, setSignals] = useState<SignalEntry[]>([]);
@@ -61,10 +62,27 @@ export default function SignalJournal() {
     }
   };
 
-  // Проверка статусов активных сигналов
+  // Проверка статусов активных сигналов.
+  // Основной механизм — settlePendingSignals: сопоставление pending-сигналов
+  // с закрытыми свечами после бара подтверждения (экстремумы high/low; если
+  // бар коснулся и цели, и стопа — фиксируется стоп). Статистика становится
+  // независимой от момента открытия вкладки и не приукрашивается. Фолбэк
+  // checkActiveSignals по последним ценам остаётся для старых записей без
+  // barTime и случаев недоступности kline-API.
   const checkSignalStatuses = async () => {
+    if (getAllSignals().some(s => s.status === 'pending')) {
+      try {
+        await settlePendingSignals((symbol, timeframe) => fetchKlines(symbol, timeframe, 200));
+      } catch (err) {
+        console.error('Журнал: ошибка сверки сигналов по свечам:', err);
+      }
+    }
+
     const activeSignals = getAllSignals().filter(s => s.status === 'pending');
-    if (activeSignals.length === 0) return;
+    if (activeSignals.length === 0) {
+      loadSignals();
+      return;
+    }
 
     // Получаем уникальные символы
     const symbols = Array.from(new Set(activeSignals.map(s => s.symbol)));
@@ -93,6 +111,8 @@ export default function SignalJournal() {
         setSignals(getAllSignals());
         setStats(getSignalStats());
       }
+    } else {
+      loadSignals();
     }
   };
 

@@ -7,6 +7,8 @@ import {
   getActiveSignals,
   updateSignalStatus,
   checkActiveSignals,
+  evaluateSignalOutcome,
+  settlePendingSignals,
   exportJournal,
   importJournal,
   clearJournal,
@@ -179,6 +181,49 @@ describe('Журнал (localStorage)', () => {
     expect(byId[a.id].status).toBe('hit_target');
     expect(byId[b.id].status).toBe('hit_stop');
     expect(byId[b.id].pnl).toBeLessThan(0);
+  });
+
+  describe('evaluateSignalOutcome — исход по закрытым свечам (high/low)', () => {
+    const sig = { direction: 'long' as const, stopLoss: 49000, target: 53000 };
+    it('long: цель по high, стоп не тронут', () => {
+      expect(evaluateSignalOutcome(sig, [{ openTime: 1, high: 53100, low: 50000, close: 52000 }]))
+        .toEqual({ status: 'hit_target', exitPrice: 53000 });
+    });
+    it('long: бар коснулся и стопа, и цели → фиксируется ХУДШИЙ исход (стоп)', () => {
+      expect(evaluateSignalOutcome(sig, [{ openTime: 1, high: 53500, low: 48500, close: 53000 }]))
+        .toEqual({ status: 'hit_stop', exitPrice: 49000 });
+    });
+    it('short: стоп по high, цель по low', () => {
+      const sh = { direction: 'short' as const, stopLoss: 51000, target: 46000 };
+      expect(evaluateSignalOutcome(sh, [{ openTime: 1, high: 47000, low: 45900, close: 46500 }]))
+        .toEqual({ status: 'hit_target', exitPrice: 46000 });
+      expect(evaluateSignalOutcome(sh, [{ openTime: 1, high: 51500, low: 47000, close: 50000 }]))
+        .toEqual({ status: 'hit_stop', exitPrice: 51000 });
+    });
+    it('нет касаний → null; bars до входа игнорируются вызывающей стороной', () => {
+      expect(evaluateSignalOutcome(sig, [{ openTime: 1, high: 52000, low: 49500, close: 51000 }])).toBeNull();
+    });
+  });
+
+  describe('settlePendingSignals — сверка журнала по свечам', () => {
+    it('закрывает только барами ПОСЛЕ barTime (сигнал не закрывается самим собой)', async () => {
+      const e = addSignal(newSig({ barTime: 1000 }))!;
+      // Первый бар (openTime <= 1000) пробивает цель — но он ДО подтверждения, игнорируется.
+      // Второй бар (openTime > 1000) тоже достигает цели → hit_target.
+      const provider = async () => [
+        { openTime: 900, high: 60000, low: 40000, close: 50000 },
+        { openTime: 1100, high: 53200, low: 50000, close: 52000 },
+      ];
+      await settlePendingSignals(provider);
+      const updated = getAllSignals()[0];
+      expect(updated.status).toBe('hit_target');
+      expect(updated.exitPrice).toBe(53000);
+    });
+    it('ошибка провайдера не выбрасывается и не меняет статусы', async () => {
+      const e = addSignal(newSig({ barTime: 1000 }))!;
+      await settlePendingSignals(async () => { throw new Error('network'); });
+      expect(getAllSignals()[0].status).toBe('pending');
+    });
   });
 
   it('export/import round-trip', () => {

@@ -405,6 +405,89 @@ export function getSignalStats(): SignalStats {
   };
 }
 
+/** Свеча для расчёта исхода сигнала (совместима с Kline из api/bybit). */
+export interface OutcomeCandle {
+  openTime: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+/**
+ * Чистая функция: определяет исход одного pending-сигнала по закрытым
+ * свечам, следующим за баром подтверждения формации.
+ *
+ * Ключевое отличие от проверки по «последней цене»: здесь используются
+ * экстремумы бара (high/low), а не только close. Если цена прошла и цель,
+ * и стоп внутри одного бара, сигнал закрывается по ХУДШЕМУ исходу — стоп
+ * приоритетнее цели. Это консервативная оценка: без тиковых данных нельзя
+ * достоверно знать порядок касаний внутри бара, поэтому статистика журнала
+ * не приукрашивается.
+ *
+ * Возвращает null, если ни один исход ещё не наступил.
+ */
+export function evaluateSignalOutcome(
+  signal: Pick<SignalEntry, 'direction' | 'stopLoss' | 'target'>,
+  candlesAfterEntry: OutcomeCandle[],
+): { status: 'hit_target' | 'hit_stop'; exitPrice: number } | null {
+  const isLong = signal.direction === 'long';
+  for (const c of candlesAfterEntry) {
+    if (!Number.isFinite(c.high) || !Number.isFinite(c.low)) continue;
+    const hitStop = isLong ? c.low <= signal.stopLoss : c.high >= signal.stopLoss;
+    const hitTarget = isLong ? c.high >= signal.target : c.low <= signal.target;
+    if (hitStop) return { status: 'hit_stop', exitPrice: signal.stopLoss };
+    if (hitTarget) return { status: 'hit_target', exitPrice: signal.target };
+  }
+  return null;
+}
+
+/**
+ * Пакетная проверка pending-сигналов по историческим свечам.
+ * candleProvider(symbol, timeframe) должен вернуть свечи в хронологическом
+ * порядке (старые → новые). Для каждой записи берутся только бары строго
+ * после бара подтверждения (barTime) — сигнал не может «закрыться» самим
+ * собой; для старых записей без barTime используется timestamp создания.
+ *
+ * Ошибки загрузки свечей по одному символу не блокируют остальные.
+ * Возвращает обновлённый журнал целиком.
+ */
+export async function settlePendingSignals(
+  candleProvider: (symbol: string, timeframe: string) => Promise<OutcomeCandle[]>,
+): Promise<SignalEntry[]> {
+  const entries = loadJournal();
+  const pendings = entries.filter(e => e.status === 'pending');
+  if (pendings.length === 0) return entries;
+
+  // Один запрос на уникальную пару (symbol, timeframe)
+  const keys = Array.from(new Set(pendings.map(e => `${e.symbol}|${e.timeframe}`)));
+  const candlesByKey = new Map<string, OutcomeCandle[]>();
+  await Promise.all(keys.map(async (key) => {
+    const [symbol, timeframe] = key.split('|');
+    try {
+      candlesByKey.set(key, await candleProvider(symbol, timeframe));
+    } catch (err) {
+      console.error(`Журнал: не удалось получить свечи ${symbol}/${timeframe}:`, err);
+    }
+  }));
+
+  let changed = false;
+  for (const entry of pendings) {
+    const candles = candlesByKey.get(`${entry.symbol}|${entry.timeframe}`);
+    if (!candles || candles.length === 0) continue;
+    const cutoff = entry.barTime ?? entry.timestamp;
+    const after = candles.filter(c => c.openTime > cutoff);
+    const outcome = evaluateSignalOutcome(entry, after);
+    if (outcome) {
+      entry.status = outcome.status;
+      applyExit(entry, outcome.exitPrice);
+      changed = true;
+    }
+  }
+
+  if (changed) saveJournal(entries);
+  return entries;
+}
+
 // Проверка активных сигналов против текущих цен
 export function checkActiveSignals(currentPrices: Record<string, number>): SignalEntry[] {
   const entries = loadJournal();
