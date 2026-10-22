@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# NisonAnalytics — установка дашборда на VPS (Debian/Ubuntu, nginx, без IPv6)
+# Kairi Analytics — установка дашборда на VPS (Debian/Ubuntu, nginx, без IPv6)
+# Домен: kairi.pro (нужны A-записи kairi.pro и www.kairi.pro -> IP сервера)
 # Использование (на сервере под root):
 #   curl -fsSL https://raw.githubusercontent.com/Symbiosis184/NisonAnalitycs/main/deploy/vps_setup.sh | bash
 set -euo pipefail
@@ -7,15 +8,17 @@ set -euo pipefail
 REPO="https://github.com/Symbiosis184/NisonAnalitycs.git"
 WEB_ROOT="/var/www/nison-analytics"
 BUILD_DIR="/opt/nison-build"
+DOMAIN="kairi.pro"
+WWW_DOMAIN="www.kairi.pro"
 
-echo "==> 1/6 Установка пакетов (nginx, git, curl)"
+echo "==> 1/7 Установка пакетов (nginx, git, curl, certbot)"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq nginx git curl ca-certificates gnupg || {
+apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx || {
     echo "Установка прервалась — донастраиваем dpkg и повторяем";
-    dpkg --configure -a; apt-get install -y -qq nginx git curl ca-certificates gnupg; }
+    dpkg --configure -a; apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx; }
 
-echo "==> 2/6 Node.js 22 LTS (нужен для сборки фронтенда)"
+echo "==> 2/7 Node.js 22 LTS (нужен для сборки фронтенда)"
 if ! command -v npm >/dev/null 2>&1; then
     if [ ! -f /etc/apt/sources.list.d/nodesource.list ]; then
         mkdir -p /etc/apt/keyrings
@@ -29,30 +32,51 @@ if ! command -v npm >/dev/null 2>&1; then
 fi
 echo "    node $(node -v), npm $(npm -v)"
 
-echo "==> 3/6 Фикс IPv6 в типовом конфиге nginx (если IPv6 не поддерживается)"
+echo "==> 3/7 Фикс IPv6 в типовом конфиге nginx (если IPv6 не поддерживается)"
 if [ ! -e /proc/net/if_inet6 ]; then
     sed -ri 's/^(\s*)listen\s+\[::\]:80.*/\1# disabled (no IPv6): &/' /etc/nginx/sites-available/default /etc/nginx/conf.d/*.conf 2>/dev/null || true
 fi
 dpkg --configure -a 2>/dev/null || true
 
-echo "==> 4/6 Сборка фронтенда из GitHub (main)"
+echo "==> 4/7 Сборка фронтенда из GitHub (main)"
 rm -rf "$BUILD_DIR"
 git clone --depth 50 "$REPO" -b main "$BUILD_DIR"
 cd "$BUILD_DIR"
 npm ci --silent --no-audit --no-fund
 npm run build
 
-echo "==> 5/6 Публикация статики в $WEB_ROOT"
+echo "==> 5/7 Публикация статики в $WEB_ROOT"
 mkdir -p "$WEB_ROOT"
 rm -rf "${WEB_ROOT:?}/"*
 cp -r dist/* "$WEB_ROOT/"
 chown -R www-data:www-data "$WEB_ROOT" && chmod -R a+rX "$WEB_ROOT"
 
-echo "==> 6/6 Настройка nginx + запуск"
-cat > /etc/nginx/sites-available/nison <<'EOF'
+echo "==> 6/7 Настройка nginx (домен $DOMAIN) + запуск"
+cat > /etc/nginx/sites-available/kairi <<'EOF'
+# HTTP: редирект на HTTPS + ACME-челленджи
 server {
     listen 80 default_server;
-    server_name _;
+    server_name kairi.pro www.kairi.pro _;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# HTTPS: основное приложение
+server {
+    listen 443 ssl default_server;
+    http2 on;
+    server_name kairi.pro www.kairi.pro;
+
+    # Пути certbot создаст на шаге 7/7 (или уже существуют после прошлых выпусков)
+    ssl_certificate     /etc/letsencrypt/live/kairi.pro/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/kairi.pro/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
 
     root /var/www/nison-analytics;
     index index.html;
@@ -72,7 +96,7 @@ server {
         add_header Cache-Control "no-cache, must-revalidate";
     }
 
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://api.bybit.com wss://stream.bybit.com wss://stream.binance.com:9443 https://stream.binance.com; img-src 'self' data:; font-src 'self' data:;" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://api.bybit.com wss://stream.bybit.com wss://stream.binance.com:9443 https://stream.binance.com; img-src 'self' data:; font-src 'self' data:; frame-ancestors 'none'; upgrade-insecure-requests;" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "no-referrer" always;
 
@@ -80,8 +104,9 @@ server {
     gzip_types text/css application/javascript application/json image/svg+xml;
 }
 EOF
-ln -sf /etc/nginx/sites-available/nison /etc/nginx/sites-enabled/nison
-rm -f /etc/nginx/sites-enabled/default
+ln -sf /etc/nginx/sites-available/kairi /etc/nginx/sites-enabled/kairi
+rm -f /etc/nginx/sites-enabled/nison /etc/nginx/sites-enabled/default
+mkdir -p /var/www/html
 nginx -t
 systemctl enable --now nginx 2>/dev/null || service nginx start
 systemctl reload nginx 2>/dev/null || nginx -s reload
@@ -91,7 +116,27 @@ if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
     ufw allow 80/tcp >/dev/null; ufw allow 443/tcp >/dev/null || true
 fi
 
+echo "==> 7/7 SSL-сертификат Let's Encrypt для $DOMAIN"
+ISSUED=""
+for host in "$DOMAIN" "$WWW_DOMAIN"; do
+    if certbot --nginx -d "$host" --non-interactive --agree-tos -m admin@"$DOMAIN" --redirect 2>/dev/null \
+        || certbot --nginx -d "$host" --non-interactive --agree-tos --register-unsafely-without-email --redirect 2>/dev/null; then
+        ISSUED="yes"
+        echo "    Сертификат выпущен/обновлён для $host"
+    else
+        echo "    !! Не удалось получить сертификат для $host"
+        echo "       Проверьте A-запись $host -> IP сервера (dig +short $host)."
+    fi
+done
+[ -z "$ISSUED" ] && echo "    WARNING: ни один хост не получил сертификат — сайт будет доступен только по http://"
+systemctl reload nginx 2>/dev/null || nginx -s reload
+
 rm -rf "$BUILD_DIR"
 echo ""
-echo "✅ Готово. Откройте в браузере: http://$(curl -fsS --max-time 5 ifconfig.me 2>/dev/null || echo '<IP сервера>')"
+echo "✅ Готово."
+if [ -n "$ISSUED" ]; then
+    echo "   Откройте в браузере: https://$DOMAIN"
+else
+    echo "   Откройте в браузере: http://$(curl -fsS --max-time 5 ifconfig.me 2>/dev/null || echo '<IP сервера>') (HTTPS недоступен — см. предупреждение выше)"
+fi
 echo "   Если снаружи не открывается — проверьте порты 80/443 в панели хостинга (security group)."
