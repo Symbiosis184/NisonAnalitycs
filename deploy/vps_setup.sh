@@ -13,7 +13,7 @@ WWW_DOMAIN="www.kairi.pro"
 
 echo "==> 1/8 Установка пакетов (nginx, git, curl, certbot)"
 # v2: bootstrap-fix (certbot webroot, self-signed до выпуска LE)
-export DEPLOY_SCRIPT_REV="v2"
+export DEPLOY_SCRIPT_REV="v3"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx || {
@@ -154,6 +154,12 @@ fi
 echo "==> 7/8 SSL-сертификат Let's Encrypt для $DOMAIN"
 ISSUED=""
 for host in "$DOMAIN" "$WWW_DOMAIN"; do
+    RESOLVED=$(getent ahosts "$host" 2>/dev/null | awk '{print $1}' | sort -u | tr '\n' ' ')
+    SERVER_IP=$(curl -fsS --max-time 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+    case " $RESOLVED " in
+        *" $SERVER_IP "*) ;;
+        *) echo "    !! $host резолвится на [$RESOLVED], а не на IP сервера [$SERVER_IP] — выпуск пропускаем. Исправьте A-запись у регистратора."; continue ;;
+    esac
     if certbot certonly --webroot -w /var/www/html -d "$host" \
         --non-interactive --agree-tos -m "admin@$DOMAIN" --keep-until-expiring 2>&1 \
         || certbot certonly --webroot -w /var/www/html -d "$host" \
