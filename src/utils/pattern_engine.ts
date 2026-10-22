@@ -106,7 +106,8 @@ export class PatternDetector {
     
     const p = patternName.toUpperCase();
     
-    if (['МОЛОТ', 'ПОВЕШЕННЫЙ', 'ЗВЕЗДА', 'ДОДЖИ', 'СТРЕКОЗА', 'НАДГРОБИЕ', 'ПЕРЕВЁРНУТЫЙ МОЛОТ'].some(k => p.includes(k))) {
+    // Звёзды (утренняя/вечерняя) — трёхсвечные формации, обрабатываются ниже
+    if (['МОЛОТ', 'ПОВЕШЕННЫЙ', 'ДОДЖИ', 'СТРЕКОЗА', 'НАДГРОБИЕ', 'ПЕРЕВЁРНУТЫЙ МОЛОТ'].some(k => p.includes(k))) {
       const c = candles[endIdx];
       return {
         patternCandlesCount: 1,

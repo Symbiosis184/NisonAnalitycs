@@ -152,3 +152,48 @@ export const REVERSAL_PATTERN_IDS: readonly PatternId[] = [
 export function isReversalPatternName(patternName: string): boolean {
   return matchesPatternId(patternName, REVERSAL_PATTERN_IDS);
 }
+
+/**
+ * Формации, которые НЕЛЬЗЯ торговать без подтверждения следующей закрытой свечой
+ * (Нисон называет их «signal to a signal» — сам по себе вход запрещён).
+ * Это НЕ «самодостаточные» модели — ровно наоборот: раньше в коде существовал
+ * инвертированный список SELF_CONFIRMING («не требуют подтверждения»), который
+ * противоречил книге и был удалён. Строгий учёт по главам:
+ *  • гл. 3 — все односвечные модели (молот, повешенный, падающая звезда,
+ *    перевёрнутый молот, доджи, поясные головы) — только «сигнал к сигналу»;
+ *  • гл. 4–6 — двух-/трёхсвечные развороты с неполным выполнением определения
+ *    (харами и харами-кроссы, татами/разделяющая линия, тычущие линии,
+ *    контратака, твизеры) — подтверждение ОБЯЗАТЕЛЬНО;
+ *  • гл. 5–6 — завершённые звёзды (утренняя/вечерняя), поглощения, тёмное облако,
+ *    три белых солдата / три чёрных ворона, покинутое дитя — сильнейшие формации:
+ *    Нисон допускает вход сразу по закрытии модели (подтверждение входит в её
+ *    определение), отдельная следующая свеча не требуется.
+ */
+export const CONFIRMATION_REQUIRED_IDS: readonly PatternId[] = [
+  // гл. 3: односвечные модели всегда требуют подтверждения следующей свечой
+  'HAMMER', 'IMPERFECT_HAMMER', 'INVERTED_HAMMER', 'HANGING_MAN', 'SHOOTING_STAR',
+  'DOJI', 'DRAGONFLY_DOJI', 'GRAVESTONE_DOJI',
+  'BELT_HOLD_BULL', 'BELT_HOLD_BEAR',
+  // гл. 4–6: развороты с неполным определением — вход только после подтверждения
+  'BULL_HARAMI', 'BEAR_HARAMI', 'BULL_HARAMI_CROSS', 'BEAR_HARAMI_CROSS',
+  'TATAMI', 'SEPARATING_LINE_BULL', 'SEPARATING_LINE_BEAR',
+  'THRUSTING', 'DOUBLE_THRUSTING_BULL',
+  'COUNTERATTACK_BULL', 'COUNTERATTACK_BEAR',
+  'TWEEZER_BOTTOM', 'TWEEZER_TOP',
+  // гл. 7 (advance/retreat block), гл. 12 (two crows): двух-/трёхсвечные
+  // формации, определение которых НЕ включает завершающую подтверждающую
+  // свечу — Нисон требует ждать следующую закрытую свечу
+  'ADVANCE_BLOCK', 'RETREAT_BLOCK', 'TWO_CROWS',
+  // контекстные односвечные модели (не гл. 3, а специфические формации):
+  // подтверждение следующей свечой обязательно
+  'KEY_REVERSAL_BULL', 'KEY_REVERSAL_BEAR',
+  'LAST_EGULFING_BOTTOM', 'LAST_EGULFING_TOP',
+  'VOL_SPIN_ACCUMULATION', 'VOL_SPIN_DISTRIBUTION',
+  'LEVEL_TEST_BULL', 'LEVEL_TEST_BEAR',
+  'TREND_PULLBACK_WHITE', 'TREND_PULLBACK_BLACK',
+];
+
+/** Требуется ли модели подтверждение следующей ЗАКРЫТОЙ свечой для входа? */
+export function requiresNextCandleConfirmation(patternName: string): boolean {
+  return matchesPatternId(patternName, CONFIRMATION_REQUIRED_IDS);
+}

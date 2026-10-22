@@ -1,6 +1,7 @@
 import { Candle } from './candle';
 import { PatternDetector, SupportResistance, setPatternTimeframe } from './pattern_engine';
 import { ZoneVoter, timeframeKey } from './zone_voter';
+import { requiresNextCandleConfirmation } from './pattern_ids';
 
 /**
  * Жизненный цикл формации по Нисону («Expectation → Confirmation»):
@@ -292,15 +293,27 @@ export function detectPatterns(candles: Candle[], timeframe: string = 'D'): Patt
       // пониженной уверенностью — на графике это выглядело как «ложные» стрелки.
       // По Нисону неподтверждённая формация ОТМЕНЕНА (cancelled); статус
       // pending возможен только когда следующей ЗАКРЫТОЙ свечи ещё нет.
+      // Точное соответствие книге (гл. 3–6): ЗАВЕРШЁННЫЕ формации (звёзды,
+      // поглощения, тёмное облако/просвет, три солдата/ворона, покинутое дитя)
+      // содержат подтверждение внутри себя — последняя свеча самой модели,
+      // закрывшаяся в направлении сигнала, и есть подтверждающая свеча; ждать
+      // ещё одну следующую свечу книга требует только для моделей из списка
+      // CONFIRMATION_REQUIRED_IDS (односвечные гл. 3, харами, татами, тычущие,
+      // контратака, твизеры).
+      const noNeedNext = !requiresNextCandleConfirmation(check.name);
+      const inFormationOk =
+        check.type === 'бычий' ? lastPatternCandle.isBullish :
+        check.type === 'медвежий' ? lastPatternCandle.isBearish :
+        false;
       let status: PatternStatus;
       if (!next) {
-        status = 'pending';
+        status = noNeedNext && inFormationOk ? 'confirmed' : 'pending';
       } else {
         const ok =
           check.type === 'бычий' ? next.isBullish && next.close > patternHigh :
           check.type === 'медвежий' ? next.isBearish && next.close < patternLow :
           false;
-        status = ok ? 'confirmed' : 'cancelled';
+        status = ok || (noNeedNext && inFormationOk) ? 'confirmed' : 'cancelled';
       }
       const confirmed = status === 'confirmed';
       

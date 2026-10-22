@@ -5,7 +5,7 @@ import { PatternDetector, VolumeAnalyzer } from './pattern_engine';
 import { getTrendContext, getTrendMacro } from './trend_detection';
 import { ema, atr } from './indicators';
 import { patternStory } from './patterns';
-import { isReversalPatternName } from './pattern_ids';
+import { isReversalPatternName, requiresNextCandleConfirmation } from './pattern_ids';
 import { nearestStructuralTarget } from './nison_targets';
 import { resolveSignalStatus, SignalStatus } from './signal_lifecycle';
 import { computeSignalQuality } from './signal_quality';
@@ -20,14 +20,22 @@ const TIMEOUT_D1 = 259200; // 3 дня в секундах
 const DOJI_MAX_FREQ = 0.15;
 const RANGE_PROXIMITY_PCT = 0.015;
 
-// Строго по книге Нисона («Japanese Candlestick Charting Techniques»):
-// НИКАКАЯ свечная модель не является самодостаточной. Любая формация —
-// лишь «сигнал к сигналу»: торговое решение принимается только после
-// подтверждения следующей ЗАКРЫТОЙ свечой в направлении сигнала (гл. 3–10,
-// правило подтверждения). Поэтому раньше существовавший список
-// SELF_CONFIRMING («модели, не требующие подтверждения») удалён — он
-// противоречил канону. Подтверждение теперь единый путь жизненного цикла
-// (signal_lifecycle.resolveSignalStatus) для всех моделей без исключений.
+// Точное соответствие книгам Нисона («Japanese Candlestick Charting Techniques»):
+//  • гл. 3: односвечные модели (молот, повешенный, падающая звезда, доджи,
+//    поясные головы) — «сигнал к сигналу», вход ТОЛЬКО после подтверждения
+//    следующей закрытой свечой;
+//  • гл. 4–6: харами/харами-кроссы, татами, тычущие линии, контратака,
+//    твизеры — неполные формации, подтверждение ОБЯЗАТЕЛЬНО;
+//  • гл. 5–6: завершённые формации (утренняя/вечерняя звезда, поглощения,
+//    тёмное облако, три белых солдата / три чёрных ворона, покинутое дитя) —
+//    последняя свеча самой модели И ЕСТЬ подтверждение Нисона: торговое
+//    решение принимается сразу по её закрытии, ждать ещё одну свечу книга
+//    требует только для моделей из первых двух пунктов.
+// Учёт ведёт единый канонический список CONFIRMATION_REQUIRED_IDS
+// (pattern_ids.ts). Инвертированный список SELF_CONFIRMING («не требуют
+// подтверждения») удалён как противоречащий книге. Жизненный цикл
+// (signal_lifecycle.resolveSignalStatus) остаётся единым для всех моделей —
+// он фиксирует отмену сигнала при пробое границ формации.
 
 /** Рыночный контекст для «путь-осознанной» фильтрации (запрос: контекст рынка). */
 export interface MarketContext {
@@ -221,7 +229,23 @@ export class SignalGenerator {
     ctx?: MarketContext | null,
     phase?: PhaseInfo | null,
   ): void {
-    const status = resolveSignalStatus(candles, i, direction, patternCandle.close, bounds, closedCount);
+    let status = resolveSignalStatus(candles, i, direction, patternCandle.close, bounds, closedCount);
+
+    // Строго по книгам Нисона (гл. 5–6): ЗАВЕРШЁННЫЕ формации (звёзды,
+    // поглощения, тёмное облако, три солдата/ворона, покинутое дитя и т.п.)
+    // содержат подтверждение внутри себя — последняя свеча модели, закрывшаяся
+    // в направлении сигнала, И ЕСТЬ подтверждающая свеча. Для них ждать ещё
+    // одну следующую свечу книга не требует → фиксируем confirmed сразу
+    // (при условии, что жизненный цикл не вынес более строгий вердикт —
+    // invalidated/expired остаются в силе).
+    // Модели из CONFIRMATION_REQUIRED_IDS (односвечные гл. 3, харами, татами,
+    // тычущие, контратака, твизеры) ждут подтверждения следующей свечой.
+    if (status === 'pending' && !requiresNextCandleConfirmation(signal.pattern)) {
+      const formationClosed = i < closedCount; // сигнальная свеча уже закрыта
+      const inDirection = direction === 'long' ? patternCandle.isBullish : patternCandle.isBearish;
+      if (formationClosed && inDirection) status = 'confirmed';
+    }
+
     signal.status = status;
     signal.confirmed = status === 'confirmed';
 
