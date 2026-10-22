@@ -13,7 +13,7 @@ WWW_DOMAIN="www.kairi.pro"
 
 echo "==> 1/9 Установка пакетов (nginx, git, curl, certbot)"
 # v2: bootstrap-fix (certbot webroot, self-signed до выпуска LE)
-export DEPLOY_SCRIPT_REV="v6"
+export DEPLOY_SCRIPT_REV="v7"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx python3-dnspython || {
@@ -34,9 +34,17 @@ if ! command -v npm >/dev/null 2>&1; then
 fi
 echo "    node $(node -v), npm $(npm -v)"
 
-echo "==> 3/9 Фикс IPv6 в типовом конфиге nginx (если IPv6 не поддерживается)"
+echo "==> 3/9 Подготовка окружения nginx (IPv6, конфликты default_server, leftover-конфиги)"
 if [ ! -e /proc/net/if_inet6 ]; then
     sed -ri 's/^(\s*)listen\s+\[::\]:80.*/\1# disabled (no IPv6): &/' /etc/nginx/sites-available/default /etc/nginx/conf.d/*.conf 2>/dev/null || true
+fi
+# Удаляем наши же старые версии конфигов, чтобы они не конфликтовали
+# с новым конфигом kairi (дублирующиеся default_server на 80/443)
+rm -f /etc/nginx/sites-enabled/nison /etc/nginx/sites-enabled/kairi-pro \
+      /etc/nginx/conf.d/kairi.conf /etc/nginx/conf.d/nison.conf
+# Отключаем стандартный Debian-конфиг, если он объявляет default_server (конфликт с нашим)
+if grep -qsE '^\s*listen\s+(\[::\]:)?80\s+default_server' /etc/nginx/sites-enabled/default 2>/dev/null; then
+    rm -f /etc/nginx/sites-enabled/default
 fi
 dpkg --configure -a 2>/dev/null || true
 
@@ -143,8 +151,22 @@ else
     write_nginx_conf no
 fi
 nginx -t
-systemctl enable --now nginx 2>/dev/null || service nginx start
-systemctl reload nginx 2>/dev/null || nginx -s reload
+# Корректный (пере)запуск nginx: enable --now не работает, если юнит уже
+# «активен» после предыдущих прогонов скрипта, а старый мастер-процесс мог
+# остаться запущенным вручную (без systemd) — тогда старт падает с ошибкой.
+systemctl enable nginx >/dev/null 2>&1 || true
+if ! systemctl restart nginx; then
+    echo "    systemctl restart не удался — останавливаем все процессы nginx и поднимаем заново"
+    pkill -x nginx 2>/dev/null || true
+    sleep 1
+    systemctl reset-failed nginx 2>/dev/null || true
+    systemctl restart nginx || {
+        echo "    !! nginx не удалось запустить через systemd, пробуем напрямую:"
+        journalctl -u nginx --no-pager -n 20 2>/dev/null || true
+        nginx
+    }
+fi
+systemctl reload nginx 2>/dev/null || nginx -s reload || true
 
 # фаервол (если ufw активен)
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
@@ -225,13 +247,24 @@ except Exception: pass" 2>/dev/null; done | sort -u | tr '\n' ' ')
             return $?
         fi
     }
+    ensure_nginx() {
+        # nginx должен работать через systemd; старый мастер-процесс, запущенный
+        # вручную (без /run/nginx.pid), не даёт systemctl start — чистим и поднимаем заново
+        if ! pgrep -x nginx >/dev/null 2>&1; then
+            systemctl reset-failed nginx 2>/dev/null || true
+            systemctl start nginx 2>/dev/null || nginx 2>/dev/null || true
+        elif [ ! -f /run/nginx.pid ]; then
+            pkill -x nginx 2>/dev/null || true; sleep 1
+            systemctl restart nginx 2>/dev/null || nginx 2>/dev/null || true
+        fi
+    }
     if [ "$MULTI_IP" = "yes" ]; then
         issue_cert standalone && OK="yes"
     else
         # основной путь: webroot (nginx остаётся запущенным)
         issue_cert webroot && OK="yes"
     fi
-    systemctl start nginx 2>/dev/null || nginx 2>/dev/null || true
+    ensure_nginx
     if [ -n "$OK" ]; then
         ISSUED="yes"
         echo "    Сертификат выпущен/обновлён для $host"
