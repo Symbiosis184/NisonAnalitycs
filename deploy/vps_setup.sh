@@ -167,18 +167,18 @@ server {
     }
 $( [ "$with_ssl" = "yes" ] && echo '
     location / {
-        return 301 https://$host$request_uri;
+        return 301 https://\$host\$request_uri;
     }' || echo '
     # сертификат ещё не выпущен — отдаём сайт по HTTP напрямую
     root /var/www/nison-analytics;
     index index.html;
     location / {
-        try_files $uri $uri/ /index.html;
+        try_files \$uri \$uri/ /index.html;
     }
 
     location /api/journal/ {
         proxy_pass http://127.0.0.1:8787;
-        proxy_set_header Host $host;
+        proxy_set_header Host \$host;
     }' )
 }
 
@@ -209,7 +209,7 @@ server {
     # серверное хранилище журнала сигналов (python API на localhost:8787)
     location /api/journal/ {
         proxy_pass http://127.0.0.1:8787;
-        proxy_set_header Host $host;
+        proxy_set_header Host \$host;
         proxy_read_timeout 15s;
     }
 
