@@ -11,16 +11,16 @@ BUILD_DIR="/opt/nison-build"
 DOMAIN="kairi.pro"
 WWW_DOMAIN="www.kairi.pro"
 
-echo "==> 1/8 Установка пакетов (nginx, git, curl, certbot)"
+echo "==> 1/9 Установка пакетов (nginx, git, curl, certbot)"
 # v2: bootstrap-fix (certbot webroot, self-signed до выпуска LE)
-export DEPLOY_SCRIPT_REV="v5"
+export DEPLOY_SCRIPT_REV="v6"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx python3-dnspython || {
     echo "Установка прервалась — донастраиваем dpkg и повторяем";
     dpkg --configure -a; apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx python3-dnspython; }
 
-echo "==> 2/8 Node.js 22 LTS (нужен для сборки фронтенда)"
+echo "==> 2/9 Node.js 22 LTS (нужен для сборки фронтенда)"
 if ! command -v npm >/dev/null 2>&1; then
     if [ ! -f /etc/apt/sources.list.d/nodesource.list ]; then
         mkdir -p /etc/apt/keyrings
@@ -34,26 +34,26 @@ if ! command -v npm >/dev/null 2>&1; then
 fi
 echo "    node $(node -v), npm $(npm -v)"
 
-echo "==> 3/8 Фикс IPv6 в типовом конфиге nginx (если IPv6 не поддерживается)"
+echo "==> 3/9 Фикс IPv6 в типовом конфиге nginx (если IPv6 не поддерживается)"
 if [ ! -e /proc/net/if_inet6 ]; then
     sed -ri 's/^(\s*)listen\s+\[::\]:80.*/\1# disabled (no IPv6): &/' /etc/nginx/sites-available/default /etc/nginx/conf.d/*.conf 2>/dev/null || true
 fi
 dpkg --configure -a 2>/dev/null || true
 
-echo "==> 4/8 Сборка фронтенда из GitHub (main)"
+echo "==> 4/9 Сборка фронтенда из GitHub (main)"
 rm -rf "$BUILD_DIR"
 git clone --depth 50 "$REPO" -b main "$BUILD_DIR"
 cd "$BUILD_DIR"
 npm ci --silent --no-audit --no-fund
 npm run build
 
-echo "==> 5/8 Публикация статики в $WEB_ROOT"
+echo "==> 5/9 Публикация статики в $WEB_ROOT"
 mkdir -p "$WEB_ROOT"
 rm -rf "${WEB_ROOT:?}/"*
 cp -r dist/* "$WEB_ROOT/"
 chown -R www-data:www-data "$WEB_ROOT" && chmod -R a+rX "$WEB_ROOT"
 
-echo "==> 6/8 Настройка nginx (домен $DOMAIN) + запуск"
+echo "==> 6/9 Настройка nginx (домен $DOMAIN) + запуск"
 write_nginx_conf() {
     local with_ssl="$1"   # yes|no
     local ssl_block="" redirect_block=""
@@ -151,7 +151,37 @@ if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
     ufw allow 80/tcp >/dev/null; ufw allow 443/tcp >/dev/null || true
 fi
 
-echo "==> 7/8 SSL-сертификат Let's Encrypt для $DOMAIN"
+echo "==> 7/9 Диагностика доступности портов 80/443 снаружи"
+# Проверка идёт через внешний сервис (scan.nmap.org), т.к. локальная проверка
+# не видит файрвол провайдера. Если порт закрыт — сертификат LE получить нельзя,
+# но сайт продолжит работать по http:// и повторится попытка при следующем запуске.
+PORTS_OK=""
+if command -v nmap >/dev/null 2>&1; then
+    SCAN=$(nmap -Pn --host_timeout 20000 -p 80,443 scan.nmap.org 2>/dev/null || true)
+else
+    SCAN=$( (timeout 25 bash -c 'exec 3<>/dev/tcp/scan.nmap.org/80' && echo "80 open") 2>/dev/null || echo "80 closed/filtered"; \
+            (timeout 25 bash -c 'exec 3<>/dev/tcp/scan.nmap.org/443' && echo "443 open") 2>/dev/null || echo "443 closed/filtered"; )
+fi
+echo "    Результат внешней проверки портов сервера:"
+echo "$SCAN" | grep -E "^(80|443) " | sed 's/^/      /'
+if echo "$SCAN" | grep -qE "^80 (open|filtered)"; then
+    PORTS_OK="maybe"
+fi
+[ "$PORTS_OK" = "maybe" ] || echo "    !! Порт 80 недоступен снаружи (файрвол провайдера или блокировка на сервере)."
+if command -v iptables >/dev/null 2>&1; then
+    IPT=$(iptables -S 2>/dev/null | grep -E 'DROP|REJECT' || true)
+    if [ -n "$IPT" ]; then
+        echo "    На сервере найдены правила iptables DROP/REJECT — добавляем исключения для 80/443:"
+        echo "$IPT" | sed 's/^/      /'
+        iptables -I INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || true
+        iptables -I INPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null || true
+        command -v netfilter-persistent >/dev/null 2>&1 && netfilter-persistent save >/dev/null 2>&1 || true
+    else
+        echo "    Локальный iptables чист (правил DROP/REJECT нет) — если порт закрыт, это файрвол хостинга."
+    fi
+fi
+
+echo "==> 8/9 SSL-сертификат Let's Encrypt для $DOMAIN"
 SERVER_IP=$(curl -fsS --max-time 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
 ISSUED=""
 SKIP_CERTBOT=""
@@ -200,11 +230,6 @@ except Exception: pass" 2>/dev/null; done | sort -u | tr '\n' ' ')
     else
         # основной путь: webroot (nginx остаётся запущенным)
         issue_cert webroot && OK="yes"
-        # запасной путь: standalone (если LE не смог достучаться до nginx: firewall/хостинг)
-        if [ -z "$OK" ]; then
-            echo "    webroot не сработал — пробую standalone (кратковременная остановка nginx)"
-            issue_cert standalone && OK="yes"
-        fi
     fi
     systemctl start nginx 2>/dev/null || nginx 2>/dev/null || true
     if [ -n "$OK" ]; then
@@ -212,7 +237,8 @@ except Exception: pass" 2>/dev/null; done | sort -u | tr '\n' ' ')
         echo "    Сертификат выпущен/обновлён для $host"
     else
         echo "    !! Не удалось получить сертификат для $host"
-        echo "       Проверьте A-запись $host -> IP сервера (проверка через Google DNS: $EXT_RESOLVED)."
+        echo "       Причины: (1) порт 80 закрыт файрволом провайдера — см. диагностику выше;"
+        echo "       (2) A-запись ведёт не на сервер (Google DNS: $EXT_RESOLVED)."
     fi
 done
 if [ -n "$ISSUED" ] && [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
@@ -223,7 +249,7 @@ fi
 [ -z "$ISSUED" ] && echo "    WARNING: ни один хост не получил сертификат — сайт будет доступен только по http://"
 systemctl reload nginx 2>/dev/null || nginx -s reload || true
 
-echo "==> 8/8 Автопродление сертификатов (certbot renew)"
+echo "==> 9/9 Автопродление сертификатов (certbot renew)"
 mkdir -p /etc/cron.d
 cat > /etc/cron.d/kairi-certbot-renew <<'EOF'
 0 3 * * * root certbot renew --quiet --deploy-hook "systemctl reload nginx || nginx -s reload"
@@ -236,6 +262,16 @@ echo "✅ Готово."
 if [ -n "$ISSUED" ]; then
     echo "   Откройте в браузере: https://$DOMAIN"
 else
-    echo "   Откройте в браузере: http://$(curl -fsS --max-time 5 ifconfig.me 2>/dev/null || echo '<IP сервера>') (HTTPS недоступен — см. предупреждение выше)"
+    echo "   Сайт доступен по HTTP: http://$DOMAIN (по IP тоже работает)"
+    echo "   HTTPS пока без валидного сертификата (самоподписанный — браузер покажет предупреждение)."
+    echo ""
+    echo "   Чтобы получить бесплатный сертификат Let's Encrypt, порт 80 должен быть"
+    echo "   открыт ВОВНЕ. Раз в панели хостинга нет настройки портов:"
+    echo "     1) напишите в поддержку хостинга: «прошу открыть входящие порты 80/tcp и 443/tcp»;"
+    echo "     2) или попробуйте выпуск по DNS (порт 80 не нужен):"
+    echo "        apt-get install -y python3-pip && pip3 install --break-system-packages certbot-dns-plugins 2>/dev/null;"
+    echo "        certbot certonly --manual --preferred-challenges dns -d $DOMAIN -d *.$DOMAIN"
+    echo "        (нужно будет добавить TXT-запись _acme-challenge у регистратора);"
+    echo "     3) после открытия порта/выпуска — повторите эту команду установки, и"
+    echo "        nginx сам переключится на HTTPS с редиректом с HTTP."
 fi
-echo "   Если снаружи не открывается — проверьте порты 80/443 в панели хостинга (security group)."
