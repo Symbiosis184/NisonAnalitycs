@@ -8,12 +8,28 @@
 //     устройств (разные id, одинаковые symbol+tf+pattern+direction+barTime),
 //     схлопывается в одну запись.
 // При недоступности сервера журнал продолжает работать локально.
+//
+// Авторизация: сервер требует заголовок X-Kairi-Key. Браузер получает его из
+// meta-тега <meta name="kairi-journal-token">, который деплой-скрипт
+// (deploy/vps_setup.sh) подставляет в index.html — HMAC-токен с TTL 12 часов
+// (server/journal_token.py). Нет токена / токен просрочен -> 401 -> graceful
+// деградация в локальный режим.
 
 import { sanitizeSignalEntry, type SignalEntry } from './signalJournal';
 
 const DEVICE_KEY = 'kairi_journal_device_id';
 const API_BASE = '/api/journal';
 const SYNC_INTERVAL_MS = 60_000; // фоновая синхронизация раз в минуту
+
+/** Токен доступа к серверному журналу из index.html (пустая строка, если не задан). */
+export function getJournalToken(): string {
+  try {
+    const meta = document.querySelector('meta[name="kairi-journal-token"]');
+    return (meta?.getAttribute('content') || '').trim();
+  } catch {
+    return ''; // нет DOM (тесты/SSR) — работаем локально
+  }
+}
 
 // --- идентификатор устройства (для диагностики) ---
 export function getDeviceId(): string {
@@ -35,15 +51,25 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
   try {
+    const token = getJournalToken();
     const res = await fetch(`${API_BASE}${path}`, {
       ...init,
       signal: controller.signal,
-      headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'X-Kairi-Key': token } : {}),
+        ...(init?.headers || {}),
+      },
     });
     if (res.status === 401) {
-      // Серверный журнал требует секрет X-Kairi-Key, которого у браузера нет —
-      // это ожидаемая деградация на бэкендах без интеграции ключа.
-      throw new JournalAuthError('Журнал: сервер требует ключ доступа — включён локальный режим');
+      // Токен не встроен в index.html (деплой без journal_token.py) или
+      // просрочен — ожидаемая деградация в локальный режим.
+      throw new JournalAuthError('Журнал: нет действующего токена доступа — включён локальный режим');
+    }
+    if (res.status === 403) {
+      // Браузерный токен не имеет права на эту операцию (например DELETE) —
+      // запись останется только в локальном журнале до синхронизации статуса.
+      throw new JournalAuthError('Журнал: операция требует мастер-ключа — применяется локально');
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json() as T;

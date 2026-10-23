@@ -61,20 +61,29 @@ echo "==> 3/11 Серверное хранилище журнала сигнал
 mkdir -p /opt/kairi-journal /etc/kairi
 # Кладём свежую копию из клонированного репозитория (шаг 6/11), если он уже
 # был выполнен в этом прогоне; иначе — скачиваем с GitHub.
-if [ -f "$BUILD_DIR/server/journal_server.py" ]; then
-    cp "$BUILD_DIR/server/journal_server.py" /opt/kairi-journal/journal_server.py
-else
-    curl -fsSL https://raw.githubusercontent.com/Symbiosis184/NisonAnalitycs/main/server/journal_server.py \
-        -o /opt/kairi-journal/journal_server.py
-fi
-chmod 644 /opt/kairi-journal/journal_server.py
-python3 -m py_compile /opt/kairi-journal/journal_server.py \
-  || { echo "    !! journal_server.py не компилируется — журнал останется локальным"; touch /tmp/kairi_journal_broken; }
+for f in journal_server.py journal_token.py; do
+    if [ -f "$BUILD_DIR/server/$f" ]; then
+        cp "$BUILD_DIR/server/$f" "/opt/kairi-journal/$f"
+    else
+        curl -fsSL "https://raw.githubusercontent.com/Symbiosis184/NisonAnalitycs/main/server/$f" \
+            -o "/opt/kairi-journal/$f" || { echo "    !! не удалось скачать $f"; touch /tmp/kairi_journal_broken; }
+    fi
+done
+chmod 644 /opt/kairi-journal/journal_server.py /opt/kairi-journal/journal_token.py
+python3 -m py_compile /opt/kairi-journal/journal_server.py /opt/kairi-journal/journal_token.py \
+  || { echo "    !! сервер журнала не компилируется — журнал останется локальным"; touch /tmp/kairi_journal_broken; }
 # Секрет доступа к API генерируется один раз и больше не меняется
 if [ ! -s /etc/kairi/journal.key ]; then
     (umask 077 && openssl rand -hex 24 > /etc/kairi/journal.key)
 fi
 chmod 600 /etc/kairi/journal.key
+# Секрет HMAC-токенов для браузера (X-Kairi-Key): выдаёт journal_token.py,
+# подставляется в index.html на шаге публикации статики. Создаётся сам при
+# первом запуске; здесь только гарантируем права.
+if [ ! -s /etc/kairi/journal.token_secret ]; then
+    (umask 077 && openssl rand -hex 32 > /etc/kairi/journal.token_secret)
+fi
+chmod 600 /etc/kairi/journal.token_secret
 
 systemctl stop kairi-journal 2>/dev/null || true
 cat > /etc/systemd/system/kairi-journal.service <<UNITEOF
@@ -137,7 +146,22 @@ echo "==> 7/11 Публикация статики в $WEB_ROOT"
 mkdir -p "$WEB_ROOT"
 rm -rf "${WEB_ROOT:?}/"*
 cp -r dist/* "$WEB_ROOT/"
+# Токен доступа к серверному журналу: встраивается в index.html, браузер
+# шлёт его в X-Kairi-Key (см. src/utils/journalSync.ts). TTL 12 часов —
+# пересоздание страницы после протухания возвращает локальный режим до
+# следующего деплоя; статика защищена от чтения посторонними (0640+www-data).
+JOURNAL_TOKEN=""
+if [ -f /opt/kairi-journal/journal_token.py ] && ! [ -f /tmp/kairi_journal_broken ]; then
+    JOURNAL_TOKEN=$(python3 /opt/kairi-journal/journal_token.py --ttl 43200 2>/dev/null || true)
+fi
+if [ -n "$JOURNAL_TOKEN" ]; then
+    sed -i "s|</title>|</title>\n    <meta name=\"kairi-journal-token\" content=\"$JOURNAL_TOKEN\">|" "$WEB_ROOT/index.html"
+    echo "    Токен журнала встроен в index.html (TTL 12ч)"
+else
+    echo "    !! Токен журнала не выдан — синхронизация будет работать в локальном режиме"
+fi
 chown -R www-data:www-data "$WEB_ROOT" && chmod -R a+rX "$WEB_ROOT"
+[ -n "$JOURNAL_TOKEN" ] && chmod 640 "$WEB_ROOT/index.html"
 
 echo "==> 8/11 Настройка nginx (домен $DOMAIN) + запуск"
 write_nginx_conf() {

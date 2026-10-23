@@ -15,17 +15,28 @@ nginx проксирует на него /api/journal с домена kairi.pro.
   DELETE /api/journal/signals/<id>
   POST   /api/journal/replace  -> полная замена (импорт из файла браузера)
 
-Безопасность: ключ доступа X-Kairi-Key сверяется с /etc/kairi/journal.key
-(создаётся деплой-скриптом, права 600). Пустой файл ключа = доступ только
-с localhost (защита от случайного проброса API наружу без секрета).
+Безопасность: заголовок X-Kairi-Key сверяется с /etc/kairi/journal.key
+(мастер-ключ, создаётся деплой-скриптом, права 600) ИЛИ с HMAC-подписанным
+токеном доступа (server/journal_token.py, TTL ~15 мин) — токены выдаёт
+деплой-скрипт и подставляет в index.html, браузер шлёт их в X-Kairi-Key.
+Пустой файл ключа = доступ только с localhost (защита от случайного
+проброса API наружу без секрета).
 """
 import hmac
 import json
 import os
 import re
 import sqlite3
+import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from journal_token import verify as verify_token
+except ImportError:  # копия сервера лежит без соседнего модуля — degrade gracefully
+    def verify_token(token: str) -> bool:
+        return False
 
 DB_PATH = os.environ.get("KAIRI_JOURNAL_DB", "/var/lib/kairi/journal.db")
 KEY_FILE = os.environ.get("KAIRI_JOURNAL_KEY_FILE", "/etc/kairi/journal.key")
@@ -49,6 +60,31 @@ def access_key() -> str:
         return ""
 
 
+# --- журнал доступа (brute-force защита токенов) ---------------------------------
+# Неудачные попытки авторизации логируются в journald (stderr сервиса), а после
+# AUTH_FAIL_LIMIT подряд неверных ключей API на AUTH_COOLDOWN_S секунд отвечает 429.
+AUTH_FAIL_LIMIT = int(os.environ.get("KAIRI_JOURNAL_AUTH_FAIL_LIMIT", "30"))
+AUTH_COOLDOWN_S = float(os.environ.get("KAIRI_JOURNAL_AUTH_COOLDOWN", "60"))
+_auth_state = {"fails": 0, "until": 0.0}
+
+
+def auth_throttled() -> bool:
+    return _auth_state["until"] > time.time()
+
+
+def auth_failure():
+    _auth_state["fails"] += 1
+    if _auth_state["fails"] >= AUTH_FAIL_LIMIT:
+        _auth_state["until"] = time.time() + AUTH_COOLDOWN_S
+        _auth_state["fails"] = 0
+        sys.stderr.write(
+            f"[journal] auth cooldown {AUTH_COOLDOWN_S:.0f}s activated\n")
+
+
+def auth_success():
+    _auth_state["fails"] = 0
+
+
 def init_db() -> None:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     with sqlite3.connect(DB_PATH) as con:
@@ -59,6 +95,21 @@ def init_db() -> None:
                 bar_time INTEGER,
                 payload TEXT NOT NULL,
                 updated_at REAL NOT NULL
+            );
+            -- Черный список удаленных записей (защита от "воскресения" при
+            -- синхронизации со старыми локальными копиями журнала)
+            CREATE TABLE IF NOT EXISTS removed (
+                id TEXT PRIMARY KEY,
+                removed_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS removed_events (
+                symbol TEXT NOT NULL,
+                timeframe TEXT NOT NULL,
+                pattern TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                bar_time INTEGER NOT NULL,
+                removed_at REAL NOT NULL,
+                PRIMARY KEY (symbol, timeframe, pattern, direction, bar_time)
             );
             """
         )
@@ -189,12 +240,35 @@ class Handler(BaseHTTPRequestHandler):
             return None
 
     def _authorized(self):
+        if auth_throttled():
+            # кулдаун после серии неверных ключей — не считаем попытки дальше
+            return False
         key = access_key()
-        if not key:
-            # ключ не задан — разрешаем только loopback (защита от утечки наружу)
-            return self.client_address[0] in ("127.0.0.1", "::1")
         supplied = self.headers.get("X-Kairi-Key", "")
-        return hmac.compare_digest(supplied, key)
+        if not key:
+            # мастер-ключ не задан — разрешаем только loopback (защита от
+            # случайного проброса API наружу без секрета); токены при пустом
+            # ключе тоже не работают (нет секрета подписи в паре с ключом)
+            allowed = self.client_address[0] in ("127.0.0.1", "::1")
+        elif hmac.compare_digest(supplied, key):
+            # мастер-ключ: полный доступ (включая DELETE)
+            allowed = True
+        else:
+            # браузеры ходят HMAC-токенами доступа (journal_token.py), а не
+            # мастер-ключом; DELETE по-прежнему требует настоящий journal.key
+            allowed = bool(supplied) and verify_token(supplied)
+        if allowed:
+            auth_success()
+        else:
+            auth_failure()
+        return allowed
+
+    def _is_master_key(self):
+        """DELETE и полная замена журнала доступны только мастер-ключу."""
+        key = access_key()
+        return bool(key) and hmac.compare_digest(
+            self.headers.get("X-Kairi-Key", ""), key
+        )
 
     def _cors(self):
         """CORS для запросов с домена приложения (браузер шлёт заголовок
@@ -259,12 +333,22 @@ class Handler(BaseHTTPRequestHandler):
                 for s in existing:
                     if s.get("barTime") is not None:
                         events.setdefault(event_key(s), s["id"])
+                # Черные списки удалений: id и события, стертые мастер-ключом.
+                # Записи из них не могут "воскреснуть" при push с устройства,
+                # которое не успело синхронизировать удаление.
+                removed_ids = {r[0] for r in c.execute("SELECT id FROM removed")}
+                removed_events = {tuple(r) for r in c.execute(
+                    "SELECT symbol, timeframe, pattern, direction, bar_time FROM removed_events")}
                 now = time.time()
                 added = updated = deduped = 0
                 rows = []
                 for s in clean:
+                    if s["id"] in removed_ids:
+                        continue
                     old = by_id.get(s["id"])
                     if old is None and s.get("barTime") is not None:
+                        if event_key(s) in removed_events:
+                            continue
                         twin = events.get(event_key(s))
                         if twin is not None:
                             # то же событие уже сохранено с другим id (другое
@@ -300,11 +384,36 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, {"error": "not found"})
         if not self._authorized():
             return self._send(401, {"error": "unauthorized"})
+        if not self._is_master_key():
+            # удаление записей разрешено только мастер-ключу: браузерный
+            # токен умеет читать и писать журнал, но не стирать его целиком
+            return self._send(403, {"error": "master key required"})
         sid = self.path.rsplit("/", 1)[-1]
         if not ID_RE.match(sid):
             return self._send(400, {"error": "bad id"})
         with conn() as c:
+            row = c.execute("SELECT payload FROM signals WHERE id=?", (sid,)).fetchone()
             cur = c.execute("DELETE FROM signals WHERE id=?", (sid,))
+            if row:
+                # заносим в черный список — иначе старая локальная копия на
+                # другом устройстве вернет запись при следующем push
+                try:
+                    s = json.loads(row[0])
+                except json.JSONDecodeError:
+                    s = {}
+                now = time.time()
+                c.execute(
+                    "INSERT OR REPLACE INTO removed (id, removed_at) VALUES (?,?)",
+                    (sid, now),
+                )
+                if s.get("barTime") is not None:
+                    c.execute(
+                        "INSERT OR REPLACE INTO removed_events "
+                        "(symbol, timeframe, pattern, direction, bar_time, removed_at) "
+                        "VALUES (?,?,?,?,?,?)",
+                        (s.get("symbol"), s.get("timeframe"), s.get("pattern"),
+                         s.get("direction"), int(s["barTime"]), now),
+                    )
         return self._send(200, {"deleted": cur.rowcount})
 
 
