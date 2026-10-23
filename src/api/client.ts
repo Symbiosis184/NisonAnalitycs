@@ -29,7 +29,14 @@ import type {
   SignalDTO,
 } from './types';
 
-export type { AnalysisReport } from './types';
+export type {
+  AnalysisReport,
+  SignalDTO,
+  PatternDTO,
+  ZoneDTO,
+  MultiTFZonesDTO,
+  RiskSettings,
+} from './types';
 
 const toPatternDirection = (type: 'бычий' | 'медвежий' | 'нейтральный'): PatternDirection =>
   type === 'бычий' ? 'bullish' : type === 'медвежий' ? 'bearish' : 'neutral';
