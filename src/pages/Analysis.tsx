@@ -137,7 +137,7 @@ export default function Analysis() {
 
         {/* Переключатель таймфреймов */}
         <div className="flex gap-1 p-1 rounded-lg bg-gray-800/50 self-start overflow-x-auto max-w-full">
-          {['15m', '1H', '4H', 'D'].map((tf) => (
+          {['30m', '1H', '4H', 'D'].map((tf) => (
             <button
               key={tf}
               onClick={() => setTimeframe(tf)}

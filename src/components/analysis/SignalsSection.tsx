@@ -167,6 +167,22 @@ function SignalCard({ signal, riskSettings }: {
             </span>
           </div>
         )}
+        {/* Класс подтверждения по Нисону (гл. 3–6): когда входить по правилу книги */}
+        {(() => {
+          const nextCandle = signal.confirmation_class === 'next_candle';
+          return (
+            <div
+              title={nextCandle
+                ? 'Нисон гл. 3–6: модель требует закрытия СЛЕДУЮЩЕЙ свечи в направлении сигнала — вход только после подтверждения'
+                : 'Нисон гл. 5–6: завершённая формация — её последняя свеча и есть подтверждение, отдельная следующая свеча не требуется'}
+            >
+              <span className="text-gray-500">Подтверждение </span>
+              <span className={nextCandle ? 'text-sky-400' : 'text-gray-300'}>
+                {nextCandle ? '⏳ ждём след. свечу' : '✓ внутри модели'}
+              </span>
+            </div>
+          );
+        })()}
         {(() => {
           const cls = st === 'confirmed' ? 'bg-green-500/10 text-green-400'
             : st === 'pending' ? 'bg-yellow-500/10 text-yellow-400'

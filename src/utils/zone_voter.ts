@@ -51,15 +51,22 @@ export type TimeframeKey = 'scalp' | 'intraday' | 'swing' | 'position';
  * параметры зон (толеранс кластеризации, порог подтверждения пробоя) должны
  * различаться на разных ТФ: фиксированные 0.5% корректны для дневного графика,
  * но на 5-минутке шумят, а на недельном — слишком мелки.
+ *
+ * Нисон (гл. 8 «Магические дожи»): свечной анализ не применяется на ТФ <30
+ * минут — скальп-масштаб оставлен только как техническая категория для
+ * сырых форм ('1'..'15'), все торговые ТФ приложения ≥30m. '30m' (канон
+ * UI) и '30' (Bybit) — intraday: самый младший разрешённый масштаб анализа.
  */
 export function timeframeKey(tf: string): TimeframeKey {
   const t = tf.trim().toUpperCase();
-  if (['1', '3', '5', '15'].includes(t)) return 'scalp';
-  if (['30', '60', '1H', '2H', '4H'].includes(t)) return 'intraday';
   if (['D', '1D'].includes(t)) return 'swing';
-  // Формы с минутным/часовым суффиксом в нижнем регистре ('15m', '1h', '4h')
-  if (/^(1|3|5|15)(M|min)?$/.test(t)) return 'scalp';
-  if (/^(30|60|1|2|4)(H|h)$/.test(t) || ['30M', '60M'].includes(t)) return 'intraday';
+  // Инtraday: 30-минутный и выше (разрешённые Нисоном внутридневные ТФ)
+  if (/^30(M|MIN)?$/.test(t)) return 'intraday';
+  if (['60', '1H', '2H', '4H'].includes(t)) return 'intraday';
+  if (/^(60|[124])(H|h)$/.test(t)) return 'intraday';
+  // Скальп — только суб-30m формы (вне канона приложения, см. запрет гл. 8)
+  if (/^(1|3|5|15)(M|MIN)?$/.test(t)) return 'scalp';
+  if (['1', '3', '5', '15'].includes(t)) return 'scalp';
   return 'position'; // W и всё нестандартное
 }
 

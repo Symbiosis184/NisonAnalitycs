@@ -2,6 +2,7 @@ import { fetchKlines, fetch24hTicker, fetchInstrumentInfo } from './bybit';
 import { Candle } from '../utils/candle';
 import { ema, rsi, macd } from '../utils/indicators';
 import { detectPatterns, patternStory } from '../utils/patterns';
+import { requiresNextCandleConfirmation } from '../utils/pattern_ids';
 import { signalGenerator } from '../utils/signal_generator';
 import { ZoneVoter, timeframeKey } from '../utils/zone_voter';
 import { detectTrendStart, getTrendContext, getTrendMacro, getTrendCascade, type TrendContext, type TrendCascadeResult } from '../utils/trend_detection';
@@ -123,21 +124,43 @@ function computeEdgeReport(candles: Candle[], timeframe: string): EdgeReportDTO 
   }
 }
 
-/** Старший таймфрейм для контекста (аудит №9). Неизвестные ТФ → null (без HTF-слоя). */
+// Иерархия «разрешённых» таймфреймов приложения (Нисон, гл. 8 «Магические
+// дожи»: свечной анализ не работает на внутридневных ТФ <30 минут — там
+// постоянно образуются ложные «дожи», поэтому 1m/5m/15m выведены из
+// торговых каскадов и списков выбора; используются только 30m/1H/4H/D/W).
+const TF_ALLOWED_ORDER = ['30', '1H', '4H', 'D', 'W'];
+
+/** Приведение произвольной формы ТФ ('15m', '60', '240'...) к канону ORDER. */
+function tfCanonical(tf: string): string {
+  const t = tf.trim();
+  const byKey: Record<string, string> = {
+    '30m': '30', '30M': '30', '30': '30',
+    '1h': '1H', '60m': '1H', '60': '1H', '1H': '1H',
+    '4h': '4H', '240': '4H', '4H': '4H',
+    '1d': 'D', 'D': 'D', '1D': 'D',
+    '1w': 'W', 'W': 'W', '1W': 'W',
+  };
+  return byKey[t] ?? byKey[t.toUpperCase()] ?? t;
+}
+
+/** Старший ТАКЖЕ разрешённый ТФ для контекста (аудит №9). Неизвестные/шумовые (<30m) → null (без HTF-слоя). */
 export function higherTimeframe(tf: string): string | null {
-  const map: Record<string, string> = { '1': '15', '5': '30', '15': '1H', '30': '4H', '1H': '4H', '4H': 'D', D: 'W' };
-  return map[tf] ?? null;
+  const idx = TF_ALLOWED_ORDER.indexOf(tfCanonical(tf));
+  if (idx === -1 || idx === TF_ALLOWED_ORDER.length - 1) return null;
+  return TF_ALLOWED_ORDER[idx + 1];
 }
 
 /**
  * Каскад СТАРШИХ таймфреймов для определения тренда-контекста (по книгам
  * Нисона: направление задаёт старший ТФ, младший даёт вход). Возвращает
  * цепочку строго старше текущего — от самого старшего к самому младшему
- * из старших (например, для 1H: ['D', '4H']). Упорядочено по убыванию ТФ.
+ * из старших (например, для 1H: ['W', 'D', '4H']). Упорядочено по убыванию ТФ.
+ * В каскаде участвуют только ТФ ≥30 минут (запрет Нисона на <30m) и недельный
+ * график для макро-тренда (гл. «Контекст»).
  */
 export function timeframeCascade(tf: string): string[] {
-  const ORDER = ['1', '5', '15', '30', '1H', '4H', 'D', 'W'];
-  const idx = ORDER.indexOf(tf);
+  const ORDER = TF_ALLOWED_ORDER;
+  const idx = ORDER.indexOf(tfCanonical(tf));
   if (idx === -1 || idx === ORDER.length - 1) return [];
   // Все вышестоящие ТФ, от старшего к младшему; максимум 3 ступени вверх
   // (глубина каскада), чтобы не раздувать число сетевых запросов.
@@ -272,8 +295,8 @@ export class ApiClient {
     );
     // Сортировка ступеней от старшего к младшему по таблице ORDER (higherSeries
     // может прийти из Promise.all в любом порядке).
-    const TF_ORDER = ['1', '5', '15', '30', '1H', '4H', 'D', 'W'];
-    higherSeries.sort((a, b) => TF_ORDER.indexOf(b[0]) - TF_ORDER.indexOf(a[0]));
+    const tfRank = (t: string) => TF_ALLOWED_ORDER.indexOf(tfCanonical(t));
+    higherSeries.sort((a, b) => tfRank(b[0]) - tfRank(a[0]));
     const cascadeEntries: Array<[string, Candle[]]> = [
       ...higherSeries,
       [timeframe, closedCandles], // текущий ТФ — последняя (младшая) ступень
@@ -312,6 +335,9 @@ export class ApiClient {
         bar_time: closedCandles[s.meta?.patternEndIdx ?? -1]?.time ?? s.timestamp,
         confirmed: s.confirmed,
         lifecycle_status: s.status,
+        // Класс подтверждения по Нисону (гл. 3–6): 'model' — подтверждение внутри
+        // самой формации; 'next_candle' — вход только после закрытия следующей свечи.
+        confirmation_class: requiresNextCandleConfirmation(s.pattern) ? 'next_candle' as const : 'model' as const,
         story: s.story,
         ...(htf ? { htf } : {}),
         ...(plan ? { position_plan: plan } : {}),
@@ -468,7 +494,7 @@ export class ApiClient {
    */
   async getMultiTimeframeZones(
     symbol: string,
-    timeframes: string[] = ['15', '1H', '4H', 'D', 'W']
+    timeframes: string[] = ['30', '1H', '4H', 'D', 'W']
   ): Promise<MultiTFZonesDTO[]> {
     const results = await Promise.all(
       timeframes.map(async (tf): Promise<MultiTFZonesDTO | null> => {

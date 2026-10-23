@@ -48,7 +48,7 @@ export function useAnalysisData(symbol: string | undefined, timeframe: string): 
   useEffect(() => {
     if (!symbol) return;
     let cancelled = false;
-    const tfs = ['15', '60', '4H', 'D', 'W'];
+    const tfs = ['30', '1H', '4H', 'D', 'W'];
     if (!tfs.includes(timeframe)) tfs.push(timeframe);
     api.getMultiTimeframeZones(symbol, tfs)
       .then((rows) => { if (!cancelled) setMultiZones(rows); })

@@ -13,7 +13,7 @@ import { detectRegime, type RegimeInfo } from '../utils/regime';
 const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT'];
 // Значения проходят whitelist валидацию (validation.ALLOWED_TIMEFRAMES)
 const TIMEFRAMES: Array<[string, string]> = [
-  ['15m', '15м'], ['1H', '1ч'], ['4H', '4ч'], ['1D', '1Д'], ['1W', '1Нд'],
+  ['30m', '30м'], ['1H', '1ч'], ['4H', '4ч'], ['1D', '1Д'], ['1W', '1Нд'],
 ];
 
 function toCandles(ks: Kline[]): Candle[] {
