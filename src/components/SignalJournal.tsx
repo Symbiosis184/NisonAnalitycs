@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { TrendingUp, TrendingDown, Target, Shield, Trash2, Download, Upload, History } from 'lucide-react';
 import {
   getAllSignals,
@@ -15,7 +15,7 @@ import {
   type SignalStats,
   type JournalSnapshot
 } from '../utils/signalJournal';
-import { syncJournal, deleteRemoteSignal, replaceJournal } from '../utils/journalSync';
+import { syncJournal, deleteRemoteSignal, replaceJournal, JournalAuthError } from '../utils/journalSync';
 import { formatPrice } from '../utils/format';
 import { fetch24hTicker, fetchKlines } from '../api/bybit';
 
@@ -29,6 +29,7 @@ export default function SignalJournal() {
 
   // Синхронизация с серверным хранилищем: pull -> merge -> push.
   // При недоступности сервера журнал остаётся локальным (graceful degradation).
+  const authNotified = useRef(false);
   const doSync = async () => {
     try {
       const local = getAllSignals();
@@ -39,7 +40,16 @@ export default function SignalJournal() {
       setSignals(getAllSignals());
       setStats(getSignalStats());
     } catch (err) {
-      console.warn('Журнал: серверная синхронизация недоступна (работаем локально):', err);
+      if (err instanceof JournalAuthError) {
+        // Бэкенд требует секрет X-Kairi-Key — предупреждаем один раз за сессию,
+        // чтобы не забивать консоль каждые 60 секунд.
+        if (!authNotified.current) {
+          authNotified.current = true;
+          console.warn('Журнал: серверная синхронизация отключена (требуется ключ доступа), работаем локально');
+        }
+      } else {
+        console.warn('Журнал: серверная синхронизация недоступна (работаем локально):', err);
+      }
       setServerConnected(false);
     }
   };

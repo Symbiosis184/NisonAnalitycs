@@ -40,12 +40,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       signal: controller.signal,
       headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
     });
+    if (res.status === 401) {
+      // Серверный журнал требует секрет X-Kairi-Key, которого у браузера нет —
+      // это ожидаемая деградация на бэкендах без интеграции ключа.
+      throw new JournalAuthError('Журнал: сервер требует ключ доступа — включён локальный режим');
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json() as T;
   } finally {
     clearTimeout(timer);
   }
 }
+
+/** Ошибка авторизации журнала — не считается сбоем сети, логируется один раз. */
+export class JournalAuthError extends Error {}
 
 interface ServerResponse {
   signals: unknown[];

@@ -19,6 +19,7 @@ nginx проксирует на него /api/journal с домена kairi.pro.
 (создаётся деплой-скриптом, права 600). Пустой файл ключа = доступ только
 с localhost (защита от случайного проброса API наружу без секрета).
 """
+import hmac
 import json
 import os
 import re
@@ -164,11 +165,19 @@ class Handler(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         body = json.dumps(obj).encode("utf-8")
         self.send_response(code)
+        self._cors()
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def do_OPTIONS(self):
+        # preflight для запросов с заголовком X-Kairi-Key
+        self.send_response(204)
+        self._cors()
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _read_json(self):
         length = int(self.headers.get("Content-Length") or 0)
@@ -185,7 +194,23 @@ class Handler(BaseHTTPRequestHandler):
             # ключ не задан — разрешаем только loopback (защита от утечки наружу)
             return self.client_address[0] in ("127.0.0.1", "::1")
         supplied = self.headers.get("X-Kairi-Key", "")
-        return supplied == key
+        return hmac.compare_digest(supplied, key)
+
+    def _cors(self):
+        """CORS для запросов с домена приложения (браузер шлёт заголовок
+        X-Kairi-Key — это уже не «простой» запрос, без preflight синхронизация
+        блокируется ещё до обращения к API)."""
+        origin = self.headers.get("Origin", "")
+        allowed = os.environ.get(
+            "KAIRI_ALLOWED_ORIGINS",
+            "https://kairi.pro,https://www.kairi.pro",
+        )
+        if origin and origin in [o.strip() for o in allowed.split(",")]:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Kairi-Key")
+            self.send_header("Access-Control-Max-Age", "86400")
 
     # --- маршруты ---
     def do_GET(self):

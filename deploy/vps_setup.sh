@@ -59,10 +59,17 @@ echo "==> 3/11 Серверное хранилище журнала сигнал
 # лёгкий python3 http.server + sqlite3 без внешних зависимостей; слушает
 # только 127.0.0.1:8787, наружу отдаётся через nginx location /api/journal/.
 mkdir -p /opt/kairi-journal /etc/kairi
-cp "$BUILD_DIR/server/journal_server.py" /opt/kairi-journal/journal_server.py 2>/dev/null \
-  || curl -fsSL https://raw.githubusercontent.com/Symbiosis184/NisonAnalitycs/main/server/journal_server.py \
-       -o /opt/kairi-journal/journal_server.py
+# Кладём свежую копию из клонированного репозитория (шаг 6/11), если он уже
+# был выполнен в этом прогоне; иначе — скачиваем с GitHub.
+if [ -f "$BUILD_DIR/server/journal_server.py" ]; then
+    cp "$BUILD_DIR/server/journal_server.py" /opt/kairi-journal/journal_server.py
+else
+    curl -fsSL https://raw.githubusercontent.com/Symbiosis184/NisonAnalitycs/main/server/journal_server.py \
+        -o /opt/kairi-journal/journal_server.py
+fi
 chmod 644 /opt/kairi-journal/journal_server.py
+python3 -m py_compile /opt/kairi-journal/journal_server.py \
+  || { echo "    !! journal_server.py не компилируется — журнал останется локальным"; touch /tmp/kairi_journal_broken; }
 # Секрет доступа к API генерируется один раз и больше не меняется
 if [ ! -s /etc/kairi/journal.key ]; then
     (umask 077 && openssl rand -hex 24 > /etc/kairi/journal.key)
@@ -177,8 +184,15 @@ $( [ "$with_ssl" = "yes" ] && echo '
     }
 
     location /api/journal/ {
+        # 401 — штатный ответ при неверном ключе; nginx по умолчанию сам
+        # подмешивает CORS-заголовки на 4xx, из-за чего браузер скрывал
+        # настоящий статус (CORS error вместо 401) и диагностика была невозможна.
         proxy_pass http://127.0.0.1:8787;
         proxy_set_header Host \$host;
+        add_header Access-Control-Allow-Origin "https://kairi.pro" always;
+        add_header Access-Control-Allow-Methods "GET, POST, DELETE, OPTIONS" always;
+        add_header Access-Control-Allow-Headers "Content-Type, X-Kairi-Key" always;
+        add_header Vary "Origin" always;
     }' )
 }
 
@@ -211,6 +225,10 @@ server {
         proxy_pass http://127.0.0.1:8787;
         proxy_set_header Host \$host;
         proxy_read_timeout 15s;
+        add_header Access-Control-Allow-Origin "https://kairi.pro" always;
+        add_header Access-Control-Allow-Methods "GET, POST, DELETE, OPTIONS" always;
+        add_header Access-Control-Allow-Headers "Content-Type, X-Kairi-Key" always;
+        add_header Vary "Origin" always;
     }
 
     add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://api.bybit.com wss://stream.bybit.com wss://stream.binance.com:9443 https://stream.binance.com; img-src 'self' data:; font-src 'self' data:; frame-ancestors 'none'; upgrade-insecure-requests;" always;
