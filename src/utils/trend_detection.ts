@@ -202,10 +202,21 @@ export function detectTrendStart(candles: Candle[], price: number): {
   const ma65Val = ma65[ma65.length - 1];
   const ma65Prev = ma65[ma65.length - 6];
 
-  if (price > ma65Val && ma65Val > ma65Prev && candles.slice(-12, -1).some(c => c.close <= ma65Val)) {
+  // FIX канона (гл. 13): факт пересечения ищется по ТОЧКАМ СРЕДНЕЙ на индексах
+  // (close[i] против ma65[i]), а не против единственного текущего значения
+  // ma65Val: при движущейся средней прежняя проверка ловила касания устаревших
+  // уровней и давала голос «MA65 развернулась» внутри уже существующего тренда.
+  const crossedMa65 = (sideUp: boolean) =>
+    candles.slice(-12, -1).some((c, j) => {
+      const idx = closes.length - 12 + j;
+      if (idx < 0) return false;
+      return sideUp ? c.close <= ma65[idx] : c.close >= ma65[idx];
+    });
+
+  if (price > ma65Val && ma65Val > ma65Prev && crossedMa65(true)) {
     bull.push('цена выше MA65, средняя развернулась вверх (гл. 13)');
   }
-  if (price < ma65Val && ma65Val < ma65Prev && candles.slice(-12, -1).some(c => c.close >= ma65Val)) {
+  if (price < ma65Val && ma65Val < ma65Prev && crossedMa65(false)) {
     bear.push('цена ниже MA65, средняя развернулась вниз (гл. 13)');
   }
 
