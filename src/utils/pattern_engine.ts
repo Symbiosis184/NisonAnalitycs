@@ -179,13 +179,21 @@ export class PatternDetector {
     const lo2 = Math.min(...segNoSelf.map(c => c.low));
     const hi2 = Math.max(...segNoSelf.map(c => c.high));
     const atPriorBottom = candle.low <= lo2 + (hi2 - lo2) * 0.35; // пришёл к прежнему дну
+    // FIX (SOL/USDT 1H, молот 24.10 17:00 UTC): отказ от прежнего дна может быть
+    // выполнен ТЕНЬЮ без обновления минимума — low свечи остаётся ВЫШЕ полосы
+    // пред-окна (дно нарисовала предыдущая свеча). Канон (гл. 4): «приход к
+    // прежнему дну» — это ОТКАТ в нижнюю часть окна, а не обязательное касание
+    // его пола: значимо, что тень вернула цену в верх тела после пробоя вниз,
+    // т.е. close/тело остались не глубже 35% окна ИЛИ тень вошла в полосу дна.
+    const priorBand = lo2 + (hi2 - lo2) * 0.35;
+    const bodyAtPriorBottom = Math.min(candle.open, candle.close) <= priorBand ||
+                               candle.lowerWick >= candle.body * 2 && candle.low <= hi2;
     // FIX канона (гл. 4): тело молота расположено В ВЕРХНЕЙ части диапазона —
     // закрытие не ниже середины свечи (это же условие проверяется в isHammer).
     // Прежнее «bounced» сравнивало close с серединой ОКНА: при длинном нисходящем
     // сегменте оно отвергало корректные молоты, закрывшиеся у локального дна.
     const bodyInUpperHalf = candle.close >= (candle.high + candle.low) / 2;
-    void nearBottom;
-    return (nearBottom || atPriorBottom) && bodyInUpperHalf;
+    return (nearBottom || atPriorBottom || bodyAtPriorBottom) && bodyInUpperHalf;
   }
 
   /**
