@@ -136,6 +136,12 @@ export function tfCanonical(tf: string): string {
   const byKey: Record<string, string> = {
     '30m': '30', '30M': '30', '30': '30',
     '1h': '1H', '60m': '1H', '60': '1H', '1H': '1H',
+    // '2H'/'120' — легитимные формы Bybit (см. bybit.ts TF_MAP); без маппинга
+    // sameTf('2H','120') давал ложные сравнения в мульти-ТФ панели.
+    // Канонизация НЕ меняет метку ТФ (TF_LABEL/rows.key берут исходную строку),
+    // поэтому канон = собственное значение '2H'; при этом higherTimeframe/cascade
+    // получают корректную ступень ('4H'), а не [].
+    '2h': '2H', '120m': '2H', '120': '2H', '2H': '2H',
     '4h': '4H', '240': '4H', '4H': '4H',
     '1d': 'D', 'D': 'D', '1D': 'D',
     '1w': 'W', 'W': 'W', '1W': 'W',
@@ -364,9 +370,12 @@ export class ApiClient {
       };
     });
     
-    // priceChange/priceChangePercent в fetch24hTicker уже числа (не строки)
-    const change24h = ticker ? ticker.priceChange : currentPrice - candles[candles.length - 2].close;
-    const changePercent = ticker ? ticker.priceChangePercent : (change24h / candles[candles.length - 2].close) * 100;
+    // priceChange/priceChangePercent в fetch24hTicker уже числа (не строки).
+    // Фолбэк по предпоследнему бару защищён: при короткой истории (<2 баров)
+    // candles[len-2] — undefined, и обращение к .close роняло весь анализ.
+    const prevClose = candles.length >= 2 ? candles[candles.length - 2].close : currentPrice;
+    const change24h = ticker ? ticker.priceChange : currentPrice - prevClose;
+    const changePercent = ticker ? ticker.priceChangePercent : (prevClose > 0 ? (change24h / prevClose) * 100 : 0);
 
     // Режим рынка: структурный тренд (свинги HH/HL, гл. 13) + волатильность ATR.
     // БОКОВИК классифицируется как 'range'; при высокой относительной волатильности —
