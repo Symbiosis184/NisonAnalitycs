@@ -9,9 +9,14 @@ import type { MultiTFZonesDTO } from '../../api/types';
 import { formatPrice } from '../../utils/format';
 import { Collapsible } from '../Collapsible';
 
+import { tfCanonical } from '../../api/client';
+
 const TF_LABEL: Record<string, string> = {
   '15': '15м', '30': '30м', '60': '1ч', '1H': '1ч', '2H': '2ч', '4H': '4ч', D: '1Д', W: '1Н',
 };
+
+/** Сравнение ТФ в разных записях ('W' из зон vs '1W'/'w' из UI) через канон ORDER. */
+const sameTf = (a: string, b: string) => tfCanonical(a) === tfCanonical(b);
 
 export function MultiTFZonesPanel({ rows, activeTf }: { rows: MultiTFZonesDTO[]; activeTf: string }) {
   if (!rows.length) return null;
@@ -42,10 +47,10 @@ export function MultiTFZonesPanel({ rows, activeTf }: { rows: MultiTFZonesDTO[];
             {rows.map((r) => (
               <tr key={r.timeframe} className="border-b border-gray-800/60 align-top">
                 <td className="py-2 pr-3 whitespace-nowrap">
-                  <span className={`font-mono ${r.timeframe === activeTf ? 'text-amber-400 font-bold' : 'text-gray-300'}`}>
+                  <span className={`font-mono ${sameTf(r.timeframe, activeTf) ? 'text-amber-400 font-bold' : 'text-gray-300'}`}>
                     {TF_LABEL[r.timeframe] ?? r.timeframe}
                   </span>
-                  {r.timeframe === activeTf && (
+                  {sameTf(r.timeframe, activeTf) && (
                     <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-400">активный</span>
                   )}
                 </td>

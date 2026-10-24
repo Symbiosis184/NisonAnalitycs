@@ -60,6 +60,9 @@ export type TimeframeKey = 'scalp' | 'intraday' | 'swing' | 'position';
 export function timeframeKey(tf: string): TimeframeKey {
   const t = tf.trim().toUpperCase();
   if (['D', '1D'].includes(t)) return 'swing';
+  // Position: месячные ТФ ('M','1M'..'3M','MO') — макро-масштаб Нисона.
+  // Недельные формы ('W','1W','w') попадают в fallback ниже.
+  if (/^([123]?MO?|M)$/.test(t)) return 'position';
   // Инtraday: 30-минутный и выше (разрешённые Нисоном внутридневные ТФ)
   if (/^30(M|MIN)?$/.test(t)) return 'intraday';
   if (['60', '1H', '2H', '4H'].includes(t)) return 'intraday';

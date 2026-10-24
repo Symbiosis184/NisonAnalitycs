@@ -49,6 +49,10 @@ describe('Иерархия ТФ по Нисону (минимум 30m)', () => {
     expect(timeframeKey('4H')).toBe('intraday');
     expect(timeframeKey('D')).toBe('swing');
     expect(timeframeKey('W')).toBe('position');
+    // канон UI/валидатора: '1W' — та же ступень, что 'W' (не '1'-scalp!)
+    expect(timeframeKey('1W')).toBe('position');
+    expect(timeframeKey('w')).toBe('position');
+    expect(timeframeKey('1M')).toBe('position'); // месячный — макро
     // техническая категория scalp сохранена только для сырых суб-30m форм
     expect(timeframeKey('15m')).toBe('scalp');
     expect(timeframeKey('5')).toBe('scalp');

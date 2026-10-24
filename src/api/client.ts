@@ -130,8 +130,8 @@ function computeEdgeReport(candles: Candle[], timeframe: string): EdgeReportDTO 
 // торговых каскадов и списков выбора; используются только 30m/1H/4H/D/W).
 const TF_ALLOWED_ORDER = ['30', '1H', '4H', 'D', 'W'];
 
-/** Приведение произвольной формы ТФ ('15m', '60', '240'...) к канону ORDER. */
-function tfCanonical(tf: string): string {
+/** Приведение произвольной формы ТФ ('30m', '60', '240'...) к канону ORDER. Экспортируется для UI-компонентов. */
+export function tfCanonical(tf: string): string {
   const t = tf.trim();
   const byKey: Record<string, string> = {
     '30m': '30', '30M': '30', '30': '30',
