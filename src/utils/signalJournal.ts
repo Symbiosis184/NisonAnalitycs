@@ -182,7 +182,16 @@ export function sanitizeSignalEntry(raw: any): SignalEntry | null {
   if (!Number.isFinite(entryPrice)) return null;
 
   const sanitized: SignalEntry = {
-    id: sanitizeText(raw.id, 64, `signal_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`),
+    // id — стабильный идентификатор (ключ обновления/удаления и серверного
+    // merge). sanitizeText с пустым фолбэком возвращал '' для не-строковых
+    // raw.id, и запись получала битый id: updateSignalStatus/deleteRemoteSignal
+    // по такому id не работали, а сервер (ID_RE) отклонял всю запись.
+    // Пустой/слишком короткий id заменяется уникальным signal_*.
+    id: (() => {
+      const cleaned = sanitizeText(raw.id, 64);
+      if (cleaned.length >= 8) return cleaned;
+      return `signal_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    })(),
     timestamp: clampNumber(raw.timestamp, 0, Date.now() + 86400000, Date.now()),
     symbol,
     timeframe: isValidTimeframe(raw.timeframe) ? raw.timeframe : 'D',
@@ -197,7 +206,8 @@ export function sanitizeSignalEntry(raw: any): SignalEntry | null {
   };
 
   if (typeof raw.exitPrice === 'number' && Number.isFinite(raw.exitPrice)) {
-    sanitized.exitPrice = clampNumber(raw.exitPrice, 0, 1e12, undefined as any as number);
+    // clampNumber при undefined-фолбэке вернул бы max (1e12) — явный кламп.
+    sanitized.exitPrice = Math.min(1e12, Math.max(0, raw.exitPrice));
   }
   if (typeof raw.exitTimestamp === 'number' && Number.isFinite(raw.exitTimestamp)) {
     sanitized.exitTimestamp = clampNumber(raw.exitTimestamp, 0, Date.now() + 86400000, Date.now());
@@ -456,6 +466,39 @@ export function evaluateSignalOutcome(
  * Ошибки загрузки свечей по одному символу не блокируют остальные.
  * Возвращает обновлённый журнал целиком.
  */
+// Длительность одного бара в мс по ТФ (поддерживает канон '30m'/'1H'/'D' и
+// числовые минуты Bybit '30'/'60'/'240'). Локально, а не из api/client.ts:
+// журнал — слой хранилища и не должен тянуть граф модулей API-анализа.
+function tfDurationMs(tf: string): number | undefined {
+  const t = String(tf).trim();
+  if (/^\d+$/.test(t)) return Number(t) * 60_000; // минуты (формы Bybit)
+  switch (t.toUpperCase()) {
+    case '1M': return 60_000;      // '1m' — минутный ТФ
+    case '5M': return 5 * 60_000;
+    case '15M': return 15 * 60_000;
+    case '30M': return 30 * 60_000;
+    case '1H': case '60M': return 60 * 60_000;
+    case '2H': case '120M': return 2 * 60 * 60_000;
+    case '4H': case '240M': return 4 * 60 * 60_000;
+    case 'D': case '1D': return 24 * 60 * 60_000;
+    case 'W': case '1W': return 7 * 24 * 60 * 60_000;
+    default: return undefined;
+  }
+}
+
+/**
+ * Максимальное время жизни pending-сигнала: 7 баров своего ТФ (минимум сутки —
+ * для внутридневных ТФ), но не более 7 суток. Прежняя таблица ('D' → 7 дней,
+ * всё остальное → 24 часа) преждевременно экспайрила недельные сигналы и
+ * слишком поздно — внутридневные; кроме того, возраст считался от времени
+ * проверки, а не от бара подтверждения.
+ */
+function signalMaxAgeMs(timeframe: string, cutoff: number): number {
+  const dur = tfDurationMs(timeframe) ?? 24 * 60 * 60_000;
+  const horizon = Math.min(7 * 24 * 60 * 60_000, Math.max(24 * 60 * 60_000, 7 * dur));
+  return cutoff + horizon;
+}
+
 export async function settlePendingSignals(
   candleProvider: (symbol: string, timeframe: string) => Promise<OutcomeCandle[]>,
 ): Promise<SignalEntry[]> {
@@ -491,8 +534,8 @@ export async function settlePendingSignals(
       // срок жизни — фиксируем исход по последней закрытой свече (Нисон:
       // неподтверждённый сигнал аннулируется). Иначе запись вечно висела бы
       // pending без возможности попасть в статистику.
-      const maxAge = entry.timeframe === 'D' ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
-      if (Date.now() - cutoff > maxAge) {
+      const deadline = signalMaxAgeMs(entry.timeframe, cutoff);
+      if (Date.now() > deadline) {
         entry.status = 'expired';
         applyExit(entry, after[after.length - 1].close);
         changed = true;
@@ -537,10 +580,12 @@ export function checkActiveSignals(currentPrices: Record<string, number>): Signa
       entry.status = 'hit_stop';
       applyExit(entry, currentPrice);
     }
-    // Проверка истечения времени (7 дней для дневных сигналов)
+    // Проверка истечения времени (срок жизни зависит от ТФ — см. signalMaxAgeMs)
     else {
-      const maxAge = entry.timeframe === 'D' ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
-      if (Date.now() - entry.timestamp > maxAge) {
+      // Возраст считаем от бара подтверждения (barTime), если он есть —
+      // иначе сигнал мог «протухнуть» ещё до записи в журнал.
+      const deadline = signalMaxAgeMs(entry.timeframe, entry.barTime ?? entry.timestamp);
+      if (Date.now() > deadline) {
         entry.status = 'expired';
         applyExit(entry, currentPrice);
       }
