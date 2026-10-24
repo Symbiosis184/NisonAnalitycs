@@ -15,11 +15,11 @@
   [headers.values]
     Content-Security-Policy = """
       default-src 'self';
-      script-src 'self';
+      script-src 'self' https://mc.yandex.ru;
       style-src 'self' 'unsafe-inline';
       font-src 'self' data:;
-      img-src 'self' data:;
-      connect-src 'self' https://api.bybit.com wss://stream.bybit.com wss://stream.binance.com:9443;
+      img-src 'self' data: https://mc.yandex.ru;
+      connect-src 'self' https://api.bybit.com wss://stream.bybit.com wss://stream.binance.com:9443 https://mc.yandex.ru;
       object-src 'none';
       base-uri 'self';
       form-action 'none';

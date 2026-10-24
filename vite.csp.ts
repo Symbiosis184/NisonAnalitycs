@@ -9,13 +9,13 @@
 export const DEV_CSP = [
   "default-src 'self'",
   // Vite HMR использует inline/bootstrap-модули в dev
-  "script-src 'self' 'unsafe-inline'",
+  "script-src 'self' 'unsafe-inline' https://mc.yandex.ru",
   // Tailwind v4 + инлайновые стили темы в index.html
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self' data:",
-  "img-src 'self' data:",
+  "img-src 'self' data: https://mc.yandex.ru",
   // Запросы к публичным API бирж
-  "connect-src 'self' https://api.bybit.com wss://stream.bybit.com wss://stream.binance.com:9443 ws: http://localhost:*",
+  "connect-src 'self' https://api.bybit.com wss://stream.bybit.com wss://stream.binance.com:9443 https://mc.yandex.ru ws: http://localhost:*",
   "object-src 'none'",
   "frame-ancestors *", // приложение может работать внутри iframe песочницы
   "base-uri 'self'",
