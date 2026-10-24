@@ -96,6 +96,11 @@ export class ZoneVoter {
   // Минимум голосов для сильной зоны
   private static readonly STRONG_ZONE_MIN_VOTES = 3;
 
+  // FIX ТФ-канона (Нисон гл. 10): на графике одновременно не должно быть
+  // десятки «уровней» — значимых зон столько, сколько цена реально тестировала.
+  // Выводимые списки ограничиваются наиболее значимыми зонами с каждой стороны.
+  private static readonly MAX_ZONES_PER_SIDE = 8;
+
   /**
    * Сбор всех зон с голосованием.
    * FIX аудита №1: уровни классифицируются как поддержка/сопротивление ОТНОСИТЕЛЬНО
@@ -162,12 +167,29 @@ export class ZoneVoter {
     // над ценой мог попасть в «поддержку» (если цена касалась его снизу какSupport
     // ложно срабатывал при level≈price), а круглое число ниже цены — в
     // «сопротивление». Финальная инварианта: поддержка ≤ цена ≤ сопротивление.
+    // FIX ТФ-канона (аудит «много линий сопротивления на 4H», Нисон гл. 10):
+    // значимость уровня определяется СИЛОЙ ОТВЕРА ценой (число касаний с
+    // отбоем), а не расстоянием до цены. Прежний вывод давал на волатильных
+    // внутридневных ТФ десятки «зон» из одного случайного экстремума — шум
+    // вместо уровней. Ранжирование по Нисону: сначала число тестирований
+    // уровня ценой, затем число независимых источников (votes); в итоговый
+    // вывод попадают только наиболее значимые зоны (не более MAX_ZONES_PER_
+    // SIDE с каждой стороны). Сортировка «ближайшие к цене первыми» после
+    // этого сохраняется.
+    const significance = (a: Zone, b: Zone) =>
+      (b.touches - a.touches) || (b.votes - a.votes) ||
+      Math.abs(a.level - price) - Math.abs(b.level - price);
+
     const support = this.mapToZones(supMap, zoneHalfWidth)
       .filter(z => z.level <= price)
+      .sort(significance)
+      .slice(0, this.MAX_ZONES_PER_SIDE)
       .sort((a, b) => b.level - a.level); // Ближайшие к цене — первыми
 
     const resistance = this.mapToZones(resMap, zoneHalfWidth)
       .filter(z => z.level >= price)
+      .sort(significance)
+      .slice(0, this.MAX_ZONES_PER_SIDE)
       .sort((a, b) => a.level - b.level); // Ближайшие к цене — первыми
 
     return { support, resistance };
