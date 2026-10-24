@@ -180,14 +180,27 @@ export class ZoneVoter {
       (b.touches - a.touches) || (b.votes - a.votes) ||
       Math.abs(a.level - price) - Math.abs(b.level - price);
 
+    // FIX канона (гл. 10): порог ЗНАЧИМОСТИ уровня адаптивен к ТФ-масштабу.
+    // На младших разрешённых ТФ (30m/1H/4H) один случайный экстремум — не
+    // уровень: требуется минимум 2 тестирования ценой с отбоем (или подтверждение
+    // несколькими независимыми источниками). На D/W история реже и каждый
+    // протестированный уровень весомее — достаточно одного касания. Прежний
+    // единый фильтр «touches ≥ 1» на внутридневных графиках пропускал шумовые
+    // зоны из одного свинга («линии-призраки» над графиком).
+    const minTouches = tfKey === 'intraday' || tfKey === 'scalp' ? 2 : 1;
+    const significant = (z: Zone) =>
+      z.touches >= minTouches || z.votes >= this.STRONG_ZONE_MIN_VOTES;
+
     const support = this.mapToZones(supMap, zoneHalfWidth)
       .filter(z => z.level <= price)
+      .filter(significant)
       .sort(significance)
       .slice(0, this.MAX_ZONES_PER_SIDE)
       .sort((a, b) => b.level - a.level); // Ближайшие к цене — первыми
 
     const resistance = this.mapToZones(resMap, zoneHalfWidth)
       .filter(z => z.level >= price)
+      .filter(significant)
       .sort(significance)
       .slice(0, this.MAX_ZONES_PER_SIDE)
       .sort((a, b) => a.level - b.level); // Ближайшие к цене — первыми
