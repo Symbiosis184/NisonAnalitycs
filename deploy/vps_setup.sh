@@ -251,6 +251,20 @@ server {
         add_header Cache-Control "no-cache, must-revalidate";
     }
 
+    # robots.txt и sitemap.xml отдаём с корректным Content-Type и без кеширования:
+    # поисковые роботы часто игнорируют файлы, отданные как text/html (SPA-fallback),
+    # а закешированный sitemap не обновляется после деплоя
+    location = /sitemap.xml {
+        default_type application/xml;
+        add_header Cache-Control "no-cache, must-revalidate";
+        try_files \$uri =404;
+    }
+    location = /robots.txt {
+        default_type text/plain;
+        add_header Cache-Control "no-cache, must-revalidate";
+        try_files \$uri =404;
+    }
+
     # серверное хранилище журнала сигналов (python API на localhost:8787)
     location /api/journal/ {
         proxy_pass http://127.0.0.1:8787;

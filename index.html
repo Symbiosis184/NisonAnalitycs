@@ -29,6 +29,41 @@
     <meta property="og:locale" content="ru_RU" />
     <meta name="twitter:card" content="summary" />
     <meta name="robots" content="index, follow" />
+    <!-- SEO: верификация поисковых систем (вставить содержимое файла верификации из
+         Яндекс.Вебмастера / Google Search Console) и структурированные данные -->
+    <meta name="yandex-verification" content="" />
+    <meta name="google-site-verification" content="" />
+    <link rel="preconnect" href="https://api.bybit.com" />
+    <link rel="preconnect" href="https://mc.yandex.ru" />
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "WebSite",
+          "@id": "https://kairi.pro/#website",
+          "name": "Kairi Analytics",
+          "url": "https://kairi.pro/",
+          "inLanguage": "ru",
+          "description": "Автоматический анализ крипто рынка по методу Стива Нисона: свечные паттерны, объёмный профиль, сигналы и бэктест."
+        },
+        {
+          "@type": "Organization",
+          "@id": "https://kairi.pro/#organization",
+          "name": "Kairi Analytics",
+          "url": "https://kairi.pro/"
+        },
+        {
+          "@type": "WebPage",
+          "@id": "https://kairi.pro/#home",
+          "url": "https://kairi.pro/",
+          "name": "Kairi Analytics — анализ крипто рынка по методу Стива Нисона",
+          "isPartOf": { "@id": "https://kairi.pro/#website" },
+          "about": { "@id": "https://kairi.pro/#organization" }
+        }
+      ]
+    }
+    </script>
     <!-- П.5: CSP в production отдают заголовки хостинга (netlify.toml / vercel.json /
          public/_headers), в dev — плагин devSecurityHeaders() из vite.config.ts.
          Font Awesome удалён: fa-* классы в коде не используются, иконки — lucide-react. -->

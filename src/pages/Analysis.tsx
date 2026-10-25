@@ -14,6 +14,8 @@ import { ZonesGrid } from '../components/analysis/ZonesSection';
 import { ConfirmedPatternsList, IndicatorsSection } from '../components/analysis/PatternsAndIndicators';
 import { SignalsSection, lifecycleOf } from '../components/analysis/SignalsSection';
 import { Collapsible } from '../components/Collapsible';
+import Seo from '../components/ui/Seo';
+import { analysisMeta } from '../utils/seo';
 import { EdgeVerificationPanel } from '../components/MarketContextPanels';
 import { formatPrice } from '../utils/format';
 import { loadRiskSettings, saveRiskSettings } from '../utils/risk_settings';
@@ -98,6 +100,7 @@ export default function Analysis() {
 
   return (
     <div className="space-y-6">
+      <Seo meta={analysisMeta(symbol!)} />
       {/* Навигация */}
       <Link to="/" className="inline-flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors">
         <ArrowLeft className="w-4 h-4" />

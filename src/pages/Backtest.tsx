@@ -11,6 +11,8 @@ import { runWalkForward } from '../utils/walkforward';
 import { detectRegime, type RegimeInfo } from '../utils/regime';
 import { AlertTriangle } from 'lucide-react';
 import { Icon, type IconName } from '../components/ui/Icon';
+import Seo from '../components/ui/Seo';
+import { backtestMeta } from '../utils/seo';
 
 interface StrategyRow {
   key: string;
@@ -144,6 +146,7 @@ export default function BacktestPage() {
 
   return (
     <div className="p-4 space-y-4">
+      <Seo meta={backtestMeta()} />
       <div className="flex items-center gap-2 flex-wrap">
         <h1 className="text-xl font-bold text-slate-100 flex items-center gap-2"><Icon name="flask" className="text-slate-400" /> Бэктест паттернов Нисона</h1>
         <span

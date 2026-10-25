@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Badge } from './ui/primitives';
+import Seo from './ui/Seo';
+import { journalMeta } from '../utils/seo';
 import { TrendingUp, TrendingDown, Target, Shield, Trash2, Download, Upload, History } from 'lucide-react';
 import {
   getAllSignals,
@@ -222,6 +224,7 @@ export default function SignalJournal() {
 
   return (
     <div className="space-y-6">
+      <Seo meta={journalMeta()} />
       {/* Бета-статус журнала: накопление статистики сигналов только началось,
           win rate / R:R на малой выборке не являются надёжной оценкой ребра. */}
       <div className="flex items-center gap-2 flex-wrap">

@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import Seo from '../components/ui/Seo';
+import { dashboardMeta } from '../utils/seo';
 import { TrendingUp, TrendingDown, Activity, BarChart2, AlertCircle, RefreshCw, Target, Shield, Search, X, BookOpen } from 'lucide-react';
 import { api } from '../api/client';
 import type { MarketOverviewItem as MarketOverview } from '../api/types';
@@ -270,6 +272,7 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
+      <Seo meta={dashboardMeta()} />
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-xl sm:text-3xl font-bold text-white leading-tight">Обзор рынка<span className="hidden sm:inline"> по методологии Нисона</span></h1>
