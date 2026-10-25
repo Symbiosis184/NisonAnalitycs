@@ -20,19 +20,15 @@ export default function Layout() {
               <div className="min-w-0">
                 <h1 className="text-base sm:text-lg font-bold tracking-tight text-white flex items-center gap-2">
                   <span className="truncate">Kairi{' '}
-                    {/* «Analytics»: буква i заменена горящей свечой той же высоты, что буква */}
+                    {/* «Analytics»: точка над буквой i заменена маленьким пламенем; сама буква остаётся буквой */}
                     <span className="text-amber-400" aria-hidden="true">
                       An
-                      {/* i-свеча: инлайн-блок шириной/высотой со строчную букву (x-height), стоит на базовой линии; пламя — над ним */}
-                      <span className="relative inline-block w-[0.24em] h-[0.52em] align-baseline ml-[0.03em] mr-[0.03em]">
-                        {/* тело свечи = вертикальный штрих буквы i */}
-                        <span className="absolute inset-0 rounded-[0.08em] bg-gradient-to-b from-amber-300 to-amber-500 shadow-[0_0_6px_rgba(251,191,36,0.45)]" />
-                        {/* фитилёк */}
-                        <span className="absolute left-1/2 -translate-x-1/2 bottom-full h-[0.12em] w-[0.05em] bg-amber-400" />
-                        {/* пламя (занимает место точки над i) */}
-                        <span className="logo-flame absolute bottom-full right-1/2 translate-y-[0.08em] w-[0.34em] h-[0.42em] rounded-full bg-gradient-to-t from-orange-500 via-amber-400 to-yellow-200 blur-[0.5px]" />
-                        {/* внутренний язычок */}
-                        <span className="logo-spark absolute bottom-full right-1/2 translate-y-[0.14em] w-[0.14em] h-[0.2em] rounded-full bg-amber-100" />
+                      <span className="relative inline">
+                        i
+                        {/* пламя вместо точки над i */}
+                        <span className="logo-flame pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-[0.78em] w-[0.16em] h-[0.22em] rounded-full bg-gradient-to-t from-orange-500 via-amber-400 to-yellow-200 blur-[0.3px]" />
+                        {/* внутренний язычок пламени */}
+                        <span className="logo-spark pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-[0.84em] w-[0.07em] h-[0.1em] rounded-full bg-amber-100" />
                       </span>
                       nalytics
                     </span>

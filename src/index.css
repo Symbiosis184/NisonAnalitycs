@@ -42,7 +42,7 @@
   border-radius: 4px;
 }
 
-/* «Горящая i» в логотипе Kairi Analytics: свеча той же высоты/ширины, что буква */
+/* Пламя над буквой i в логотипе Kairi Analytics */
 @keyframes flame-flicker {
   0%, 100% { transform: scaleY(1) scaleX(1); opacity: 1; }
   30%      { transform: scaleY(1.18) scaleX(0.92); opacity: 0.95; }
