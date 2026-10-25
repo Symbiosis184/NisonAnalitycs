@@ -104,7 +104,7 @@ export function WyckoffPhasePanel({ wyckoff }: WProps) {
                 setSelected(ph);
                 setExpanded(true);
               }}
-              className={`flex-1 rounded-md px-1.5 py-1.5 text-center text-[10px] sm:text-xs font-medium transition-colors cursor-pointer ${active ? '' : 'opacity-40'}`}
+              className={`flex-1 rounded-md px-1.5 py-1.5 text-center text-[11px] sm:text-xs font-medium transition-colors cursor-pointer ${active ? '' : 'opacity-40'}`}
               style={active ? { backgroundColor: `${m.color}25`, color: m.color, boxShadow: `inset 0 0 0 1px ${m.color}60` } : { color: m.color }}
               title={`${m.label}: показать подробное описание`}
             >
@@ -115,7 +115,7 @@ export function WyckoffPhasePanel({ wyckoff }: WProps) {
       </div>
 
       {/* Позиция цены внутри диапазона консолидации */}
-      <div className="mb-1 flex justify-between text-[11px] text-gray-500 font-mono">
+      <div className="mb-1 flex justify-between text-[11px] text-gray-400 font-mono">
         <span>Диапазон: ${formatPrice(wyckoff.range_low)}</span>
         <span>${formatPrice(wyckoff.range_high)}</span>
       </div>
@@ -126,7 +126,7 @@ export function WyckoffPhasePanel({ wyckoff }: WProps) {
           title={`Цена в ${posPct}% диапазона`}
         />
       </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-500 mt-2">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-400 mt-2">
         <span title="Ширина диапазона в единицах ATR: значимость консолидации">
           Ширина: <span className="text-gray-300 font-mono">{wyckoff.range_width_atr.toFixed(1)} ATR</span>
         </span>
@@ -150,7 +150,7 @@ export function WyckoffPhasePanel({ wyckoff }: WProps) {
           <ChevronDown size={13} className={`transition-transform ${expanded ? '' : '-rotate-90'}`} />
           Подробное описание фазы
           {shown !== wyckoff.phase && (
-            <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500">
+            <span className="ml-auto text-[11px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400">
               просмотр: {detailsMeta.label} · активная: {meta.label}
             </span>
           )}
@@ -161,19 +161,19 @@ export function WyckoffPhasePanel({ wyckoff }: WProps) {
               {details.title}
             </div>
             <div>
-              <span className="text-gray-500 font-medium">Что происходит: </span>
+              <span className="text-gray-400 font-medium">Что происходит: </span>
               <span className="text-gray-300">{details.what}</span>
             </div>
             <div>
-              <span className="text-gray-500 font-medium">Кто действует: </span>
+              <span className="text-gray-400 font-medium">Кто действует: </span>
               <span className="text-gray-300">{details.who}</span>
             </div>
             <div>
-              <span className="text-gray-500 font-medium">Объём (усилие vs результат): </span>
+              <span className="text-gray-400 font-medium">Объём (усилие vs результат): </span>
               <span className="text-gray-300">{details.volume}</span>
             </div>
             <div className="rounded-lg bg-gray-800/40 border border-gray-700/40 px-2.5 py-2">
-              <span className="text-gray-500 font-medium">Как использовать в анализе: </span>
+              <span className="text-gray-400 font-medium">Как использовать в анализе: </span>
               <span className="text-gray-300">{details.action}</span>
             </div>
           </div>
@@ -198,7 +198,7 @@ export function PricePathCard({ signal }: PathProps) {
 
   return (
     <div className="mt-3 p-3 rounded-lg bg-gray-800/30 border border-gray-700/40">
-      <div className="text-xs text-gray-500 mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+      <div className="text-xs text-gray-400 mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="font-medium text-gray-400">🛤️ Путь цены до цели</span>
         <span>
           Формальный R:R <span className="font-mono text-white">1:{signal.rr.toFixed(2)}</span>
@@ -216,7 +216,7 @@ export function PricePathCard({ signal }: PathProps) {
         <span className="text-[11px] font-mono text-gray-400">чистота пути {qualityPct}%</span>
       </div>
 
-      <div className="text-[11px] text-gray-500 mb-2">
+      <div className="text-[11px] text-gray-400 mb-2">
         Дистанция до цели: <span className="text-gray-300 font-mono">{path.distance_pct.toFixed(2)}%</span>
         {path.first_obstacle_pct !== null && (
           <> · первое препятствие через <span className="text-orange-400 font-mono">{path.first_obstacle_pct.toFixed(2)}%</span></>
@@ -231,13 +231,13 @@ export function PricePathCard({ signal }: PathProps) {
               <span className="text-gray-400">
                 <span className="font-mono text-gray-300">${formatPrice(o.level)}</span>
                 {' '}· {o.kind === 'hvn' ? 'HVN-узел профиля' : 'S/R-зона'} (сила {(o.strength * 100).toFixed(0)}%)
-                {' '}· <span className="text-gray-500">{o.detail}</span>
+                {' '}· <span className="text-gray-400">{o.detail}</span>
               </span>
             </li>
           ))}
         </ul>
       )}
-      <p className="text-[11px] text-gray-500 italic mt-2">{path.description}</p>
+      <p className="text-[11px] text-gray-400 italic mt-2">{path.description}</p>
     </div>
   );
 }
@@ -264,14 +264,14 @@ function CohortBar({ c }: { c: EdgeCohortDTO }) {
     <div className="py-2 border-t border-gray-800/50 first:border-t-0">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs mb-1">
         <span className="font-medium text-gray-300">{c.label}</span>
-        <span className="text-gray-500">
+        <span className="text-gray-400">
           сделок <span className="text-gray-300 font-mono">{c.trades}</span>
           {' · '}WR <span className="text-gray-300 font-mono">{c.win_rate.toFixed(0)}%</span> [{c.ci_low.toFixed(0)}–{c.ci_high.toFixed(0)}]
         </span>
         {c.has_edge ? (
-          <span className="px-1.5 py-0.5 rounded bg-green-500/15 text-green-400 text-[10px] font-bold">EDGE ✓</span>
+          <span className="px-1.5 py-0.5 rounded bg-green-500/15 text-green-400 text-[11px] font-bold">EDGE ✓</span>
         ) : (
-          <span className="px-1.5 py-0.5 rounded bg-gray-700/40 text-gray-400 text-[10px]">n/d</span>
+          <span className="px-1.5 py-0.5 rounded bg-gray-700/40 text-gray-400 text-[11px]">n/d</span>
         )}
       </div>
       {/* CI-полоса */}
@@ -288,7 +288,7 @@ function CohortBar({ c }: { c: EdgeCohortDTO }) {
           title={`Expectancy: ${c.avg_net_r >= 0 ? '+' : ''}${c.avg_net_r.toFixed(2)} R/сделку`}
         />
       </div>
-      <div className="flex justify-between text-[10px] text-gray-600 font-mono mt-0.5">
+      <div className="flex justify-between text-[11px] text-gray-600 font-mono mt-0.5">
         <span>{(-maxAbs).toFixed(1)} R</span>
         <span className={c.avg_net_r >= 0 ? 'text-green-400' : 'text-red-400'}>
           {c.avg_net_r >= 0 ? '+' : ''}{c.avg_net_r.toFixed(2)} R/сд · Σ {c.total_net_r >= 0 ? '+' : ''}{c.total_net_r.toFixed(1)} R
@@ -314,7 +314,7 @@ export function EdgeVerificationPanel({ edge }: EProps) {
       icon={<TrendingUp className="w-5 h-5 text-amber-400" />}
       title="Верификация преимущества (edge)"
       badge={
-        <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${v.cls}`}>
+        <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${v.cls}`}>
           {v.label}
           {d.recent_expectancy != null && (
             <> · {(d.recent_expectancy >= 0 ? '+' : '') + d.recent_expectancy.toFixed(2)} R/сд за 90д</>
@@ -323,7 +323,7 @@ export function EdgeVerificationPanel({ edge }: EProps) {
       }
     >
       <div>
-      <p className="text-xs text-gray-500 mb-4">
+      <p className="text-xs text-gray-400 mb-4">
         Эмпирический бэктест детектора на истории инструмента ({edge.sample_trades} сделок, без lookahead).
         Cлева — где преимущество реально, справа — не деградирует ли оно сейчас.
       </p>
@@ -344,9 +344,9 @@ export function EdgeVerificationPanel({ edge }: EProps) {
           {edge.cohorts.length > 0 ? (
             edge.cohorts.map((c) => <CohortBar key={c.cohort} c={c} />)
           ) : (
-            <p className="text-xs text-gray-500">Ни одна когорта не набрала наблюдений.</p>
+            <p className="text-xs text-gray-400">Ни одна когорта не набрала наблюдений.</p>
           )}
-          <p className="text-[10px] text-gray-600 mt-2">
+          <p className="text-[11px] text-gray-600 mt-2">
             Точка — средний net R когорты, полоса — 95% CI. EDGE = CI целиком выше нуля при n ≥ 20.
           </p>
         </div>
@@ -358,13 +358,13 @@ export function EdgeVerificationPanel({ edge }: EProps) {
           </h4>
           <div className="grid grid-cols-2 gap-2 text-xs mb-3">
             <div className="p-2 rounded bg-gray-800/40">
-              <div className="text-gray-500 mb-1">Окно ({d.recent_trades} сд.)</div>
+              <div className="text-gray-400 mb-1">Окно ({d.recent_trades} сд.)</div>
               <div className={`font-mono text-base font-bold ${d.recent_expectancy === null ? 'text-gray-600' : d.recent_expectancy >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                 {d.recent_expectancy === null ? '—' : `${d.recent_expectancy >= 0 ? '+' : ''}${d.recent_expectancy.toFixed(2)} R`}
               </div>
             </div>
             <div className="p-2 rounded bg-gray-800/40">
-              <div className="text-gray-500 mb-1">История ({d.history_trades} сд.)</div>
+              <div className="text-gray-400 mb-1">История ({d.history_trades} сд.)</div>
               <div className={`font-mono text-base font-bold ${d.history_expectancy === null ? 'text-gray-600' : d.history_expectancy >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                 {d.history_expectancy === null ? '—' : `${d.history_expectancy >= 0 ? '+' : ''}${d.history_expectancy.toFixed(2)} R`}
               </div>
@@ -378,7 +378,7 @@ export function EdgeVerificationPanel({ edge }: EProps) {
               const pct = (Math.abs(v) / maxAbs) * 50;
               return (
                 <div className="flex items-center gap-2 text-[11px] mb-1">
-                  <span className="w-16 text-gray-500 shrink-0">{label}</span>
+                  <span className="w-16 text-gray-400 shrink-0">{label}</span>
                   <div className="relative flex-1 h-2.5 bg-gray-800/60 rounded">
                     <div className="absolute inset-y-0 left-1/2 w-px bg-gray-600" />
                     <div
@@ -402,12 +402,12 @@ export function EdgeVerificationPanel({ edge }: EProps) {
             );
           })()}
 
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-500 mb-2 font-mono">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-400 mb-2 font-mono">
             <span>Δ = {d.delta === null ? '—' : `${d.delta >= 0 ? '+' : ''}${d.delta.toFixed(2)} R`}</span>
             <span>z = {d.z_score === null ? '—' : d.z_score.toFixed(2)}</span>
             <span>p = {d.p_value === null ? '—' : d.p_value.toFixed(3)}</span>
           </div>
-          <p className={`text-xs leading-relaxed ${d.degraded ? 'text-red-400' : d.insufficient_data ? 'text-gray-500' : 'text-green-400'}`}>
+          <p className={`text-xs leading-relaxed ${d.degraded ? 'text-red-400' : d.insufficient_data ? 'text-gray-400' : 'text-green-400'}`}>
             {d.degraded && '⚠ '}{d.note}
           </p>
         </div>

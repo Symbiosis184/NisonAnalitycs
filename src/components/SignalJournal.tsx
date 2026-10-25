@@ -215,7 +215,7 @@ export default function SignalJournal() {
       case 'hit_stop':
         return <span className="px-2 py-1 rounded bg-red-500/10 text-red-400 text-xs border border-red-500/20">✗ Стоп сработал</span>;
       case 'expired':
-        return <span className="px-2 py-1 rounded bg-gray-500/10 text-gray-400 text-xs border border-gray-500/20">⏰ Истёк</span>;
+        return <span className="px-2 py-1 rounded bg-gray-400/10 text-gray-400 text-xs border border-gray-400/20">⏰ Истёк</span>;
     }
   };
 
@@ -235,10 +235,10 @@ export default function SignalJournal() {
         <span
           className={`px-2 py-0.5 rounded-md text-[11px] font-medium border ${
             serverConnected === undefined
-              ? 'text-gray-400 border-gray-700 bg-gray-500/10'
+              ? 'text-gray-400 border-gray-700 bg-gray-400/10'
               : serverConnected
                 ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'
-                : 'text-gray-400 border-gray-700 bg-gray-500/10'
+                : 'text-gray-400 border-gray-700 bg-gray-400/10'
           }`}
           title={serverConnected
             ? `Синхронизировано с сервером${lastSyncAt ? ' в ' + new Date(lastSyncAt).toLocaleTimeString('ru-RU') : ''}`
@@ -257,37 +257,37 @@ export default function SignalJournal() {
       {stats && (
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 sm:gap-4">
           <div className="p-3 sm:p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
-            <div className="text-xs text-gray-500 mb-1">Всего сигналов</div>
+            <div className="text-xs text-gray-400 mb-1">Всего сигналов</div>
             <div className="text-lg sm:text-2xl font-bold text-white">{stats.totalSignals}</div>
           </div>
           <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
-            <div className="text-xs text-gray-500 mb-1">Активных</div>
+            <div className="text-xs text-gray-400 mb-1">Активных</div>
             <div className="text-lg sm:text-2xl font-bold text-yellow-400">{stats.activeSignals}</div>
           </div>
           <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
-            <div className="text-xs text-gray-500 mb-1">Цель достигнута</div>
+            <div className="text-xs text-gray-400 mb-1">Цель достигнута</div>
             <div className="text-lg sm:text-2xl font-bold text-green-400">{stats.hitTarget}</div>
           </div>
           <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
-            <div className="text-xs text-gray-500 mb-1">Стоп сработал</div>
+            <div className="text-xs text-gray-400 mb-1">Стоп сработал</div>
             <div className="text-lg sm:text-2xl font-bold text-red-400">{stats.hitStop}</div>
           </div>
           <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
-            <div className="text-xs text-gray-500 mb-1">Win Rate</div>
+            <div className="text-xs text-gray-400 mb-1">Win Rate</div>
             <div className="text-lg sm:text-2xl font-bold text-white">{stats.winRate.toFixed(1)}%</div>
           </div>
           <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
-            <div className="text-xs text-gray-500 mb-1">Средний P&L</div>
+            <div className="text-xs text-gray-400 mb-1">Средний P&L</div>
             <div className={`text-lg sm:text-2xl font-bold ${stats.avgPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               {stats.avgPnl >= 0 ? '+' : ''}{stats.avgPnl.toFixed(2)}%
             </div>
           </div>
           <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
-            <div className="text-xs text-gray-500 mb-1">Средний R:R</div>
+            <div className="text-xs text-gray-400 mb-1">Средний R:R</div>
             <div className="text-lg sm:text-2xl font-bold text-white">1:{stats.avgRiskReward.toFixed(2)}</div>
           </div>
           <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
-            <div className="text-xs text-gray-500 mb-1">Истёкших</div>
+            <div className="text-xs text-gray-400 mb-1">Истёкших</div>
             <div className="text-lg sm:text-2xl font-bold text-gray-400">{stats.expired}</div>
           </div>
         </div>
@@ -332,7 +332,7 @@ export default function SignalJournal() {
           <button
             onClick={handleRestore}
             title={`Авто-снапшоты: ${snapshots.length} (хранится до 7 последних)`}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-500/20 hover:bg-gray-500/30 text-gray-300 transition-colors"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-400/20 hover:bg-gray-400/30 text-gray-300 transition-colors"
           >
             <History className="w-4 h-4" />
             Восстановить{snapshots.length > 0 ? ` (${snapshots.length})` : ''}
@@ -394,7 +394,7 @@ export default function SignalJournal() {
                     }`}>
                       {signal.direction === 'long' ? 'LONG' : 'SHORT'}
                     </span>
-                    <span className="text-xs text-gray-500">
+                    <span className="text-xs text-gray-400">
                       {signal.timeframe}
                     </span>
                   </div>
@@ -413,29 +413,29 @@ export default function SignalJournal() {
 
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm mb-3">
                 <div>
-                  <div className="text-xs text-gray-500 mb-1">Вход</div>
+                  <div className="text-xs text-gray-400 mb-1">Вход</div>
                   <div className="font-mono text-white">${formatPrice(signal.entryPrice)}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
+                  <div className="text-xs text-gray-400 mb-1 flex items-center gap-1">
                     <Shield className="w-3 h-3" />
                     Стоп
                   </div>
                   <div className="font-mono text-red-400">${formatPrice(signal.stopLoss)}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
+                  <div className="text-xs text-gray-400 mb-1 flex items-center gap-1">
                     <Target className="w-3 h-3" />
                     Цель
                   </div>
                   <div className="font-mono text-green-400">${formatPrice(signal.target)}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-gray-500 mb-1">R:R</div>
+                  <div className="text-xs text-gray-400 mb-1">R:R</div>
                   <div className="font-mono text-white">1:{signal.riskReward.toFixed(2)}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-gray-500 mb-1">Уверенность</div>
+                  <div className="text-xs text-gray-400 mb-1">Уверенность</div>
                   <div className="font-mono text-white">{signal.confidence.toFixed(0)}%</div>
                 </div>
               </div>
@@ -444,11 +444,11 @@ export default function SignalJournal() {
                 <div className="pt-3 border-t border-gray-800/50">
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                     <div>
-                      <div className="text-xs text-gray-500 mb-1">Выход</div>
+                      <div className="text-xs text-gray-400 mb-1">Выход</div>
                       <div className="font-mono text-white">${formatPrice(signal.exitPrice)}</div>
                     </div>
                     <div>
-                      <div className="text-xs text-gray-500 mb-1">P&L</div>
+                      <div className="text-xs text-gray-400 mb-1">P&L</div>
                       <div className={`font-mono font-bold ${
                         (signal.pnlPercent || 0) >= 0 ? 'text-green-400' : 'text-red-400'
                       }`}>
@@ -456,14 +456,14 @@ export default function SignalJournal() {
                       </div>
                     </div>
                     <div>
-                      <div className="text-xs text-gray-500 mb-1">Дата закрытия</div>
+                      <div className="text-xs text-gray-400 mb-1">Дата закрытия</div>
                       <div className="text-white">
                         {new Date(signal.exitTimestamp!).toLocaleDateString('ru-RU')}
                       </div>
                     </div>
                     {signal.notes && (
                       <div>
-                        <div className="text-xs text-gray-500 mb-1">Заметки</div>
+                        <div className="text-xs text-gray-400 mb-1">Заметки</div>
                         <div className="text-white text-xs">{signal.notes}</div>
                       </div>
                     )}
@@ -471,7 +471,7 @@ export default function SignalJournal() {
                 </div>
               )}
 
-              <div className="mt-3 pt-3 border-t border-gray-800/50 text-xs text-gray-500">
+              <div className="mt-3 pt-3 border-t border-gray-800/50 text-xs text-gray-400">
                 Создан: {new Date(signal.timestamp).toLocaleString('ru-RU')}
               </div>
             </div>

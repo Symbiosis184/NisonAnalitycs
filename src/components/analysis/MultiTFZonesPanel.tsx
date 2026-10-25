@@ -27,8 +27,8 @@ export function MultiTFZonesPanel({ rows, activeTf }: { rows: MultiTFZonesDTO[];
       title="Мульти-ТФ карта уровней S/R"
       badge={
         <>
-          <span className="text-xs text-gray-500">{rows.length} ТФ</span>
-          <span className="text-[10px] text-gray-600 hidden sm:inline">каждый ТФ — со своей калибровкой</span>
+          <span className="text-xs text-gray-400">{rows.length} ТФ</span>
+          <span className="text-[11px] text-gray-600 hidden sm:inline">каждый ТФ — со своей калибровкой</span>
         </>
       }
     >
@@ -36,7 +36,7 @@ export function MultiTFZonesPanel({ rows, activeTf }: { rows: MultiTFZonesDTO[];
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
-            <tr className="text-left text-gray-500 border-b border-gray-700/50">
+            <tr className="text-left text-gray-400 border-b border-gray-700/50">
               <th className="py-1 pr-3 font-medium">ТФ</th>
               <th className="py-1 pr-3 font-medium">Масштаб</th>
               <th className="py-1 pr-3 font-medium">Сопротивления ↑</th>
@@ -51,10 +51,10 @@ export function MultiTFZonesPanel({ rows, activeTf }: { rows: MultiTFZonesDTO[];
                     {TF_LABEL[r.timeframe] ?? r.timeframe}
                   </span>
                   {sameTf(r.timeframe, activeTf) && (
-                    <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-400">активный</span>
+                    <span className="ml-1 text-[11px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-400">активный</span>
                   )}
                 </td>
-                <td className="py-2 pr-3 text-gray-500 whitespace-nowrap">{r.scale}</td>
+                <td className="py-2 pr-3 text-gray-400 whitespace-nowrap">{r.scale}</td>
                 <td className="py-2 pr-3">
                   <div className="flex flex-wrap gap-1.5">
                     {r.resistance.slice(0, 4).map((z) => (
@@ -82,7 +82,7 @@ export function MultiTFZonesPanel({ rows, activeTf }: { rows: MultiTFZonesDTO[];
           </tbody>
         </table>
       </div>
-      <p className="mt-2 text-[10px] text-gray-600">★ — сильная зона (≥3 голосов); ± — полуширина зоны (ATR-калиброванная, Нисон: уровень это полоса, а не линия).</p>
+      <p className="mt-2 text-[11px] text-gray-600">★ — сильная зона (≥3 голосов); ± — полуширина зоны (ATR-калиброванная, Нисон: уровень это полоса, а не линия).</p>
     </div>
     </Collapsible>
   );
