@@ -12,6 +12,20 @@
 import type { Candle } from './candle';
 import { cycleCostFraction, DEFAULT_COSTS, type CostModel } from './costs';
 
+/**
+ * Параметры управления позицией «как в живой стратегии» (сигнальный режим).
+ * Используются вместо механической модели RR-тейка, когда нужно проверить
+ * именно текущую стратегию: стоп = экстремум формации, цель = структурный
+ * уровень Нисона (SignalTargetResolver), выход по достижении цели/стопа либо
+ * по таймауту (time-based exit по close).
+ */
+export interface SignalManagementParams {
+  /** Абсолютная цена структурной цели (signal.target из генератора) */
+  targetPrice: number;
+  /** Минимальный RR входа — фильтр согласованности с порогом генератора (>= 2) */
+  minRR?: number;
+}
+
 export interface BacktestConfig {
   /** Детектор паттерна: получает историю до индекса i включительно, возвращает границы формации или null */
   detect: (history: Candle[], i: number) => FormationBounds | null;
@@ -20,12 +34,23 @@ export interface BacktestConfig {
   maxHoldingBars?: number;
   /** Тейк как кратное риску; по умолчанию 2R (порог SignalGenerator) */
   rewardRiskRatio?: number;
+  /**
+   * Сигнальный режим: если детектор вернул параметры управления (target от
+   * nearestStructuralTarget), позиция ведётся по ним, а не по механике N×R.
+   * Так бэктест проверяет текущую стратегию целиком, а не только точку входа.
+   */
+  signalManagement?: boolean;
   costs?: CostModel;
 }
 
 export interface FormationBounds {
   patternLow: number;
   patternHigh: number;
+  /**
+   * Структурная цель живой стратегии (signal.target). Если задана и включён
+   * режим signalManagement — позиция ведётся по ней, а не по механике N×R.
+   */
+  target?: SignalManagementParams;
 }
 
 export interface BacktestTrade {
@@ -70,6 +95,7 @@ export function runBacktest(candles: Candle[], config: BacktestConfig): Backtest
     detect, direction,
     maxHoldingBars = 60,
     rewardRiskRatio = 2,
+    signalManagement = false,
     costs = DEFAULT_COSTS,
   } = config;
 
@@ -87,7 +113,20 @@ export function runBacktest(candles: Candle[], config: BacktestConfig): Backtest
     if (direction === 'long' && !(stop < entry)) continue;
     if (direction === 'short' && !(stop > entry)) continue;
 
-    const target = direction === 'long' ? entry + rewardRiskRatio * risk : entry - rewardRiskRatio * risk;
+    // Сигнальный режим: цель = структурный уровень из живой стратегии.
+    // Вход дополнительно отсекается порогом minRR (в генераторе — adjustedRR >= 2).
+    let target: number;
+    const sm = signalManagement ? bounds.target : undefined;
+    if (sm) {
+      const reward = Math.abs(sm.targetPrice - entry);
+      const rr = reward / risk;
+      const dirOk = direction === 'long' ? sm.targetPrice > entry : sm.targetPrice < entry;
+      if (!dirOk) continue;
+      if (sm.minRR !== undefined && rr < sm.minRR) continue;
+      target = sm.targetPrice;
+    } else {
+      target = direction === 'long' ? entry + rewardRiskRatio * risk : entry - rewardRiskRatio * risk;
+    }
 
     // Управление позицией со следующей свечи
     let exitIndex = -1;

@@ -4,6 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { Candle } from '../../utils/candle';
 import { signalGenerator } from '../../utils/signal_generator';
+import { runBacktest } from '../../utils/backtest';
 
 function mkCandles(n: number): Candle[] {
   // Детерминированная синтетика по канону Нисона: устойчивый нисходящий тренд
@@ -91,5 +92,53 @@ describe('backtest event collection (no lookahead, fresh events)', () => {
     // каждая формация — ровно одно событие за весь прогон
     for (const [, count] of seenKeys) expect(count).toBe(1);
     expect(seenKeys.size).toBeGreaterThan(0);
+  });
+});
+
+// === Сигнальный режим (signalManagement): проверка ТЕКУЩЕЙ стратегии целиком ===
+describe('runBacktest signalManagement (структурная цель вместо 2R)', () => {
+  const mk = (n: number, fn: (i: number) => [number, number, number, number]): Candle[] =>
+    Array.from({ length: n }, (_, i) => { const [o, h, l, c] = fn(i); return new Candle({ time: 1000 + i, open: o, high: h, low: l, close: c, volume: 100 }); });
+
+  it('цель ниже механического 2R достигается раньше — исход target по структурному уровню', () => {
+    // Паттерн на баре 0: вход close=100, стоп patternLow=98 (risk=2).
+    // Механика 2R => тейк 104. Структурная цель живой стратегии => 106 (rr=3 >= minRR=2).
+    const candles = mk(5, (i) => (i === 0 ? [99, 101, 97.5, 100] : i === 1 ? [100, 106.1, 98.5, 101] : [101, 101.5, 100.5, 101.2]));
+    const detect = (_h: Candle[], idx: number) => idx === 0
+      ? { patternLow: 98, patternHigh: 101, target: { targetPrice: 106, minRR: 2 } }
+      : null;
+    const res = runBacktest(candles, { detect, direction: 'long', signalManagement: true, costs: { feeRate: 0, slippageRate: 0 } });
+    expect(res.trades).toHaveLength(1);
+    expect(res.trades[0].targetPrice).toBeCloseTo(106);
+    expect(res.trades[0].outcome).toBe('target');
+    expect(res.trades[0].exitIndex).toBe(1); // достигнута на баре с high=106.1
+    expect(res.trades[0].grossR).toBeCloseTo(3); // (106-100)/2, а не механические 2R
+  });
+
+  it('вход с RR < minRR отсекается (согласованность с порогом генератора >= 2)', () => {
+    const candles = mk(5, () => [100, 101.5, 99, 100.5]);
+    const detect = (_h: Candle[], idx: number) => idx === 0
+      ? { patternLow: 98, patternHigh: 101, target: { targetPrice: 101.5, minRR: 2 } } // rr = 1.5/2 < 2
+      : null;
+    const res = runBacktest(candles, { detect, direction: 'long', signalManagement: true });
+    expect(res.trades).toHaveLength(0);
+  });
+
+  it('цель против направления сделки — сигнал не торгуется', () => {
+    const candles = mk(5, () => [100, 101, 99, 100]);
+    const detect = (_h: Candle[], idx: number) => idx === 0
+      ? { patternLow: 98, patternHigh: 101, target: { targetPrice: 90, minRR: 2 } } // лонг, цель ниже входа
+      : null;
+    const res = runBacktest(candles, { detect, direction: 'long', signalManagement: true });
+    expect(res.trades).toHaveLength(0);
+  });
+
+  it('без signalManagement поведение прежнее — механический 2R-тейк', () => {
+    const candles = mk(5, (i) => (i === 0 ? [99, 101, 97.5, 100] : [100, 102.1, 99.5, 101]));
+    const detect = (_h: Candle[], idx: number) => idx === 0
+      ? { patternLow: 98, patternHigh: 101, target: { targetPrice: 102, minRR: 2 } }
+      : null;
+    const res = runBacktest(candles, { detect, direction: 'long', costs: { feeRate: 0, slippageRate: 0 } });
+    expect(res.trades[0].targetPrice).toBeCloseTo(104); // 2R, структурная цель проигнорирована
   });
 });

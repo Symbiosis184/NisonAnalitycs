@@ -76,7 +76,20 @@ export default function BacktestPage() {
         // существовало — детектор runBacktest никогда не находил сигнал (потерянные
         // паттерны). Вход: close бара подтверждения (= candles[endIdx+1]).
         const entryBar = Math.min(s.meta.patternEndIdx + 1, i);
-        events.push({ i: entryBar, pattern: s.pattern, direction: s.direction, bounds: { patternLow: s.meta.patternLow, patternHigh: s.meta.patternHigh } });
+        // Сигнальный режим: несём в бэктест УПРАВЛЕНИЕ ЖИВОЙ СТРАТЕГИИ —
+        // структурную цель Нисона (s.target) и порог входа adjustedRR >= 2
+        // (тот же фильтр, что в findSignals). Теперь проверяется вся текущая
+        // стратегия (вход + стоп + цель), а не только точка входа с механикой 2R.
+        events.push({
+          i: entryBar,
+          pattern: s.pattern,
+          direction: s.direction,
+          bounds: {
+            patternLow: s.meta.patternLow,
+            patternHigh: s.meta.patternHigh,
+            target: { targetPrice: s.target, minRR: 2 },
+          },
+        });
       }
     }
     // Дедупликация событий: одна формация = одна сделка. При confirmDelay>1 один
@@ -101,7 +114,7 @@ export default function BacktestPage() {
       };
       const evCount = deduped.filter((e) => e.pattern === pattern && e.direction === direction).length;
       if (evCount < 3) continue; // слишком мало наблюдений — не показываем
-      const config = { detect, direction, costs };
+      const config = { detect, direction, costs, signalManagement: true };
       const res = runBacktest(candles, config);
       // v1.1beta: walk-forward (train 300 / test 100) и режим рынка на момент каждой сделки
       const wf = runWalkForward(candles, config, { trainBars: 300, testBars: 100, warmup: 60 });
