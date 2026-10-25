@@ -23,16 +23,16 @@ export default function Layout() {
                     {/* Слово «Analytics» пишется полностью; буква «i» (между t и c) стилизована под горящую свечу */}
                     <span className="text-amber-400" aria-hidden="true">
                       Anal
-                      {/* буква i → горящая свеча: тело свечи = штрих буквы, пламя = точка над i */}
+                      {/* буква i → горящая свеча: тело = штрих буквы на базовой линии, пламя = точка над i */}
                       <span className="relative inline-block w-[0.26em] align-baseline mx-[0.01em]">
-                        {/* фитилёк */}
-                        <span className="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-[0.52em] w-[0.03em] h-[0.12em] bg-amber-500/70" />
-                        {/* тело свечи = штрих буквы i (высота x-height, стоит на базовой линии) */}
+                        {/* тело свечи = штрих буквы i (in-flow блок, высота x-height, стоит на базовой линии) */}
                         <span className="block w-full h-[0.52em] rounded-[0.06em] bg-gradient-to-b from-amber-300 via-amber-400 to-orange-500 shadow-[0_0_0.18em_rgba(251,191,36,0.55)]" />
+                        {/* фитилёк — тонкая линия над телом */}
+                        <span className="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-[0.52em] w-[0.03em] h-[0.12em] bg-amber-500/70" />
                         {/* пламя вместо точки над i */}
-                        <span className="logo-flame pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-[0.6em] w-[0.16em] h-[0.22em] rounded-full bg-gradient-to-t from-orange-500 via-amber-400 to-yellow-200 blur-[0.3px]" />
+                        <span className="logo-flame pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-[0.66em] w-[0.16em] h-[0.24em] rounded-[50%_50%_50%_50%/60%_60%_40%_40%] bg-gradient-to-t from-orange-500 via-amber-400 to-yellow-200 blur-[0.3px]" />
                         {/* внутренний язычок пламени */}
-                        <span className="logo-spark pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-[0.64em] w-[0.07em] h-[0.1em] rounded-full bg-amber-100" />
+                        <span className="logo-spark pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-[0.72em] w-[0.07em] h-[0.11em] rounded-full bg-amber-100" />
                       </span>
                       cs
                     </span>
