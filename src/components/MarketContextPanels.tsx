@@ -15,10 +15,10 @@ import { Collapsible } from '../components/Collapsible';
 type Phase = NonNullable<AnalysisReport['wyckoff']>['phase'];
 
 const PHASE_META: Record<Phase, { label: string; color: string }> = {
-  accumulation: { label: 'Накопление', color: '#22c55e' },
+  accumulation: { label: 'Накопление', color: '#34d399' },
   markup: { label: 'Рост', color: '#38bdf8' },
   distribution: { label: 'Распределение', color: '#f59e0b' },
-  markdown: { label: 'Падение', color: '#ef4444' },
+  markdown: { label: 'Падение', color: '#fb7185' },
   transition: { label: 'Переход', color: '#94a3b8' },
 };
 
@@ -258,7 +258,7 @@ function CohortBar({ c }: { c: EdgeCohortDTO }) {
   const lo = toPct(c.exp_ci_low);
   const hi = toPct(c.exp_ci_high);
   const mean = toPct(c.avg_net_r);
-  const color = c.has_edge ? '#22c55e' : c.avg_net_r >= 0 ? '#eab308' : '#ef4444';
+  const color = c.has_edge ? '#34d399' : c.avg_net_r >= 0 ? '#eab308' : '#fb7185';
 
   return (
     <div className="py-2 border-t border-gray-800/50 first:border-t-0">
@@ -397,7 +397,7 @@ export function EdgeVerificationPanel({ edge }: EProps) {
             return (
               <div className="mb-3">
                 {bar(d.history_expectancy, 'История', '#64748b')}
-                {bar(d.recent_expectancy, `Окно ${d.window_days}д`, d.degraded ? '#ef4444' : '#eab308')}
+                {bar(d.recent_expectancy, `Окно ${d.window_days}д`, d.degraded ? '#fb7185' : '#eab308')}
               </div>
             );
           })()}

@@ -14,8 +14,8 @@ const COLORS = {
   va: 'rgba(148, 163, 184, 0.10)',
   grid: '#1e293b',
   text: '#94a3b8',
-  long: '#22c55e',
-  short: '#ef4444',
+  long: '#34d399',
+  short: '#fb7185',
 };
 
 interface VPProps {
@@ -162,7 +162,7 @@ export function VolumeProfileChart({ profile, price, signal }: VPProps) {
           <text x={padL + 4} y={yOf(signal.entry_price) - 3} fontSize={10} fill={dirColor}>Вход ${formatPrice(signal.entry_price)}</text>
           <line x1={padL} y1={yOf(signal.target)} x2={W - padR} y2={yOf(signal.target)} stroke={dirColor} strokeWidth={1.5} strokeDasharray="4 3" />
           <text x={padL + 4} y={yOf(signal.target) - 3} fontSize={10} fill={dirColor}>Цель ${formatPrice(signal.target)}</text>
-          <line x1={padL} y1={yOf(signal.stop_loss)} x2={W - padR} y2={yOf(signal.stop_loss)} stroke="#ef4444" strokeWidth={1} strokeDasharray="2 4" />
+          <line x1={padL} y1={yOf(signal.stop_loss)} x2={W - padR} y2={yOf(signal.stop_loss)} stroke="#fb7185" strokeWidth={1} strokeDasharray="2 4" />
           <text x={W - padR} y={yOf(signal.stop_loss) - 3} textAnchor="end" fontSize={9} fill="#f87171">Стоп ${formatPrice(signal.stop_loss)}</text>
 
           {/* Препятствия на транзите (S/R-зоны и HVN-кластеры) */}

@@ -92,12 +92,12 @@ export default function CandlestickChart({
     chartRef.current = chart;
 
     const candlestickSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#22c55e',
-      downColor: '#ef4444',
-      borderDownColor: '#ef4444',
-      borderUpColor: '#22c55e',
-      wickDownColor: '#ef4444',
-      wickUpColor: '#22c55e',
+      upColor: '#34d399',
+      downColor: '#fb7185',
+      borderDownColor: '#fb7185',
+      borderUpColor: '#34d399',
+      wickDownColor: '#fb7185',
+      wickUpColor: '#34d399',
     });
 
     const chartData = candles.map(candle => ({
@@ -237,7 +237,7 @@ export default function CandlestickChart({
     const signalMarkers = [...markerByTime.entries()].map(([t, { dir }]) => ({
       time: t as any,
       position: (dir === 'short' ? 'aboveBar' : 'belowBar') as 'aboveBar' | 'belowBar',
-      color: dir === 'long' ? '#22c55e' : dir === 'short' ? '#ef4444' : '#94a3b8',
+      color: dir === 'long' ? '#34d399' : dir === 'short' ? '#fb7185' : '#94a3b8',
       shape: dir === 'long' ? 'arrowUp' as const : dir === 'short' ? 'arrowDown' as const : 'circle' as const,
       text: '',
       size: 1,
@@ -306,7 +306,7 @@ export default function CandlestickChart({
           return {
             time: Math.floor(candle.time / 1000) as any,
             position: pattern.type === 'bullish' ? 'belowBar' as const : 'aboveBar' as const,
-            color: pattern.type === 'bullish' ? '#22c55e' : pattern.type === 'bearish' ? '#ef4444' : '#94a3b8',
+            color: pattern.type === 'bullish' ? '#34d399' : pattern.type === 'bearish' ? '#fb7185' : '#94a3b8',
             shape: pattern.type === 'bullish' ? 'arrowUp' as const : pattern.type === 'bearish' ? 'arrowDown' as const : 'circle' as const,
             text: '', // название только в tooltip — чистый график без наложений
             size: 1,
