@@ -25,7 +25,7 @@ export function VolumeContextSection({ report, pathSignals, activePathSignalIdx,
     <div className="space-y-4">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {report.volume_profile && (
-          <div className="lg:col-span-2 p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
+          <div className="panel lg:col-span-2 p-4 ">
             <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
               <h3 className="text-sm font-semibold text-gray-400 flex items-center gap-2">
                 <BarChart2 className="w-4 h-4" />
@@ -78,7 +78,7 @@ export function VolumeContextSection({ report, pathSignals, activePathSignalIdx,
         {report.wyckoff && <WyckoffPhasePanel wyckoff={report.wyckoff} />}
       </div>
       {report.delta_summary && (
-        <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
+        <div className="panel p-4 ">
           <h3 className="text-sm font-semibold text-gray-400 mb-2 flex items-center gap-2">
             <Activity className="w-4 h-4" />
             Дельта агрессии (покупатели − продавцы)

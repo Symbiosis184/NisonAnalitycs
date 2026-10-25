@@ -49,7 +49,7 @@ export function Collapsible({ storageKey, title, icon, badge, defaultOpen = true
   };
 
   return (
-    <section className="rounded-xl border border-gray-800/60 bg-surface-panel/50">
+    <section className="panel ">
       <button
         type="button"
         onClick={toggle}

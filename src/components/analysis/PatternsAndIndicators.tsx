@@ -5,7 +5,7 @@ import type { PatternDTO } from '../../api/types';
 
 export function ConfirmedPatternsList({ patterns, total }: { patterns: PatternDTO[]; total: number }) {
   return (
-    <div className="p-6 rounded-xl border border-gray-800/60 bg-surface-panel/50">
+    <div className="panel p-6 ">
       <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
         🕯️ Подтверждённые паттерны
         <span className="text-xs text-gray-400 font-normal ml-2">
@@ -74,7 +74,7 @@ export function ConfirmedPatternsList({ patterns, total }: { patterns: PatternDT
 export function IndicatorsSection({ report }: { report: AnalysisReport }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-      <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
+      <div className="panel p-4 ">
         <h3 className="text-sm font-semibold text-gray-400 mb-2">RSI (14)</h3>
         <div className={`text-3xl font-bold ${
           report.rsi > 70 ? 'text-red-400' :
@@ -95,7 +95,7 @@ export function IndicatorsSection({ report }: { report: AnalysisReport }) {
         </div>
       </div>
 
-      <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
+      <div className="panel p-4 ">
         <h3 className="text-sm font-semibold text-gray-400 mb-2">MACD</h3>
         {/* Гистограмма в абсолюте масштабо-зависима: для BTC $100k «1.23» ничего
             не значит. Показываем знак гистограммы + её отношение к цене в %. */}
@@ -114,7 +114,7 @@ export function IndicatorsSection({ report }: { report: AnalysisReport }) {
         </div>
       </div>
 
-      <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
+      <div className="panel p-4 ">
         <h3 className="text-sm font-semibold text-gray-400 mb-2">Тренд</h3>
         <div className={`text-3xl font-bold ${
           report.trend === 'ВОСХОДЯЩИЙ' ? 'text-green-400' :

@@ -26,7 +26,7 @@ export function SignalsSection({ report, riskSettings, showRiskPanel, onToggleRi
   const visibleSignals = report.signals.filter((signal) => lifecycleOf(signal) !== 'invalidated');
 
   return (
-    <div className="p-6 rounded-xl border border-gray-800/60 bg-surface-panel/50">
+    <div className="panel p-6 ">
       <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
         <Target className="w-5 h-5 text-amber-400" />
         Сценарии (Нисон: ожидание → подтверждение)

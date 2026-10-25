@@ -17,7 +17,7 @@ export function MarketContextSection({ report, volumeRatio }: {
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       {/* Режим рынка */}
-      <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
+      <div className="panel p-4 ">
         <h3 className="text-sm font-semibold text-gray-400 mb-2 flex items-center gap-2">
           <Activity className="w-4 h-4" />
           Режим рынка
@@ -90,7 +90,7 @@ export function MarketContextSection({ report, volumeRatio }: {
       </div>
 
       {/* Объём */}
-      <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
+      <div className="panel p-4 ">
         <h3 className="text-sm font-semibold text-gray-400 mb-2 flex items-center gap-2">
           <BarChart2 className="w-4 h-4" />
           Объём
