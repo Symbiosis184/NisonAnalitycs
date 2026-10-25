@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+
+# Служебные пути не нужны поисковым системам
+Disallow: /404.html
+Disallow: /500.html
+
+# Основное зеркало (канонический домен) — см. также <link rel="canonical"> в index.html
+Sitemap: https://kairi.pro/sitemap.xml
