@@ -19,7 +19,7 @@ export default function Layout() {
               </div>
               <div className="min-w-0">
                 <h1 className="text-base sm:text-lg font-bold tracking-tight text-white flex items-center gap-2">
-                  {/* Обычное написание слова «Analytics» (просьба пользователя от 26.10: без стилизации) */}
+                  {/* Обычное написание слова «Analytics» (финальное решение пользователя от 26.10: без свечи) */}
                   <span className="truncate">Kairi <span className="text-amber-400">Analytics</span></span>
                   <span
                     className="hidden sm:inline-flex text-[11px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30 normal-case tracking-normal flex-shrink-0"
