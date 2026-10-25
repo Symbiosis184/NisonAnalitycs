@@ -197,6 +197,13 @@ server {
         root $WEB_ROOT;
     }
 $( [ "$with_ssl" = "yes" ] && echo '
+    # robots.txt отдаём по HTTP напрямую (200, без редиректа): поисковые
+    # роботы (и проверки Яндекс.Вебмастера) не переходят по 301 на
+    # robots.txt и выдают предупреждение «сервер отвечает редиректом».
+    location = /robots.txt {
+        root /var/www/nison-analytics;
+    }
+
     location / {
         return 301 https://\$host\$request_uri;
     }' || echo '
