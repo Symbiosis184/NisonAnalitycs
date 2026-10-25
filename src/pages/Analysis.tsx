@@ -164,7 +164,7 @@ export default function Analysis() {
             <span className={`text-xs font-semibold ${
               report.regime === 'ВОСХОДЯЩИЙ' ? 'text-green-400' : report.regime === 'НИСХОДЯЩИЙ' ? 'text-red-400' : 'text-yellow-400'
             }`}>{report.regime}</span>
-            <span className="text-xs text-gray-500">Consensus {report.consensus.score.toFixed(1)}/5 · Объём {volumeRatio.toFixed(2)}x</span>
+            <span className="text-xs text-gray-400">Consensus {report.consensus.score.toFixed(1)}/5 · Объём {volumeRatio.toFixed(2)}x</span>
           </>
         }
       >
@@ -176,7 +176,7 @@ export default function Analysis() {
         storageKey="chart"
         icon={<ChartIcon className="w-5 h-5 text-amber-400" />}
         title={`График ${baseAsset}/USDT · ${timeframe}`}
-        badge={<span className="text-xs text-gray-500">{report.patterns.length} паттернов · {report.support.length + report.resistance.length} зон</span>}
+        badge={<span className="text-xs text-gray-400">{report.patterns.length} паттернов · {report.support.length + report.resistance.length} зон</span>}
       >
         <CandlestickChart
           candles={report.candles}
@@ -198,7 +198,7 @@ export default function Analysis() {
           badge={
             <>
               {report.wyckoff && (
-                <span className="text-xs text-gray-500">
+                <span className="text-xs text-gray-400">
                   Вайкофф: {PHASE_SHORT[report.wyckoff.phase]} · {(report.wyckoff.confidence * 100).toFixed(0)}%
                 </span>
               )}
@@ -229,7 +229,7 @@ export default function Analysis() {
           <>
             <span className="text-xs text-green-400">↓ {report.support.length}</span>
             <span className="text-xs text-red-400">↑ {report.resistance.length}</span>
-            <span className="text-xs text-gray-500">кластеризация + сила по касаниям (Нисон)</span>
+            <span className="text-xs text-gray-400">кластеризация + сила по касаниям (Нисон)</span>
           </>
         }
       >
@@ -242,7 +242,7 @@ export default function Analysis() {
           storageKey="patterns"
           icon={<ChartIcon className="w-5 h-5 text-amber-400" />}
           title="Подтверждённые паттерны"
-          badge={<span className="text-xs text-gray-500">{confirmedPatterns.length} из {report.patterns.length} · подтверждены объёмом/уровнем</span>}
+          badge={<span className="text-xs text-gray-400">{confirmedPatterns.length} из {report.patterns.length} · подтверждены объёмом/уровнем</span>}
         >
           <ConfirmedPatternsList patterns={confirmedPatterns} total={report.patterns.length} />
         </Collapsible>
@@ -281,9 +281,9 @@ export default function Analysis() {
         title="Индикаторы"
         badge={
           <>
-            <span className="text-xs text-gray-500">RSI {report.rsi.toFixed(1)}</span>
-            <span className="text-xs text-gray-500">MACD {report.macd.histogram.toFixed(2)}</span>
-            <span className="text-xs text-gray-500">Тренд {(report.trend_strength * 100).toFixed(1)}%</span>
+            <span className="text-xs text-gray-400">RSI {report.rsi.toFixed(1)}</span>
+            <span className="text-xs text-gray-400">MACD {report.macd.histogram.toFixed(2)}</span>
+            <span className="text-xs text-gray-400">Тренд {(report.trend_strength * 100).toFixed(1)}%</span>
           </>
         }
       >

@@ -8,7 +8,7 @@ export function ConfirmedPatternsList({ patterns, total }: { patterns: PatternDT
     <div className="p-6 rounded-xl border border-gray-800/60 bg-surface-panel/50">
       <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
         🕯️ Подтверждённые паттерны
-        <span className="text-xs text-gray-500 font-normal ml-2">
+        <span className="text-xs text-gray-400 font-normal ml-2">
           ({patterns.length} из {total})
         </span>
       </h3>
@@ -38,7 +38,7 @@ export function ConfirmedPatternsList({ patterns, total }: { patterns: PatternDT
                   }`}>
                     {pattern.name}
                   </div>
-                  <div className="text-xs text-gray-500">
+                  <div className="text-xs text-gray-400">
                     Уверенность: {pattern.confidence}%
                   </div>
                 </div>
@@ -83,7 +83,7 @@ export function IndicatorsSection({ report }: { report: AnalysisReport }) {
           {report.rsi.toFixed(1)}
         </div>
         {/* Честная зональная классификация: extremes — это <20/>80, а не 30/70 */}
-        <div className="text-xs text-gray-500 mt-1">
+        <div className="text-xs text-gray-400 mt-1">
           {report.rsi >= 80 ? 'Экстремальная перекупленность' :
            report.rsi > 70 ? 'Зона перекупленности' :
            report.rsi <= 20 ? 'Экстремальная перепроданность' :
@@ -104,7 +104,7 @@ export function IndicatorsSection({ report }: { report: AnalysisReport }) {
         }`}>
           {((report.macd.histogram / Math.max(report.price, 1e-9)) * 100).toFixed(3)}%
         </div>
-        <div className="text-xs text-gray-500 mt-1">
+        <div className="text-xs text-gray-400 mt-1">
           {report.macd.histogram > 0 ? 'Бычий импульс' : 'Медвежий импульс'}
           {' · '}гистограмма от цены
         </div>
@@ -122,7 +122,7 @@ export function IndicatorsSection({ report }: { report: AnalysisReport }) {
         }`}>
           {(report.trend_strength * 100).toFixed(1)}%
         </div>
-        <div className="text-xs text-gray-500 mt-1">
+        <div className="text-xs text-gray-400 mt-1">
           Сила направленного движения ({report.trend})
         </div>
         <div className="text-xs text-gray-600 mt-2 leading-relaxed">

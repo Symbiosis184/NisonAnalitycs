@@ -120,7 +120,7 @@ export default function SupportModal({ open, onClose }: Props) {
         <button
           onClick={onClose}
           aria-label="Закрыть"
-          className="absolute right-3 top-3 p-1.5 rounded-lg text-gray-500 hover:text-white hover:bg-white/5 transition-colors"
+          className="absolute right-3 top-3 p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
         >
           <X className="w-4 h-4" />
         </button>
@@ -144,20 +144,20 @@ export default function SupportModal({ open, onClose }: Props) {
               className="w-48 h-48 rounded-xl border-4 border-white bg-white p-1"
             />
           ) : (
-            <div className="w-48 h-48 rounded-xl bg-white/5 animate-pulse flex items-center justify-center text-xs text-gray-500">
+            <div className="w-48 h-48 rounded-xl bg-white/5 animate-pulse flex items-center justify-center text-xs text-gray-400">
               Генерация QR…
             </div>
           )}
         </div>
 
-        <p className="text-[11px] text-gray-500 text-center mb-4 -mt-2">
+        <p className="text-[11px] text-gray-400 text-center mb-4 -mt-2">
           Откройте кошелёк TON (Tonkeeper / MyTonWallet) → «Отправить» → отсканируйте QR.
           Сеть: <span className="text-gray-300 font-medium">The Open Network (TON)</span>.
         </p>
 
         {/* Адрес + копирование */}
         <div className="rounded-lg border border-gray-800 bg-surface-deep p-3">
-          <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">
+          <div className="text-[11px] uppercase tracking-wider text-gray-400 mb-1">
             Адрес кошелька GRAM
           </div>
           <div className="flex items-center gap-2">
@@ -179,7 +179,7 @@ export default function SupportModal({ open, onClose }: Props) {
           </div>
         </div>
 
-        <p className="text-[10px] text-gray-600 mt-4 text-center">
+        <p className="text-[11px] text-gray-600 mt-4 text-center">
           Переводите только GRAMUSDT в сети TON. Отправка в другой сети приведёт к потере средств.
         </p>
       </div>

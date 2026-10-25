@@ -70,7 +70,7 @@ export function VolumeProfileNotes({ profile, price }: Pick<VPProps, 'profile' |
         </li>
       </ul>
       <p className="rounded-lg border border-gray-800/60 bg-surface-base p-2 text-gray-300">{positionNote}</p>
-      <p className="text-gray-500">
+      <p className="text-gray-400">
         Совпадение POC или границы VA с уровнем S/R мульти-ТФ карты резко повышает
         значимость зоны: два независимых метода указывают на одну цену.
       </p>
@@ -271,7 +271,7 @@ export function DeltaNotes({ summary, priceChangePct }: { summary: DeltaSummary;
       {div && (
         <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-200">{div}</p>
       )}
-      <p className="text-gray-500 italic">
+      <p className="text-gray-400 italic">
         ⚠️ Proxy-оценка по OHLCV: тикового стакана/ленты Bybit здесь нет, поэтому дельта вычисляется из формы свечи (тело + позиция закрытия + объём). Она надёжна для оценки перекоса агрессии и дивергенций, но абсолютные числа не равны биржевой дельте из footprint-терминалов. Правило Нисона сохраняется: любой сигнал подтверждается только на следующей свече.
       </p>
     </div>

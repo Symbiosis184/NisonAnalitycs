@@ -59,7 +59,7 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
 
       {/* Режим рынка */}
       <div className="mb-3 p-2 rounded-lg bg-gray-800/30">
-        <div className="text-xs text-gray-500 mb-1">Режим рынка</div>
+        <div className="text-xs text-gray-400 mb-1">Режим рынка</div>
         <div className={`text-sm font-medium ${getTrendColor(item.regime)}`}>
           {item.regime}
         </div>
@@ -86,7 +86,7 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
       {/* Только подтверждённые паттерны (по Нисону) */}
       {confirmedPatterns.length > 0 && (
         <div className="mb-3">
-          <div className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+          <div className="text-xs text-gray-400 mb-2 flex items-center gap-1">
             <Target className="w-3 h-3" />
             Подтверждённые паттерны ({confirmedPatterns.length})
           </div>
@@ -100,9 +100,9 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
                   }`}>
                     {pattern.type === 'bullish' ? '▲' : pattern.type === 'bearish' ? '▼' : '◆'} {pattern.name}
                   </span>
-                  <span className="text-green-400 text-[10px]">✓</span>
+                  <span className="text-green-400 text-[11px]">✓</span>
                 </div>
-                <span className="text-gray-500">{pattern.confidence}%</span>
+                <span className="text-gray-400">{pattern.confidence}%</span>
               </div>
             ))}
           </div>
@@ -112,7 +112,7 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
       {/* Сценарии */}
       {item.signals && item.signals.length > 0 && (
         <div className="mb-3">
-          <div className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+          <div className="text-xs text-gray-400 mb-2 flex items-center gap-1">
             <BarChart2 className="w-3 h-3" />
             Сценарии ({item.signals.length})
           </div>
@@ -134,12 +134,12 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
                       {signal.direction === 'long' ? 'LONG' : 'SHORT'}
                     </span>
                   </div>
-                  <span className="text-green-400 text-[10px]">✓</span>
+                  <span className="text-green-400 text-[11px]">✓</span>
                 </div>
-                <div className="text-gray-400 text-[10px]">{signal.pattern}</div>
-                <div className="flex items-center justify-between mt-1 text-[10px]">
-                  <span className="text-gray-500">R:R 1:{signal.rr.toFixed(2)}</span>
-                  <span className="text-gray-500">{(signal.quality * 100).toFixed(0)}%</span>
+                <div className="text-gray-400 text-[11px]">{signal.pattern}</div>
+                <div className="flex items-center justify-between mt-1 text-[11px]">
+                  <span className="text-gray-400">R:R 1:{signal.rr.toFixed(2)}</span>
+                  <span className="text-gray-400">{(signal.quality * 100).toFixed(0)}%</span>
                 </div>
               </div>
             ))}
@@ -149,7 +149,7 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
 
       {/* Уровни S/R */}
       <div className="mb-3">
-        <div className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+        <div className="text-xs text-gray-400 mb-2 flex items-center gap-1">
           <Shield className="w-3 h-3" />
           Ключевые уровни
         </div>
@@ -176,7 +176,7 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
       {/* Объём */}
       <div className="pt-2 border-t border-gray-800/50">
         <div className="flex items-center justify-between text-xs">
-          <span className="text-gray-500">Объём</span>
+          <span className="text-gray-400">Объём</span>
           <span className={`font-mono ${
             volumeRatio > 1.5 ? 'text-green-400' :
             volumeRatio < 0.5 ? 'text-red-400' : 'text-gray-300'
@@ -277,7 +277,7 @@ export default function Dashboard() {
             Контекст → Паттерны → Подтверждение → Объём
           </p>
           <div className="flex items-center gap-3 mt-1">
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-gray-400">
               {lastUpdate && `Обновлено: ${lastUpdate.toLocaleTimeString('ru-RU')}`}
             </p>
             {Object.keys(realTimePrices).length > 0 && (
@@ -302,7 +302,7 @@ export default function Dashboard() {
       <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
         <div className="flex flex-col sm:flex-row gap-2">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
             <input
               type="text"
               value={query}
@@ -310,12 +310,12 @@ export default function Dashboard() {
               onKeyDown={(e) => { if (e.key === 'Enter') handleAnalyze(); }}
               placeholder="Введите тикер, например TAO, ARB, PEPE…"
               maxLength={20}
-              className="w-full pl-9 pr-9 py-2.5 rounded-lg bg-gray-900/60 border border-gray-700/60 text-white placeholder-gray-500 text-sm focus:outline-none focus:border-amber-500/50"
+              className="w-full pl-9 pr-9 py-2.5 rounded-lg bg-gray-900/60 border border-gray-700/60 text-white placeholder-gray-400 text-sm focus:outline-none focus:border-amber-500/50"
             />
             {query && (
               <button
                 onClick={() => { setQuery(''); setCustomCard(null); setCustomError(null); }}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-500 hover:text-gray-300"
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-300"
                 aria-label="Очистить"
               >
                 <X className="w-4 h-4" />
@@ -330,7 +330,7 @@ export default function Dashboard() {
             {customLoading ? 'Анализируем…' : 'Анализировать'}
           </button>
         </div>
-        <p className="text-xs text-gray-500 mt-2">
+        <p className="text-xs text-gray-400 mt-2">
           Анализ любой спотовой USDT-пары Bybit по методологии Нисона. Нажмите Enter или «Анализировать», затем кликните по карточке для полного анализа.
         </p>
         {customError && (
@@ -375,12 +375,12 @@ export default function Dashboard() {
               >
                 {'__custom' in item && item.__custom && (
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-[10px] uppercase tracking-wide text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.5">
+                    <span className="text-[11px] uppercase tracking-wide text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.5">
                       Ваш запрос
                     </span>
                     <button
                       onClick={(e) => { e.preventDefault(); setCustomCard(null); }}
-                      className="p-0.5 text-gray-500 hover:text-gray-300"
+                      className="p-0.5 text-gray-400 hover:text-gray-300"
                       aria-label="Убрать карточку"
                       title="Убрать"
                     >

@@ -30,7 +30,7 @@ export function SignalsSection({ report, riskSettings, showRiskPanel, onToggleRi
       <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
         <Target className="w-5 h-5 text-amber-400" />
         Сценарии (Нисон: ожидание → подтверждение)
-        <span className="text-xs text-gray-500 font-normal ml-2">
+        <span className="text-xs text-gray-400 font-normal ml-2">
           подтверждено {confirmedCount} · ждёт {pendingCount} из {report.signals.length}
         </span>
         {/* Аудит №10: редактор риск-настроек для расчёта размера позиции */}
@@ -63,7 +63,7 @@ function RiskSettingsPanel({ settings, onApply }: {
   return (
     <div className="mb-4 p-3 rounded-lg bg-gray-800/40 border border-gray-700/50 flex flex-wrap items-end gap-3 text-sm overflow-x-auto">
       <label className="flex flex-col gap-1">
-        <span className="text-xs text-gray-500">Капитал, $ ({RISK_LIMITS.minCapital}–{RISK_LIMITS.maxCapital.toLocaleString('ru-RU')})</span>
+        <span className="text-xs text-gray-400">Капитал, $ ({RISK_LIMITS.minCapital}–{RISK_LIMITS.maxCapital.toLocaleString('ru-RU')})</span>
         <input
           type="number" min={RISK_LIMITS.minCapital} max={RISK_LIMITS.maxCapital} value={capital}
           onChange={(e) => setCapital(e.target.value)}
@@ -71,7 +71,7 @@ function RiskSettingsPanel({ settings, onApply }: {
         />
       </label>
       <label className="flex flex-col gap-1">
-        <span className="text-xs text-gray-500">Риск на сделку, % ({RISK_LIMITS.minRiskPct * 100}–{RISK_LIMITS.maxRiskPct * 100})</span>
+        <span className="text-xs text-gray-400">Риск на сделку, % ({RISK_LIMITS.minRiskPct * 100}–{RISK_LIMITS.maxRiskPct * 100})</span>
         <input
           type="number" step="0.1" min={RISK_LIMITS.minRiskPct * 100} max={RISK_LIMITS.maxRiskPct * 100} value={risk}
           onChange={(e) => setRisk(e.target.value)}
@@ -84,7 +84,7 @@ function RiskSettingsPanel({ settings, onApply }: {
       >
         Применить
       </button>
-      <span className="text-[11px] text-gray-500">Планы позиций пересчитаются для всех сигналов.</span>
+      <span className="text-[11px] text-gray-400">Планы позиций пересчитаются для всех сигналов.</span>
     </div>
   );
 }
@@ -119,7 +119,7 @@ function SignalCard({ signal, riskSettings }: {
           <p className="text-sm text-gray-400">{signal.pattern}</p>
         </div>
         <div className="sm:text-right">
-          <div className="text-xs text-gray-500">Качество</div>
+          <div className="text-xs text-gray-400">Качество</div>
           <div className={`text-lg font-bold ${
             signal.quality >= 0.7 ? 'text-green-400' :
             signal.quality >= 0.5 ? 'text-yellow-400' : 'text-red-400'
@@ -131,18 +131,18 @@ function SignalCard({ signal, riskSettings }: {
 
       <div className="grid grid-cols-1 gap-2 text-sm mb-3 sm:grid-cols-3 sm:gap-4">
         <div className="p-2 rounded bg-gray-800/30">
-          <div className="text-xs text-gray-500 mb-1">Вход</div>
+          <div className="text-xs text-gray-400 mb-1">Вход</div>
           <div className="font-mono text-white">${formatPrice(signal.entry_price)}</div>
         </div>
         <div className="p-2 rounded bg-gray-800/30">
-          <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
+          <div className="text-xs text-gray-400 mb-1 flex items-center gap-1">
             <Shield className="w-3 h-3" />
             Стоп
           </div>
           <div className="font-mono text-red-400">${formatPrice(signal.stop_loss)}</div>
         </div>
         <div className="p-2 rounded bg-gray-800/30">
-          <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
+          <div className="text-xs text-gray-400 mb-1 flex items-center gap-1">
             <Target className="w-3 h-3" />
             Цель
           </div>
@@ -152,16 +152,16 @@ function SignalCard({ signal, riskSettings }: {
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs border-t border-gray-800/50 pt-2">
         <div>
-          <span className="text-gray-500">R:R </span>
+          <span className="text-gray-400">R:R </span>
           <span className="text-white font-mono">1:{signal.rr.toFixed(2)}</span>
         </div>
         <div>
-          <span className="text-gray-500">Риск </span>
+          <span className="text-gray-400">Риск </span>
           <span className="text-white font-mono">{(signal.risk * 100).toFixed(2)}%</span>
         </div>
         {signal.htf && (
           <div title={`Тренд старшего ТФ (${signal.htf.timeframe}): ${signal.htf.trend}`}>
-            <span className="text-gray-500">HTF {signal.htf.timeframe} </span>
+            <span className="text-gray-400">HTF {signal.htf.timeframe} </span>
             <span className={signal.htf.aligned ? 'text-green-400' : 'text-orange-400'}>
               {signal.htf.aligned ? '✓ согласован' : '⚠ против'}
             </span>
@@ -176,7 +176,7 @@ function SignalCard({ signal, riskSettings }: {
                 ? 'Нисон гл. 3–6: модель требует закрытия СЛЕДУЮЩЕЙ свечи в направлении сигнала — вход только после подтверждения'
                 : 'Нисон гл. 5–6: завершённая формация — её последняя свеча и есть подтверждение, отдельная следующая свеча не требуется'}
             >
-              <span className="text-gray-500">Подтверждение </span>
+              <span className="text-gray-400">Подтверждение </span>
               <span className={nextCandle ? 'text-sky-400' : 'text-gray-300'}>
                 {nextCandle ? '⏳ ждём след. свечу' : '✓ внутри модели'}
               </span>
@@ -186,7 +186,7 @@ function SignalCard({ signal, riskSettings }: {
         {(() => {
           const cls = st === 'confirmed' ? 'bg-green-500/10 text-green-400'
             : st === 'pending' ? 'bg-yellow-500/10 text-yellow-400'
-            : 'bg-gray-500/10 text-gray-400';
+            : 'bg-gray-400/10 text-gray-400';
           return (
             <span className={`px-2 py-1 rounded ${cls}`}>
               {st === 'confirmed' ? '✓' : st === 'pending' ? '⏳' : '–'} {STATUS_LABEL[st as keyof typeof STATUS_LABEL]}
@@ -205,28 +205,28 @@ function SignalCard({ signal, riskSettings }: {
       {/* Аудит №10: план размера позиции по правилу фиксированного риска */}
       {signal.position_plan && (
         <div className="mt-3 p-3 rounded-lg bg-gray-800/30 border border-gray-700/40">
-          <div className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+          <div className="text-xs text-gray-400 mb-2 flex items-center gap-1">
             <Activity className="w-3 h-3" />
             План позиции ({riskSettings.capitalUsd.toLocaleString('ru-RU')} $, риск {(riskSettings.riskPct * 100).toFixed(1)}%)
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
             <div>
-              <div className="text-gray-500">Объём</div>
+              <div className="text-gray-400">Объём</div>
               <div className="font-mono text-white">{signal.position_plan.qty.toFixed(6)}</div>
             </div>
             <div>
-              <div className="text-gray-500">Номинал</div>
+              <div className="text-gray-400">Номинал</div>
               <div className="font-mono text-white">{Math.round(signal.position_plan.notional_usd).toLocaleString('ru-RU')} $</div>
             </div>
             <div>
-              <div className="text-gray-500">Убыток по стопу</div>
+              <div className="text-gray-400">Убыток по стопу</div>
               <div className="font-mono text-red-400">
                 −{Math.round(signal.position_plan.worst_case_loss_usd).toLocaleString('ru-RU')} $
                 {' '}({signal.position_plan.worst_case_loss_pct.toFixed(2)}%)
               </div>
             </div>
             <div>
-              <div className="text-gray-500">Издержки цикла</div>
+              <div className="text-gray-400">Издержки цикла</div>
               <div className="font-mono text-yellow-400">{Math.round(signal.position_plan.cost_reserve_usd)} $</div>
             </div>
           </div>

@@ -28,7 +28,7 @@ export function MarketContextSection({ report, volumeRatio }: {
         }`}>
           {report.regime}
         </div>
-        <div className="text-xs text-gray-500 mt-1">{report.regime_description}</div>
+        <div className="text-xs text-gray-400 mt-1">{report.regime_description}</div>
         {/* Бета: каскад таймфреймов (по Нисону контекст задаёт старший ТФ).
             Голоса идут от старшего к младшему; направление определяет первый
             ТФ с выраженной структурой; «↑ подтверждён» — согласен ещё более
@@ -36,11 +36,11 @@ export function MarketContextSection({ report, volumeRatio }: {
         {report.trend_analysis.cascade && report.trend_analysis.cascade.votes.length > 1 && (
           <div className="mt-3 pt-3 border-t border-gray-800/60">
             <div className="flex items-center gap-1.5 mb-1.5">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
                 Каскад ТФ · бета
               </span>
               {!report.trend_analysis.cascade.higherConfirmed && report.trend_analysis.cascade.context !== 'БОКОВИК' && (
-                <span className="text-[10px] text-amber-400" title="Нет подтверждения на ТФ старше того, что дало направление">
+                <span className="text-[11px] text-amber-400" title="Нет подтверждения на ТФ старше того, что дало направление">
                   ⚠ не подтверждён сверху
                 </span>
               )}
@@ -76,12 +76,12 @@ export function MarketContextSection({ report, volumeRatio }: {
         <div className="text-xs text-gray-400 mt-1">
           Уверенность: {report.consensus.confidence.toFixed(0)}%
         </div>
-        <div className="text-xs text-gray-500 mt-1">
+        <div className="text-xs text-gray-400 mt-1">
           {report.consensus.direction === 'buy' ? 'Бычий консенсус' :
            report.consensus.direction === 'sell' ? 'Медвежий консенсус' : 'Нейтральный'}
         </div>
         {/* Расшифровка: по Нисону консенсус — согласие факторов, а не количество сигналов */}
-        <p className="text-[11px] leading-relaxed text-gray-500 mt-2 border-t border-gray-800/60 pt-2">
+        <p className="text-[11px] leading-relaxed text-gray-400 mt-2 border-t border-gray-800/60 pt-2">
           Оценка согласия подтверждённых свечных сценариев (последние 20 баров) в одну сторону.
           Противоречивые сигналы (long+short одновременно) дают низкий балл даже при их большом
           количестве — это шум, а не консенсус. Высокая оценка = несколько независимых паттернов,
@@ -101,7 +101,7 @@ export function MarketContextSection({ report, volumeRatio }: {
         }`}>
           {volumeRatio.toFixed(2)}x
         </div>
-        <div className="text-xs text-gray-500 mt-1">
+        <div className="text-xs text-gray-400 mt-1">
           {volumeRatio > 1.5 ? 'Повышенный объём - подтверждение' :
            volumeRatio < 0.5 ? 'Низкий объём - слабость' : 'Нормальный объём'}
         </div>

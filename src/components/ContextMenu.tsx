@@ -123,7 +123,7 @@ export default function ContextMenu({ onSupport }: Props) {
         <Heart className="w-4 h-4 text-rose-400 flex-shrink-0" />
         Поддержать
       </button>
-      <div className="mt-1 px-3 pt-1.5 border-t border-gray-800/70 text-[10px] text-gray-500">
+      <div className="mt-1 px-3 pt-1.5 border-t border-gray-800/70 text-[11px] text-gray-400">
         Kairi Analytics · правый клик отключён браузером
       </div>
     </div>

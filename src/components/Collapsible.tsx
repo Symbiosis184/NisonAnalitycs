@@ -57,11 +57,11 @@ export function Collapsible({ storageKey, title, icon, badge, defaultOpen = true
         className="flex w-full flex-wrap items-center gap-2 px-4 py-3 text-left sm:px-6"
       >
         {/* Треугольник-шеврон: рисуется текстом, чтобы не тянуть лишние иконки */}
-        <span className={`text-xs text-gray-500 transition-transform ${open ? 'rotate-90' : ''}`}>▶</span>
+        <span className={`text-xs text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`}>▶</span>
         {icon}
         <span className="text-sm font-semibold text-white sm:text-base">{title}</span>
         {badge && <span className="ml-1 flex flex-wrap items-center gap-2">{badge}</span>}
-        <span className="ml-auto text-[10px] uppercase tracking-wide text-gray-600">
+        <span className="ml-auto text-[11px] uppercase tracking-wide text-gray-600">
           {open ? 'свернуть' : 'развернуть'}
         </span>
       </button>

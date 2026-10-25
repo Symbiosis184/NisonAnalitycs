@@ -42,9 +42,9 @@ function ZoneList({ zones, side }: { zones: ZoneDTO[]; side: keyof typeof SIDE_S
             zone.strong ? s.strongCard : 'border-gray-700/30 bg-gray-800/20'
           }`}>
             <div className="mb-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-              <span className={`${s.price} font-mono text-lg`}>${formatPrice(zone.level)}{zone.halfWidth ? <span className="text-xs text-gray-500 ml-1">[{formatPrice(zone.level - zone.halfWidth)}–{formatPrice(zone.level + zone.halfWidth)}]</span> : null}</span>
+              <span className={`${s.price} font-mono text-lg`}>${formatPrice(zone.level)}{zone.halfWidth ? <span className="text-xs text-gray-400 ml-1">[{formatPrice(zone.level - zone.halfWidth)}–{formatPrice(zone.level + zone.halfWidth)}]</span> : null}</span>
               <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                <span className="text-xs text-gray-500">{zone.touches} касаний</span>
+                <span className="text-xs text-gray-400">{zone.touches} касаний</span>
                 {zone.strong && (
                   <span className={`px-2 py-0.5 rounded text-xs font-semibold ${s.strongBadge}`}>
                     СИЛЬНАЯ
@@ -54,7 +54,7 @@ function ZoneList({ zones, side }: { zones: ZoneDTO[]; side: keyof typeof SIDE_S
             </div>
             <div className="text-xs text-gray-400">
               <div className="mb-1">Голосов: {zone.votes}</div>
-              <div className="text-gray-500">
+              <div className="text-gray-400">
                 {zone.reasons.map((reason: string, i: number) => (
                   <span key={i} className="inline-block mr-2">• {reason}</span>
                 ))}
