@@ -5,6 +5,7 @@
 // Данные берутся из готового отчёта анализа (report.volume_profile / delta_summary / signals[].path).
 
 import { formatPrice } from '../utils/format';
+import { Icon } from './ui/Icon';
 import type { AnalysisReport, SignalDTO } from '../api/types';
 
 const COLORS = {
@@ -214,23 +215,23 @@ function classifyImbalance(p: DeltaPoint, maxAbs: number): 'strong' | 'weak' | n
   return Math.abs(p.delta) >= 0.6 * maxAbs ? 'strong' : 'weak';
 }
 
-function divergenceNote(summary: DeltaSummary, priceChangePct?: number): string | null {
+function divergenceNote(summary: DeltaSummary, priceChangePct?: number): { icon: 'warning' | 'check'; text: string } | null {
   if (priceChangePct === undefined || Math.abs(priceChangePct) < 0.3) return null;
   const cum = summary.cumulative_delta;
   const trendUp = summary.delta_trend === 'rising';
   const priceUp = priceChangePct > 0;
   // Дивергенция: цена идёт в одну сторону, накопленная агрессия — в другую
   if (priceUp && (cum < 0 || summary.delta_trend === 'falling')) {
-    return `⚠️ Бычья дивергенция: цена выросла за окно (${priceUp ? '+' : ''}${priceChangePct.toFixed(1)}%), но дельта отрицательная / падает — рост делают пассивные лимитки, а не агрессивный спрос. По Нисону такое движение хрупкое: без подтверждения объёмом на пробое ему не доверяем.`;
+    return { icon: 'warning', text: `Бычья дивергенция: цена выросла за окно (${priceUp ? '+' : ''}${priceChangePct.toFixed(1)}%), но дельта отрицательная / падает — рост делают пассивные лимитки, а не агрессивный спрос. По Нисону такое движение хрупкое: без подтверждения объёмом на пробое ему не доверяем.` };
   }
   if (!priceUp && (cum > 0 || trendUp)) {
-    return `⚠️ Медвежья дивергенция: цена снизилась (${priceChangePct.toFixed(1)}%), но покупатели агрессивно подбирают (ΣΔ > 0 / дельта растёт). Часто это признак поглощения предложения — кандидат на разворот вверх после подтверждения следующей свечой.`;
+    return { icon: 'warning', text: `Медвежья дивергенция: цена снизилась (${priceChangePct.toFixed(1)}%), но покупатели агрессивно подбирают (ΣΔ > 0 / дельта растёт). Часто это признак поглощения предложения — кандидат на разворот вверх после подтверждения следующей свечой.` };
   }
   if (priceUp && cum > 0 && trendUp) {
-    return '✅ Подтверждённый рост: цена и накопленная дельта идут вместе — спрос агрессивный и настоящий, движению можно доверять.';
+    return { icon: 'check', text: 'Подтверждённый рост: цена и накопленная дельта идут вместе — спрос агрессивный и настоящий, движению можно доверять.' };
   }
   if (!priceUp && cum < 0 && summary.delta_trend === 'falling') {
-    return '✅ Подтверждённое снижение: продавцы давят и ценой, и дельтой — отскоки без смены знака ΣΔ лучше рассматривать как повод для шорта, а не разворот.';
+    return { icon: 'check', text: 'Подтверждённое снижение: продавцы давят и ценой, и дельтой — отскоки без смены знака ΣΔ лучше рассматривать как повод для шорта, а не разворот.' };
   }
   return null;
 }
@@ -269,10 +270,12 @@ export function DeltaNotes({ summary, priceChangePct }: { summary: DeltaSummary;
         </li>
       </ul>
       {div && (
-        <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-200">{div}</p>
+        <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-200">
+          <Icon name={div.icon} className="mr-1" />{div.text}
+        </p>
       )}
       <p className="text-gray-400 italic">
-        ⚠️ Proxy-оценка по OHLCV: тикового стакана/ленты Bybit здесь нет, поэтому дельта вычисляется из формы свечи (тело + позиция закрытия + объём). Она надёжна для оценки перекоса агрессии и дивергенций, но абсолютные числа не равны биржевой дельте из footprint-терминалов. Правило Нисона сохраняется: любой сигнал подтверждается только на следующей свече.
+        <Icon name="warning" className="mr-1" />Proxy-оценка по OHLCV: тикового стакана/ленты Bybit здесь нет, поэтому дельта вычисляется из формы свечи (тело + позиция закрытия + объём). Она надёжна для оценки перекоса агрессии и дивергенций, но абсолютные числа не равны биржевой дельте из footprint-терминалов. Правило Нисона сохраняется: любой сигнал подтверждается только на следующей свече.
       </p>
     </div>
   );

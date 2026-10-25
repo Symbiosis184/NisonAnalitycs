@@ -9,6 +9,8 @@ import { cycleCostFraction, type CostModel } from '../utils/costs';
 import { wilsonWinRate, expectancyCI, hasEdge, verdictFor, overallVerdict, type ExpectancyResult, type Verdict } from '../utils/stats';
 import { runWalkForward } from '../utils/walkforward';
 import { detectRegime, type RegimeInfo } from '../utils/regime';
+import { AlertTriangle } from 'lucide-react';
+import { Icon, type IconName } from '../components/ui/Icon';
 
 interface StrategyRow {
   key: string;
@@ -143,7 +145,7 @@ export default function BacktestPage() {
   return (
     <div className="p-4 space-y-4">
       <div className="flex items-center gap-2 flex-wrap">
-        <h1 className="text-xl font-bold text-slate-100">🧪 Бэктест паттернов Нисона</h1>
+        <h1 className="text-xl font-bold text-slate-100 flex items-center gap-2"><Icon name="flask" className="text-slate-400" /> Бэктест паттернов Нисона</h1>
         <span
           className="px-2 py-0.5 rounded-md text-[11px] font-semibold uppercase tracking-wide bg-amber-500/10 text-amber-400 border border-amber-500/30"
           title="Бэктест в бета-версии: методика и выборка дорабатываются, результаты — ориентировочные"
@@ -200,15 +202,17 @@ export default function BacktestPage() {
           {/* v1.1beta: режим рынка */}
           {candles.length >= 80 && (() => {
             const rg = detectRegime(candles);
-            const labels: Record<string, string> = {
-              'trend-up': '📈 Тренд вверх', 'trend-down': '📉 Тренд вниз',
-              'range': '↔️ Боковик', 'volatile-breakout': '⚡ Волатильный пробой',
+            const labels: Record<string, { icon: IconName; text: string }> = {
+              'trend-up': { icon: 'trend-up', text: 'Тренд вверх' },
+              'trend-down': { icon: 'trend-down', text: 'Тренд вниз' },
+              'range': { icon: 'range', text: 'Боковик' },
+              'volatile-breakout': { icon: 'flash', text: 'Волатильный пробой' },
             };
             return (
               <div className="bg-slate-900/60 border border-slate-800 rounded-lg p-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
                 <span className="text-slate-400">Режим рынка:</span>
-                <span className={`font-semibold ${rg.regime === 'range' || rg.regime === 'volatile-breakout' ? 'text-amber-400' : 'text-emerald-400'}`}>
-                  {labels[rg.regime]}
+                <span className={`font-semibold inline-flex items-center gap-1.5 ${rg.regime === 'range' || rg.regime === 'volatile-breakout' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                  <Icon name={labels[rg.regime].icon} />{labels[rg.regime].text}
                 </span>
                 <span className="text-slate-500">сила тренда {fmt(rg.trendStrength * 100, 0)}%</span>
                 <span className="text-slate-500">волатильность ×{fmt(rg.volatilityRatio)}</span>
@@ -251,7 +255,7 @@ export default function BacktestPage() {
                   <td className={`p-2 font-mono ${oos === null ? 'text-slate-600' : oos >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
                       title={wf.overfitSuspected ? 'OOS заметно хуже IS — возможен overfitting' : 'Out-of-sample expectancy'}>
                     {oos === null ? 'нет данных' : `${oos >= 0 ? '+' : ''}${fmt(oos)} R`}
-                    {wf.overfitSuspected && <span className="ml-1 text-amber-400" title="OOS хуже IS более чем на 25%">⚠︎overfit?</span>}
+                    {wf.overfitSuspected && <span className="inline-flex items-center gap-1 ml-1 text-amber-400" title="OOS хуже IS более чем на 25%"><AlertTriangle className="inline h-[1.1em] w-[1.1em] align-[-0.2em]" aria-hidden="true" />overfit?</span>}
                   </td>
                   <td className="p-2">{edge
                     ? <span className="px-1.5 py-0.5 rounded bg-emerald-900/60 text-emerald-300 text-xs font-semibold">EDGE</span>
@@ -278,11 +282,11 @@ export default function BacktestPage() {
               bad: 'bg-red-950/40 border-red-800/60 text-red-300',
               none: 'bg-slate-900/60 border-slate-700/60 text-slate-400',
             };
-            const icons: Record<string, string> = { good: '✅', watch: '⚠️', bad: '⛔', none: 'ℹ️' };
+            const icons: Record<string, IconName> = { good: 'check', watch: 'warning', bad: 'stop', none: 'info' };
             return (
               <div className="space-y-3">
                 <div className={`rounded-lg border p-4 ${styles[ov.level]}`}>
-                  <div className="text-sm font-bold uppercase tracking-wide">{icons[ov.level]} Итог: {ov.title}</div>
+                  <div className="text-sm font-bold uppercase tracking-wide flex items-center gap-2"><Icon name={icons[ov.level]} /> Итог: {ov.title}</div>
                   <p className="text-sm mt-1 opacity-90">{ov.text}</p>
                 </div>
                 <div className="grid md:grid-cols-2 gap-2">

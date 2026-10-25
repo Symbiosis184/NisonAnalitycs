@@ -170,9 +170,9 @@ export function detectDegradation(
 }
 
 const COHORT_LABELS: Record<CohortKey, string> = {
-  trend: '📈 Тренд',
-  range: '↔️ Флэт',
-  'volatile-breakout': '⚡ Волатильный пробой',
+  trend: 'Тренд',
+  range: 'Флэт',
+  'volatile-breakout': 'Волатильный пробой',
 };
 
 /** B) Разбивка эффективности по режимам рынка. */

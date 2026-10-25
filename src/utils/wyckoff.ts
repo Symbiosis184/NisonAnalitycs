@@ -225,14 +225,14 @@ export function phaseMultiplier(direction: 'long' | 'short', info: PhaseInfo): n
   return Math.round((1 + (m - 1) * w) * 100) / 100;
 }
 
-/** Человекочитаемая метка фазы для бейджа в UI. */
+/** Человекочитаемая метка фазы для бейджа в UI (эмодзи убраны — иконки рисует слой UI). */
 export function phaseLabel(info: PhaseInfo): string {
   const labels: Record<WyckoffPhase, string> = {
-    accumulation: '🌀 Накопление',
-    markup: '📈 Рост',
-    distribution: '🎯 Распределение',
-    markdown: '📉 Падение',
-    transition: '↔️ Переход',
+    accumulation: 'Накопление',
+    markup: 'Рост',
+    distribution: 'Распределение',
+    markdown: 'Падение',
+    transition: 'Переход',
   };
   return `${labels[info.phase]} · ${(info.confidence * 100).toFixed(0)}%`;
 }

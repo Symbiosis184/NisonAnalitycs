@@ -4,6 +4,7 @@
 
 import { useState } from 'react';
 import { Activity, Shield, Target, TrendingDown, TrendingUp } from 'lucide-react';
+import { Icon } from '../ui/Icon';
 import type { AnalysisReport, RiskSettings, SignalDTO } from '../../api/types';
 import { formatPrice } from '../../utils/format';
 import { STATUS_LABEL } from '../../utils/signal_lifecycle';
@@ -239,8 +240,9 @@ function SignalCard({ signal, riskSettings }: {
       )}
 
       {signal.story && (
-        <div className="mt-3 p-3 rounded bg-gray-800/30 text-xs text-gray-400">
-          📖 {signal.story}
+        <div className="mt-3 p-3 rounded bg-gray-800/30 text-xs text-gray-400 flex items-start gap-1.5">
+          <Icon name="story" className="text-gray-500 mt-0.5" />
+          <span>{signal.story}</span>
         </div>
       )}
 

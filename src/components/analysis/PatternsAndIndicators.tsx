@@ -2,12 +2,13 @@
 
 import type { AnalysisReport } from '../../api/types';
 import type { PatternDTO } from '../../api/types';
+import { Icon } from '../ui/Icon';
 
 export function ConfirmedPatternsList({ patterns, total }: { patterns: PatternDTO[]; total: number }) {
   return (
     <div className="panel p-6 ">
       <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-        🕯️ Подтверждённые паттерны
+        <Icon name="candle" className="text-gray-400" /> Подтверждённые паттерны
         <span className="text-xs text-gray-400 font-normal ml-2">
           ({patterns.length} из {total})
         </span>
@@ -48,20 +49,21 @@ export function ConfirmedPatternsList({ patterns, total }: { patterns: PatternDT
                   ✓ Подтверждён
                 </span>
                 {pattern.hasVolume && (
-                  <span className="whitespace-nowrap rounded border border-blue-500/20 bg-blue-500/10 px-2 py-1 text-xs text-blue-400">
-                    📊 Объём
+                  <span className="whitespace-nowrap rounded border border-blue-500/20 bg-blue-500/10 px-2 py-1 text-xs text-blue-400 inline-flex items-center gap-1">
+                    <Icon name="volume" /> Объём
                   </span>
                 )}
                 {pattern.atLevel && (
-                  <span className="whitespace-nowrap rounded border border-purple-500/20 bg-purple-500/10 px-2 py-1 text-xs text-purple-400">
-                    🎯 У уровня
+                  <span className="whitespace-nowrap rounded border border-purple-500/20 bg-purple-500/10 px-2 py-1 text-xs text-purple-400 inline-flex items-center gap-1">
+                    <Icon name="target" /> У уровня
                   </span>
                 )}
               </div>
             </div>
             {pattern.story && (
-              <div className="text-xs text-gray-400 italic border-t border-gray-800/50 pt-2 mt-2">
-                📖 {pattern.story}
+              <div className="text-xs text-gray-400 italic border-t border-gray-800/50 pt-2 mt-2 flex items-start gap-1.5">
+                <Icon name="story" className="text-gray-500 mt-0.5" />
+                <span>{pattern.story}</span>
               </div>
             )}
           </div>
@@ -89,9 +91,10 @@ export function IndicatorsSection({ report }: { report: AnalysisReport }) {
            report.rsi <= 20 ? 'Экстремальная перепроданность' :
            report.rsi < 30 ? 'Зона перепроданности' : 'Нейтральная зона (30–70)'}
         </div>
-        <div className="text-xs text-gray-600 mt-2 leading-relaxed">
-          ⚠️ По Нисону RSI — только контекст. В сильном тренде перекупленность
-          сохраняется долго и сама по себе НЕ сигнал на продажу.
+        <div className="text-xs text-gray-600 mt-2 leading-relaxed flex items-start gap-1.5">
+          <Icon name="warning" className="text-amber-500/80 mt-0.5" />
+          <span>По Нисону RSI — только контекст. В сильном тренде перекупленность
+          сохраняется долго и сама по себе НЕ сигнал на продажу.</span>
         </div>
       </div>
 
@@ -108,9 +111,10 @@ export function IndicatorsSection({ report }: { report: AnalysisReport }) {
           {report.macd.histogram > 0 ? 'Бычий импульс' : 'Медвежий импульс'}
           {' · '}гистограмма от цены
         </div>
-        <div className="text-xs text-gray-600 mt-2 leading-relaxed">
-          ⚠️ Контекстный индикатор (лагирует). Вход по Нисону определяется
-          свечами + объёмом + уровнями, а не MACD.
+        <div className="text-xs text-gray-600 mt-2 leading-relaxed flex items-start gap-1.5">
+          <Icon name="warning" className="text-amber-500/80 mt-0.5" />
+          <span>Контекстный индикатор (лагирует). Вход по Нисону определяется
+          свечами + объёмом + уровнями, а не MACD.</span>
         </div>
       </div>
 

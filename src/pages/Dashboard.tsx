@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { TrendingUp, TrendingDown, Activity, BarChart2, AlertCircle, RefreshCw, Target, Shield, Search, X } from 'lucide-react';
+import { TrendingUp, TrendingDown, Activity, BarChart2, AlertCircle, RefreshCw, Target, Shield, Search, X, BookOpen } from 'lucide-react';
 import { api } from '../api/client';
 import type { MarketOverviewItem as MarketOverview } from '../api/types';
 import { formatPrice, formatVolume } from '../utils/format';
@@ -403,7 +403,7 @@ export default function Dashboard() {
       )}
       {/* Легенда методологии */}
       <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
-        <h3 className="text-sm font-semibold text-white mb-3">📚 Методология Стива Нисона</h3>
+        <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><BookOpen className="w-4 h-4 text-gray-400" aria-hidden="true" /> Методология Стива Нисона</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
           <div>
             <div className="text-amber-400 font-semibold mb-1">1. Контекст</div>

@@ -8,6 +8,7 @@
 
 import { AlertTriangle, CheckCircle2, ChevronDown, TrendingDown, TrendingUp } from 'lucide-react';
 import { useState } from 'react';
+import { Icon } from './ui/Icon';
 import type { AnalysisReport, EdgeCohortDTO, SignalDTO } from '../api/types';
 import { formatPrice } from '../utils/format';
 import { Collapsible } from '../components/Collapsible';
@@ -82,7 +83,7 @@ export function WyckoffPhasePanel({ wyckoff }: WProps) {
   return (
     <div className="panel p-4 ">
       <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
-        🌀 Фаза цикла Вайкоффа
+        <Icon name="target" className="text-gray-500" /> Фаза цикла Вайкоффа
         <span
           className="ml-auto px-2 py-0.5 rounded text-xs font-semibold"
           style={{ backgroundColor: `${meta.color}20`, color: meta.color }}
@@ -199,7 +200,7 @@ export function PricePathCard({ signal }: PathProps) {
   return (
     <div className="mt-3 p-3 rounded-lg bg-gray-800/30 border border-gray-700/40">
       <div className="text-xs text-gray-400 mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="font-medium text-gray-400">🛤️ Путь цены до цели</span>
+        <span className="font-medium text-gray-400"><Icon name="path" className="mr-1" />Путь цены до цели</span>
         <span>
           Формальный R:R <span className="font-mono text-white">1:{signal.rr.toFixed(2)}</span>
           {' → '}
@@ -263,7 +264,10 @@ function CohortBar({ c }: { c: EdgeCohortDTO }) {
   return (
     <div className="py-2 border-t border-gray-800/50 first:border-t-0">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs mb-1">
-        <span className="font-medium text-gray-300">{c.label}</span>
+        <span className="font-medium text-gray-300 inline-flex items-center gap-1.5">
+          <Icon name={c.cohort === 'trend' ? 'trend-up' : c.cohort === 'range' ? 'range' : 'flash'} className="text-gray-400" />
+          {c.label}
+        </span>
         <span className="text-gray-400">
           сделок <span className="text-gray-300 font-mono">{c.trades}</span>
           {' · '}WR <span className="text-gray-300 font-mono">{c.win_rate.toFixed(0)}%</span> [{c.ci_low.toFixed(0)}–{c.ci_high.toFixed(0)}]
