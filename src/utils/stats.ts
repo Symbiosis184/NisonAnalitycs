@@ -79,3 +79,102 @@ export function expectancyCI(rMultiples: number[]): ExpectancyResult {
 export function hasEdge(r: ExpectancyResult): boolean {
   return r.n >= 20 && r.ciLow > 0;
 }
+
+// ── Вердикт по результатам прогона ───────────────────────────────────────────
+// Переводит сухую статистику (expectancy, CI, p-value, walk-forward OOS) в
+// короткую человеческую оценку: «торговать можно», «наблюдать» или «не
+// торговать». Пороги согласованы с hasEdge(): минимум 20 сделок, достоверность
+// по 95% CI и p-value, плюс подтверждение на out-of-sample данных.
+
+export type VerdictLevel = 'good' | 'watch' | 'bad' | 'none';
+
+export interface Verdict {
+  level: VerdictLevel;
+  title: string;   // одно слово-статус
+  text: string;    // 1–2 предложения: что это значит практически
+}
+
+export interface VerdictInput {
+  exp: ExpectancyResult;
+  /** Walk-forward OOS expectancy; null — если OOS-сделок нет */
+  oos: number | null;
+  overfitSuspected?: boolean;
+}
+
+export function verdictFor({ exp, oos, overfitSuspected }: VerdictInput): Verdict {
+  if (exp.n < 20) {
+    return {
+      level: 'none',
+      title: 'МАЛО ДАННЫХ',
+      text: `Всего ${exp.n} сделок — статистика случайна, никаких выводов делать нельзя. Накопите больше сигналов этого паттерна.`,
+    };
+  }
+  const positive = exp.ciLow > 0 && exp.pValue < 0.05;
+  const negative = exp.ciHigh < 0 && exp.pValue < 0.05;
+  if (positive && oos !== null && oos > 0 && !overfitSuspected) {
+    return {
+      level: 'good',
+      title: 'EDGE ПОДТВЕРЖДЁН',
+      text: `Средний результат +${exp.meanR.toFixed(2)} R/сделку достоверно выше нуля и подтверждён на будущих данных (OOS ${oos >= 0 ? '+' : ''}${oos.toFixed(2)} R). Паттерн можно торговать с полным риском.`,
+    };
+  }
+  if (positive) {
+    return {
+      level: 'watch',
+      title: 'EDGE НЕ ПОДТВЕРЖДЁН',
+      text: `История выглядит прибыльной (+${exp.meanR.toFixed(2)} R), но ${overfitSuspected ? 'на свежих данных результат заметно хуже (возможна подгонка)' : 'для проверки на будущих данных не хватает сделок'}. Торговать осторожно, уменьшенным объёмом.`,
+    };
+  }
+  if (negative) {
+    return {
+      level: 'bad',
+      title: 'УБЫТОЧЕН',
+      text: `Средний результат ${exp.meanR.toFixed(2)} R достоверно ниже нуля — на этом инструменте паттерн системно теряет. Сигналы игнорировать.`,
+    };
+  }
+  return {
+    level: 'watch',
+    title: 'НЕТ РЕБРА',
+    text: `Результат (+${exp.meanR.toFixed(2)} R) неотличим от нуля — сделки закрываются «в шум». Паттерн сам по себе преимущества не даёт, используйте только как контекст.`,
+  };
+}
+
+export interface CohortVerdict {
+  level: VerdictLevel;
+  title: string;
+  text: string;
+  trades: number;
+  strategiesWithEdge: number;
+}
+
+/** Сводный вердикт по всем стратегиям прогона (одна выборка инструментов/ТФ). */
+export function overallVerdict(perStrategy: Array<{ exp: ExpectancyResult; oos: number | null }>): CohortVerdict {
+  const allTrades = perStrategy.reduce((s, x) => s + x.exp.n, 0);
+  const withEdge = perStrategy.filter((x) => hasEdge(x.exp)).length;
+  if (perStrategy.length === 0 || allTrades < 20) {
+    return {
+      level: 'none', title: 'НЕТ ВЫВОДОВ',
+      text: `Сделок слишком мало (${allTrades}) — текущая выборка не позволяет оценить стратегию.`,
+      trades: allTrades, strategiesWithEdge: withEdge,
+    };
+  }
+  if (withEdge === 0) {
+    return {
+      level: 'bad', title: 'РЕБРО НЕ НАЙДЕНО',
+      text: `Ни одна из ${perStrategy.length} стратегий не показала положительного результата вне шума (${allTrades} сделок). На этом инструменте/таймфрейме паттерны Нисона сейчас не дают преимущества.`,
+      trades: allTrades, strategiesWithEdge: withEdge,
+    };
+  }
+  if (withEdge >= Math.max(2, Math.ceil(perStrategy.length / 3))) {
+    return {
+      level: 'good', title: 'СТРАТЕГИЯ РАБОТАЕТ',
+      text: `${withEdge} из ${perStrategy.length} паттернов показывают достоверное ребро на ${allTrades} сделках. Текущая конфигурация подтверждена историей.`,
+      trades: allTrades, strategiesWithEdge: withEdge,
+    };
+  }
+  return {
+    level: 'watch', title: 'РЕБРО ЕСТЬ, НО УЗКОЕ',
+    text: `Достоверное преимущество только у ${withEdge} из ${perStrategy.length} паттернов (${allTrades} сделок). Торговать следует лишь отобранные стратегии, остальные — наблюдения.`,
+    trades: allTrades, strategiesWithEdge: withEdge,
+  };
+}

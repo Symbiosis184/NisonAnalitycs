@@ -6,9 +6,18 @@ import { Candle } from '../utils/candle';
 import { signalGenerator, type Signal } from '../utils/signal_generator';
 import { runBacktest, type BacktestResult, type FormationBounds } from '../utils/backtest';
 import { cycleCostFraction, type CostModel } from '../utils/costs';
-import { wilsonWinRate, expectancyCI, hasEdge } from '../utils/stats';
+import { wilsonWinRate, expectancyCI, hasEdge, verdictFor, overallVerdict, type ExpectancyResult, type Verdict } from '../utils/stats';
 import { runWalkForward } from '../utils/walkforward';
 import { detectRegime, type RegimeInfo } from '../utils/regime';
+
+interface StrategyRow {
+  key: string;
+  res: BacktestResult;
+  wf: ReturnType<typeof runWalkForward>;
+  exp: ExpectancyResult;
+  verdict: Verdict;
+  regime: RegimeInfo;
+}
 
 const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT'];
 // Значения проходят whitelist валидацию (validation.ALLOWED_TIMEFRAMES)
@@ -104,7 +113,7 @@ export default function BacktestPage() {
 
     // Один прогон на уникальную пару (паттерн, направление)
     const keys = new Set(deduped.map((e) => `${e.pattern}|${e.direction}`));
-    const out: Array<{ key: string; res: BacktestResult; wf: ReturnType<typeof runWalkForward>; regime: RegimeInfo }> = [];
+    const out: StrategyRow[] = [];
     for (const k of keys) {
       const [pattern, dirRaw] = k.split('|');
       const direction = dirRaw as 'long' | 'short';
@@ -118,7 +127,10 @@ export default function BacktestPage() {
       const res = runBacktest(candles, config);
       // v1.1beta: walk-forward (train 300 / test 100) и режим рынка на момент каждой сделки
       const wf = runWalkForward(candles, config, { trainBars: 300, testBars: 100, warmup: 60 });
-      out.push({ key: `${pattern} (${direction === 'long' ? 'лонг' : 'шорт'})`, res, wf, regime: detectRegime(candles) });
+      // Вердикт по стратегии: expectancy + OOS-подтверждение → человеческий вывод
+      const exp = expectancyCI(res.trades.map((t) => t.netR));
+      const verdict = verdictFor({ exp, oos: wf.oosExpectancy, overfitSuspected: wf.overfitSuspected });
+      out.push({ key: `${pattern} (${direction === 'long' ? 'лонг' : 'шорт'})`, res, wf, exp, verdict, regime: detectRegime(candles) });
     }
     return out.sort((a, b) => b.res.stats.avgNetR - a.res.stats.avgNetR);
   }, [candles, costs]);
@@ -140,9 +152,11 @@ export default function BacktestPage() {
         </span>
       </div>
       <p className="text-sm text-slate-400 max-w-3xl">
-        Эмпирическая проверка «ребра»: каждый сигнал детектора открывается по close свечи сигнала,
-        стоп = граница формации, тейк = 2R, максимум удержания 60 свечей. Результат каждой сделки
-        уменьшен на издержки цикла ({fmt((cycleCostFraction(costs)) * 100)}%). Вход без lookahead: управление позицией со следующей свечи.
+        Проверка <b className="text-slate-200">текущей стратегии целиком</b>: подтверждённый сигнал Нисона → вход по close
+        свечи подтверждения, стоп = граница формации, тейк = ближайшая структурная цель (как в живом анализе), максимум
+        удержания 60 свечей. Результат каждой сделки уменьшен на издержки цикла ({fmt((cycleCostFraction(costs)) * 100)}%).
+        Вход без lookahead: управление позицией со следующей свечи. Вердикты внизу страницы переводят статистику в
+        практический вывод — можно ли торговать паттерн на этом инструменте.
       </p>
 
       {/* Панель управления */}
@@ -254,6 +268,34 @@ export default function BacktestPage() {
             </tbody>
           </table>
           </div>
+
+          {/* Вердикты — человеческий вывод из статистики */}
+          {results.length > 0 && (() => {
+            const ov = overallVerdict(results.map((r) => ({ exp: r.exp, oos: r.wf.oosExpectancy })));
+            const styles: Record<string, string> = {
+              good: 'bg-emerald-950/50 border-emerald-700/60 text-emerald-300',
+              watch: 'bg-amber-950/40 border-amber-700/60 text-amber-300',
+              bad: 'bg-red-950/40 border-red-800/60 text-red-300',
+              none: 'bg-slate-900/60 border-slate-700/60 text-slate-400',
+            };
+            const icons: Record<string, string> = { good: '✅', watch: '⚠️', bad: '⛔', none: 'ℹ️' };
+            return (
+              <div className="space-y-3">
+                <div className={`rounded-lg border p-4 ${styles[ov.level]}`}>
+                  <div className="text-sm font-bold uppercase tracking-wide">{icons[ov.level]} Итог: {ov.title}</div>
+                  <p className="text-sm mt-1 opacity-90">{ov.text}</p>
+                </div>
+                <div className="grid md:grid-cols-2 gap-2">
+                  {results.map(({ key, verdict }) => (
+                    <div key={key} className={`rounded-lg border p-3 text-xs ${styles[verdict.level]}`}>
+                      <div className="font-semibold mb-0.5">{key} — {verdict.title}</div>
+                      <div className="opacity-80 leading-snug">{verdict.text}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Кривые эквити */}
           <div className="grid md:grid-cols-2 gap-3">
