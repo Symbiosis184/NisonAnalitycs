@@ -20,17 +20,19 @@ export default function Layout() {
               <div className="min-w-0">
                 <h1 className="text-base sm:text-lg font-bold tracking-tight text-white flex items-center gap-2">
                   <span className="truncate">Kairi{' '}
-                    {/* «Analytics»: точка над буквой i заменена маленьким пламенем; сама буква остаётся буквой */}
+                    {/* «Analytic» + финальная «i» — горящая свеча (тело свечи вместо штриха буквы, пламя вместо точки) */}
                     <span className="text-amber-400" aria-hidden="true">
-                      An
-                      <span className="relative inline">
-                        i
+                      Analytic
+                      <span className="relative inline-block w-[0.26em] align-baseline">
+                        {/* фитилёк */}
+                        <span className="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-[0.52em] w-[0.03em] h-[0.14em] bg-amber-500/70" />
+                        {/* тело свечи = штрих буквы i (высота x-height, стоит на базовой линии) */}
+                        <span className="block w-full h-[0.52em] rounded-[0.06em] bg-gradient-to-b from-amber-300 via-amber-400 to-orange-500 shadow-[0_0_0.18em_rgba(251,191,36,0.55)]" />
                         {/* пламя вместо точки над i */}
-                        <span className="logo-flame pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-[0.78em] w-[0.16em] h-[0.22em] rounded-full bg-gradient-to-t from-orange-500 via-amber-400 to-yellow-200 blur-[0.3px]" />
+                        <span className="logo-flame pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-[0.62em] w-[0.16em] h-[0.22em] rounded-full bg-gradient-to-t from-orange-500 via-amber-400 to-yellow-200 blur-[0.3px]" />
                         {/* внутренний язычок пламени */}
-                        <span className="logo-spark pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-[0.84em] w-[0.07em] h-[0.1em] rounded-full bg-amber-100" />
+                        <span className="logo-spark pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-[0.66em] w-[0.07em] h-[0.1em] rounded-full bg-amber-100" />
                       </span>
-                      nalytics
                     </span>
                     <span className="sr-only">Analytics</span>
                   </span>
