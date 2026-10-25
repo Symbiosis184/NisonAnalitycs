@@ -740,8 +740,10 @@ export class PatternDetector {
     if (!(c2.isBearish && c2.isLongCandle)) return { found: false, name: '' };
     // Канон (гл. 6): разворот после роста — требуется восходящий контекст.
     if (!this.precededByRally(prev)) return { found: false, name: '' };
-    // Гэп вверх над предыдущим закрытием (допуск — доля диапазона, не 0.5%).
-    if (c2.open < c1.close - Math.max(c1.close * 0.001, c1.totalRange * 0.1)) return { found: false, name: '' };
+    // FIX канон-аудита (гл. 6, Dark Cloud Cover): модель ГЭПОВАЯ — вторая свеча
+    // открывается ВЫШЕ предыдущего закрытия (строго, без допуска вниз). Мягкий
+    // допуск превращал любую красную свечу после роста в «завесу».
+    if (c2.open <= c1.close) return { found: false, name: '' };
     if (c2.close >= c1.bodyMid || c2.close <= c1.open) return { found: false, name: '' };
     
     let name = 'ЗАВЕСА ИЗ ТЁМНЫХ ОБЛАКОВ';
@@ -755,7 +757,10 @@ export class PatternDetector {
     if (!(c2.isBullish && c2.isLongCandle)) return { found: false, name: '' };
     // Канон (гл. 6): разворот после спада — требуется нисходящий контекст.
     if (!this.precededByDecline(prev)) return { found: false, name: '' };
-    if (c2.open > c1.close + Math.max(c1.close * 0.001, c1.totalRange * 0.1)) return { found: false, name: '' };
+    // FIX канон-аудита (гл. 6, Piercing Line / «Lightning at the Well»): модель
+    // ГЭПОВАЯ — открытие НИЖЕ предыдущего закрытия (строго, без допуска). Без
+    // гэпа у Нисона это лишь слабый сигнал; требование гэпа восстановлено по книге.
+    if (c2.open >= c1.close) return { found: false, name: '' };
     if (c2.close <= c1.bodyMid || c2.close >= c1.open) return { found: false, name: '' };
     
     let name = 'ПРОСВЕТ В ОБЛАКАХ';
