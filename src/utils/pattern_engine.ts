@@ -179,13 +179,21 @@ export class PatternDetector {
     const lo2 = Math.min(...segNoSelf.map(c => c.low));
     const hi2 = Math.max(...segNoSelf.map(c => c.high));
     const atPriorBottom = candle.low <= lo2 + (hi2 - lo2) * 0.35; // пришёл к прежнему дну
+    // FIX (SOL/USDT 1H, молот 24.10 17:00 UTC): отказ от прежнего дна может быть
+    // выполнен ТЕНЬЮ без обновления минимума — low свечи остаётся ВЫШЕ полосы
+    // пред-окна (дно нарисовала предыдущая свеча). Канон (гл. 4): «приход к
+    // прежнему дну» — это ОТКАТ в нижнюю часть окна, а не обязательное касание
+    // его пола: значимо, что тень вернула цену в верх тела после пробоя вниз,
+    // т.е. close/тело остались не глубже 35% окна ИЛИ тень вошла в полосу дна.
+    const priorBand = lo2 + (hi2 - lo2) * 0.35;
+    const bodyAtPriorBottom = Math.min(candle.open, candle.close) <= priorBand ||
+                               candle.lowerWick >= candle.body * 2 && candle.low <= hi2;
     // FIX канона (гл. 4): тело молота расположено В ВЕРХНЕЙ части диапазона —
     // закрытие не ниже середины свечи (это же условие проверяется в isHammer).
     // Прежнее «bounced» сравнивало close с серединой ОКНА: при длинном нисходящем
     // сегменте оно отвергало корректные молоты, закрывшиеся у локального дна.
     const bodyInUpperHalf = candle.close >= (candle.high + candle.low) / 2;
-    void nearBottom;
-    return (nearBottom || atPriorBottom) && bodyInUpperHalf;
+    return (nearBottom || atPriorBottom || bodyAtPriorBottom) && bodyInUpperHalf;
   }
 
   /**
@@ -732,8 +740,10 @@ export class PatternDetector {
     if (!(c2.isBearish && c2.isLongCandle)) return { found: false, name: '' };
     // Канон (гл. 6): разворот после роста — требуется восходящий контекст.
     if (!this.precededByRally(prev)) return { found: false, name: '' };
-    // Гэп вверх над предыдущим закрытием (допуск — доля диапазона, не 0.5%).
-    if (c2.open < c1.close - Math.max(c1.close * 0.001, c1.totalRange * 0.1)) return { found: false, name: '' };
+    // FIX канон-аудита (гл. 6, Dark Cloud Cover): модель ГЭПОВАЯ — вторая свеча
+    // открывается ВЫШЕ предыдущего закрытия (строго, без допуска вниз). Мягкий
+    // допуск превращал любую красную свечу после роста в «завесу».
+    if (c2.open <= c1.close) return { found: false, name: '' };
     if (c2.close >= c1.bodyMid || c2.close <= c1.open) return { found: false, name: '' };
     
     let name = 'ЗАВЕСА ИЗ ТЁМНЫХ ОБЛАКОВ';
@@ -747,7 +757,10 @@ export class PatternDetector {
     if (!(c2.isBullish && c2.isLongCandle)) return { found: false, name: '' };
     // Канон (гл. 6): разворот после спада — требуется нисходящий контекст.
     if (!this.precededByDecline(prev)) return { found: false, name: '' };
-    if (c2.open > c1.close + Math.max(c1.close * 0.001, c1.totalRange * 0.1)) return { found: false, name: '' };
+    // FIX канон-аудита (гл. 6, Piercing Line / «Lightning at the Well»): модель
+    // ГЭПОВАЯ — открытие НИЖЕ предыдущего закрытия (строго, без допуска). Без
+    // гэпа у Нисона это лишь слабый сигнал; требование гэпа восстановлено по книге.
+    if (c2.open >= c1.close) return { found: false, name: '' };
     if (c2.close <= c1.bodyMid || c2.close >= c1.open) return { found: false, name: '' };
     
     let name = 'ПРОСВЕТ В ОБЛАКАХ';
