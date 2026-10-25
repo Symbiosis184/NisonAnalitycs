@@ -25,13 +25,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-live-pulse,
-  .logo-flame {
+  .animate-live-pulse {
     animation: none;
-  }
-  .logo-spark {
-    animation: none;
-    opacity: 0.9;
   }
 }
 
@@ -42,24 +37,4 @@
   border-radius: 4px;
 }
 
-/* Пламя над буквой i в логотипе Kairi Analytics */
-@keyframes flame-flicker {
-  0%, 100% { transform: scaleY(1) scaleX(1); opacity: 1; }
-  30%      { transform: scaleY(1.18) scaleX(0.92); opacity: 0.95; }
-  60%      { transform: scaleY(0.88) scaleX(1.05); opacity: 1; }
-  80%      { transform: scaleY(1.1) scaleX(0.95); opacity: 0.9; }
-}
-@keyframes spark-glow {
-  0%, 100% { opacity: 0.95; transform: scale(1); }
-  50%      { opacity: 0.45; transform: scale(0.7); }
-}
-.logo-flame {
-  transform-box: fill-box;
-  transform-origin: 50% 100%;
-  animation: flame-flicker 1.6s ease-in-out infinite;
-}
-.logo-spark {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: spark-glow 1.6s ease-in-out infinite;
-}
+
