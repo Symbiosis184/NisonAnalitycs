@@ -20,33 +20,20 @@ export default function Layout() {
               <div className="min-w-0">
                 <h1 className="text-base sm:text-lg font-bold tracking-tight text-white flex items-center gap-2">
                   <span className="truncate">Kairi{' '}
-                    {/* «Analytics» с буквой i, оформленной как горящая свеча той же высоты, что буква */}
-                    <span className="text-amber-400 inline-flex items-end" aria-hidden="true">
+                    {/* «Analytics»: буква i заменена горящей свечой той же высоты, что буква */}
+                    <span className="text-amber-400" aria-hidden="true">
                       An
-                      {/* Свеча: stem = тело буквы (cap-height), сверху — пламя вместо точки */}
-                      <svg viewBox="0 0 10 22" className="w-[0.5em] h-[1.05em] mx-[0.02em]" fill="none">
-                        {/* фитиль */}
-                        <line x1="5" y1="7.4" x2="5" y2="4.6" stroke="#fbbf24" strokeWidth="1.3" strokeLinecap="round" />
-                        {/* тело свечи (заменяет вертикальный штрих буквы i) */}
-                        <rect x="3.1" y="7.4" width="3.8" height="14.6" rx="1.2" fill="#fbbf24" />
-                        {/* блик на теле — грань свечи */}
-                        <rect x="4.1" y="8.6" width="0.9" height="12.2" rx="0.45" fill="#fde68a" opacity="0.7" />
-                        {/* пламя */}
-                        <path
-                          className="logo-flame"
-                          d="M5 0.3 C6.9 2.1 7.7 3.4 7.7 4.9 C7.7 6.6 6.5 7.7 5 7.7 C3.5 7.7 2.3 6.6 2.3 4.9 C2.3 3.4 3.1 2.1 5 0.3 Z"
-                          fill="url(#kaFlameGrad)"
-                        />
-                        {/* внутренний язычок пламени */}
-                        <path className="logo-spark" d="M5 3.1 C5.9 4.1 6.2 4.8 6.2 5.5 C6.2 6.4 5.7 6.9 5 6.9 C4.3 6.9 3.8 6.4 3.8 5.5 C3.8 4.8 4.1 4.1 5 3.1 Z" fill="#fef3c7" />
-                        <defs>
-                          <linearGradient id="kaFlameGrad" x1="5" y1="0.3" x2="5" y2="7.7" gradientUnits="userSpaceOnUse">
-                            <stop offset="0%" stopColor="#fde68a" />
-                            <stop offset="45%" stopColor="#fbbf24" />
-                            <stop offset="100%" stopColor="#f97316" />
-                          </linearGradient>
-                        </defs>
-                      </svg>
+                      {/* i-свеча: инлайн-блок шириной/высотой со строчную букву (x-height), стоит на базовой линии; пламя — над ним */}
+                      <span className="relative inline-block w-[0.24em] h-[0.52em] align-baseline ml-[0.03em] mr-[0.03em]">
+                        {/* тело свечи = вертикальный штрих буквы i */}
+                        <span className="absolute inset-0 rounded-[0.08em] bg-gradient-to-b from-amber-300 to-amber-500 shadow-[0_0_6px_rgba(251,191,36,0.45)]" />
+                        {/* фитилёк */}
+                        <span className="absolute left-1/2 -translate-x-1/2 bottom-full h-[0.12em] w-[0.05em] bg-amber-400" />
+                        {/* пламя (занимает место точки над i) */}
+                        <span className="logo-flame absolute bottom-full right-1/2 translate-y-[0.08em] w-[0.34em] h-[0.42em] rounded-full bg-gradient-to-t from-orange-500 via-amber-400 to-yellow-200 blur-[0.5px]" />
+                        {/* внутренний язычок */}
+                        <span className="logo-spark absolute bottom-full right-1/2 translate-y-[0.14em] w-[0.14em] h-[0.2em] rounded-full bg-amber-100" />
+                      </span>
                       nalytics
                     </span>
                     <span className="sr-only">Analytics</span>
