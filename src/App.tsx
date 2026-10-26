@@ -8,6 +8,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 const Analysis = lazy(() => import('./pages/Analysis'));
 const SignalJournal = lazy(() => import('./components/SignalJournal'));
 const BacktestPage = lazy(() => import('./pages/Backtest'));
+const PricingPage = lazy(() => import('./pages/Pricing'));
 
 function PageFallback() {
   return (
@@ -47,6 +48,14 @@ export default function App() {
             element={
               <Suspense fallback={<PageFallback />}>
                 <BacktestPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="pricing"
+            element={
+              <Suspense fallback={<PageFallback />}>
+                <PricingPage />
               </Suspense>
             }
           />

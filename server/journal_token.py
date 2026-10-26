@@ -58,18 +58,20 @@ def issue(ttl: int = DEFAULT_TTL) -> str:
     return f"{exp}.{sign(secret, exp)}"
 
 
-def issue_json(ttl: int = DEFAULT_TTL) -> dict:
+def issue_json(ttl: int = DEFAULT_TTL, role: str = "user") -> dict:
     """Расширенный токен для котировочного API (quotes_server.py).
 
     Формат: <json-payload>.<hmac_sha256(secret, json)> — подпись считается от
     канонической JSON-строки (sort_keys), см. quotes_server.verify_access_token.
-    Роль 'user' даёт чтение котировок и журнала; права выдаёт деплой-скрипт
-    при публикации статики (meta kairi-journal-token / kairi-api-token).
+    Роль 'user' даёт чтение котировок и журнала; роль 'admin' — ручные прогоны
+    алертов и подтверждение подписок (выдаётся только вручную с сервера:
+    journal_token.py --role admin). Права 'user' выдаёт деплой-скрипт при
+    публикации статики (meta kairi-journal-token / kairi-api-token).
     """
     import json as _json
     secret = load_secret()
     exp = int(time.time()) + max(60, min(ttl, 24 * 3600))
-    payload = {"role": "user", "exp": exp}
+    payload = {"role": role, "exp": exp}
     body = _json.dumps(payload, separators=(",", ":"), sort_keys=True)
     sig = hmac.new(secret, body.encode(), hashlib.sha256).hexdigest()
     return {"token": f"{body}.{sig}", "expiresAt": exp}
@@ -123,9 +125,19 @@ def main() -> int:
         except (IndexError, ValueError):
             print("usage: --ttl SECONDS", file=sys.stderr)
             return 2
-    if "--json" in args:  # расширенный токен для quotes_server (role=user)
+    if "--json" in args:  # расширенный токен для quotes_server (роль --role, по умолчанию user)
         import json as _json
-        print(_json.dumps(issue_json(ttl)))
+        role = "user"
+        if "--role" in args:
+            try:
+                role = args[args.index("--role") + 1]
+            except IndexError:
+                print("usage: --role user|admin", file=sys.stderr)
+                return 2
+            if role not in ("user", "admin"):
+                print("usage: --role user|admin", file=sys.stderr)
+                return 2
+        print(_json.dumps(issue_json(ttl, role)))
         return 0
     print(issue(ttl))
     return 0

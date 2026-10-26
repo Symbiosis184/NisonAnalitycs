@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS plans (
 );
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
+  email TEXT,
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS subscriptions (
@@ -158,20 +159,36 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   payment_ref TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_subs_user ON subscriptions(user_id, expires_at);
+-- колонка status (pending/active) добавляется миграцией ниже (совместимость
+-- с уже существующими боевыми БД, созданными до коммерческого контура v2)
 CREATE TABLE IF NOT EXISTS processed_payments (
   payment_hash TEXT PRIMARY KEY,
   processed_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS telegram_bindings (
-  user_id TEXT PRIMARY KEY,
-  chat_id TEXT NOT NULL,
-  token TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS alert_log (
   dedup_key TEXT PRIMARY KEY,
   created_at INTEGER NOT NULL
 );
 """
+
+# telegram_bindings — общая таблица алертов (определена один раз)
+SCHEMA += """
+CREATE TABLE IF NOT EXISTS telegram_bindings (
+  user_id TEXT PRIMARY KEY,
+  chat_id TEXT NOT NULL,
+  token TEXT NOT NULL
+);
+"""
+
+
+def _migrate(con: sqlite3.Connection) -> None:
+    """Идемпотентные ALTER для боевых БД предыдущих версий."""
+    cols = {r["name"] for r in con.execute("PRAGMA table_info(users)").fetchall()}
+    if "email" not in cols:
+        con.execute("ALTER TABLE users ADD COLUMN email TEXT")
+    subs_cols = {r["name"] for r in con.execute("PRAGMA table_info(subscriptions)").fetchall()}
+    if "status" not in subs_cols:
+        con.execute("ALTER TABLE subscriptions ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
 
 DEFAULT_PLANS = [
     ("month", "Подписка на 1 месяц", 49, 30),
@@ -184,6 +201,7 @@ def init_db() -> None:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     with db() as con:
         con.executescript(SCHEMA)
+        _migrate(con)
         for pid, title, price, days in DEFAULT_PLANS:
             con.execute(
                 "INSERT OR IGNORE INTO plans(id,title,price_usdt,duration_days) VALUES(?,?,?,?)",
@@ -369,20 +387,38 @@ def quotes_ticker(
 
 # --- Планы/подписки --------------------------------------------------------------
 
+# Адрес приёма оплаты (USDT TRC-20 / TON). Задаётся на сервере env-файлом
+# KAIRI_PAY_TO в /etc/kairi/env (см. deploy/vps_setup.sh); подставляется
+# деплойным скриптом из systemd EnvironmentFile.
+PAY_TO_ADDRESS = os.environ.get("KAIRI_PAY_TO", "")
+TRIAL_DAYS = int(os.environ.get("KAIRI_TRIAL_DAYS", "3"))
+
+
 @app.get("/api/plans")
 def plans():
+    """Публичный список тарифов (без токена) — страница «Тарифы»."""
     with db() as con:
         rows = con.execute(
-            "SELECT id,title,price_usdt,duration_days FROM plans WHERE active=1").fetchall()
-    return {"plans": [dict(r) for r in rows]}
+            "SELECT id,title,price_usdt,duration_days FROM plans WHERE active=1"
+            " ORDER BY duration_days").fetchall()
+    return {"plans": [dict(r) for r in rows], "payTo": PAY_TO_ADDRESS,
+            "trialDays": TRIAL_DAYS}
 
 
 def _subscription_state(con: sqlite3.Connection, user_id: str) -> dict:
     row = con.execute(
         "SELECT plan_id, MAX(expires_at) AS exp FROM subscriptions "
-        "WHERE user_id=? AND expires_at > ? GROUP BY plan_id "
+        "WHERE user_id=? AND status='active' AND expires_at > ? GROUP BY plan_id "
         "ORDER BY exp DESC LIMIT 1", (user_id, int(time.time()))).fetchone()
     if row is None:
+        pending = con.execute(
+            "SELECT plan_id FROM subscriptions WHERE user_id=? AND status='pending' "
+            "ORDER BY started_at DESC LIMIT 1", (user_id,)).fetchone()
+        if pending:
+            p = con.execute("SELECT title FROM plans WHERE id=?",
+                            (pending["plan_id"],)).fetchone()
+            return {"active": False, "pending": pending["plan_id"],
+                    "pendingTitle": p["title"] if p else pending["plan_id"]}
         return {"active": False}
     plan = con.execute("SELECT title FROM plans WHERE id=?", (row["plan_id"],)).fetchone()
     return {"active": True, "plan": row["plan_id"],
@@ -390,59 +426,179 @@ def _subscription_state(con: sqlite3.Connection, user_id: str) -> dict:
             "expiresAt": row["exp"]}
 
 
+@app.post("/api/register")
+async def register(request: Request):
+    """Регистрация покупателя: публичный user_id + trial-подписка.
+
+    Тело: {email?}. Возвращает user_id, который клиент сохраняет локально и
+    использует во всех платных эндпоинтах. Повторная регистрация по тому же
+    email возвращает существующий user_id (идемпотентно). Trial включается,
+    если KAIRI_TRIAL_DAYS > 0 и у пользователя ещё нет ни одной записи.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    email = str(body.get("email", "")).strip().lower()[:254]
+    if email and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        raise HTTPException(status_code=400, detail="bad email")
+    now = int(time.time())
+    with _lock, db() as con:
+        if email:
+            existing = con.execute(
+                "SELECT id FROM users WHERE lower(email)=?", (email,)).fetchone()
+            if existing:
+                return {"user_id": existing["id"],
+                        **_subscription_state(con, existing["id"])}
+        # детерминированный public-id из email или случайного seed
+        if email:
+            user_id = "k_" + hashlib.sha256(email.encode()).hexdigest()[:12]
+        else:
+            user_id = "k_" + os.urandom(6).hex()
+        con.execute("INSERT OR IGNORE INTO users(id, email, created_at) VALUES(?,?,?)",
+                    (user_id, email or None, now))
+        state = _subscription_state(con, user_id)
+        if not state["active"] and TRIAL_DAYS > 0:
+            has_any = con.execute(
+                "SELECT 1 FROM subscriptions WHERE user_id=? LIMIT 1",
+                (user_id,)).fetchone()
+            if not has_any:
+                con.execute(
+                    "INSERT INTO subscriptions(user_id,plan_id,started_at,expires_at,"
+                    "payment_ref) VALUES(?,?,?,?,?)",
+                    (user_id, "trial", now, now + TRIAL_DAYS * 86400, "trial"))
+                state = _subscription_state(con, user_id)
+        return {"user_id": user_id, **state}
+
+
 @app.post("/api/subscriptions")
 async def create_subscription(
     request: Request,
     x_kairi_key: Optional[str] = Header(None),
 ):
-    """Продление подписки после подтверждённой оплаты.
+    """Активация/продление подписки.
 
-    Тело: {user_id, plan_id, payment: {hash, amount_usdt, ts}}.
-    Платёж подтверждается HMAC-подписью секрета платёжного вебхука
-    (оплата on-chain -> внешний watcher подписывает факт платежа).
-    Повтор той же payment_hash игнорируется (идемпотентность).
+    Два режима:
+      1. Клиентский (X-Kairi-Key, роль user/legacy): тело
+         {user_id, plan_id, payment_tx}. Заявка уходит в статус `pending` —
+         оплата on-chain проверяется вручную/watcher'ом. Как только платёж
+         подтверждён (админ вызывает этот же эндпоинт с режимом 2 либо
+         POST /api/subscriptions/confirm), подписка активируется; повторные
+         заявки того же плана идемпотентны.
+      2. Серверный (секрет платёжного вебхука в X-Payment-Sig): тело
+         {user_id, plan_id, payment:{hash, amount_usdt, ts}} — HMAC-подпись
+         watcher'а, мгновенная активация (прежнее поведение).
     """
-    payload = require_key(x_kairi_key)
-    if payload.get("role") not in (None, "user"):
-        raise HTTPException(status_code=403, detail="wrong role")
     body = await request.json()
     user_id = str(body.get("user_id", ""))
     plan_id = str(body.get("plan_id", ""))
-    payment = body.get("payment") or {}
     if not USER_ID_RE.match(user_id):
         raise HTTPException(status_code=400, detail="bad user_id")
 
-    secret = _read_secret(PAYMENT_SECRET_FILE)
-    phash = str(payment.get("hash", ""))
-    pts = int(payment.get("ts", 0))
-    if not secret or not phash or abs(time.time() - pts) > 86400:
-        raise HTTPException(status_code=402, detail="payment not confirmed")
-    expected = hmac.new(secret.encode(), f"{phash}:{user_id}:{plan_id}".encode(),
-                        hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected, str(payment.get("signature", ""))):
-        raise HTTPException(status_code=402, detail="bad payment signature")
+    # --- Режим 2: HMAC от платёжного watcher'а (мгновенная активация) ------
+    sig_hdr = None
+    for k, v in request.headers.items():
+        if k.lower() == "x-payment-sig":
+            sig_hdr = v
+            break
+    if sig_hdr:
+        secret = _read_secret(PAYMENT_SECRET_FILE)
+        payment = body.get("payment") or {}
+        phash = str(payment.get("hash", ""))
+        pts = int(payment.get("ts", 0))
+        if not secret or not phash or abs(time.time() - pts) > 86400:
+            raise HTTPException(status_code=402, detail="payment not confirmed")
+        expected = hmac.new(secret.encode(), f"{phash}:{user_id}:{plan_id}".encode(),
+                            hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, sig_hdr):
+            raise HTTPException(status_code=402, detail="bad payment signature")
+        payload = {"role": "internal"}
+    else:
+        # --- Режим 1: клиентская заявка ------------------------------------
+        payload = require_key(x_kairi_key)
+        if payload.get("role") not in (None, "user"):
+            raise HTTPException(status_code=403, detail="wrong role")
 
     with _lock, db() as con:
         plan = con.execute("SELECT * FROM plans WHERE id=? AND active=1", (plan_id,)).fetchone()
         if plan is None:
             raise HTTPException(status_code=400, detail="unknown plan")
-        if int(payment.get("amount_usdt", 0)) < plan["price_usdt"]:
-            raise HTTPException(status_code=402, detail="underpaid")
-        if con.execute("SELECT 1 FROM processed_payments WHERE payment_hash=?",
-                       (phash,)).fetchone():
-            return _subscription_state(con, user_id) | {"idempotent": True}
+
+        if payload.get("role") == "internal":
+            payment = body.get("payment") or {}
+            phash = str(payment.get("hash", ""))
+            if int(payment.get("amount_usdt", 0)) < plan["price_usdt"]:
+                raise HTTPException(status_code=402, detail="underpaid")
+            if con.execute("SELECT 1 FROM processed_payments WHERE payment_hash=?",
+                           (phash,)).fetchone():
+                return _subscription_state(con, user_id) | {"idempotent": True}
+            now = int(time.time())
+            base = con.execute(
+                "SELECT MAX(expires_at) AS m FROM subscriptions WHERE user_id=?",
+                (user_id,)).fetchone()["m"]
+            start = max(now, base or 0)
+            con.execute("INSERT OR IGNORE INTO users(id, created_at) VALUES(?,?)", (user_id, now))
+            con.execute(
+                "INSERT INTO subscriptions(user_id,plan_id,started_at,expires_at,payment_ref) "
+                "VALUES(?,?,?,?,?)",
+                (user_id, plan_id, now, start + plan["duration_days"] * 86400, phash))
+            con.execute("INSERT INTO processed_payments(payment_hash, processed_at) VALUES(?,?)",
+                        (phash, now))
+            return _subscription_state(con, user_id)
+
+        # Клиентская заявка: pending до подтверждения платежа
+        tx = str(body.get("payment_tx", ""))[:128]
         now = int(time.time())
-        base = con.execute(
-            "SELECT MAX(expires_at) AS m FROM subscriptions WHERE user_id=?",
-            (user_id,)).fetchone()["m"]
-        start = max(now, base or 0)
+        existing = con.execute(
+            "SELECT status FROM subscriptions WHERE user_id=? AND plan_id=? "
+            "AND status='pending' ORDER BY started_at DESC LIMIT 1",
+            (user_id, plan_id)).fetchone()
+        if existing:
+            return {"status": "pending", "plan": plan_id,
+                    "planTitle": plan["title"], "idempotent": True}
         con.execute("INSERT OR IGNORE INTO users(id, created_at) VALUES(?,?)", (user_id, now))
         con.execute(
-            "INSERT INTO subscriptions(user_id,plan_id,started_at,expires_at,payment_ref) "
-            "VALUES(?,?,?,?,?)",
-            (user_id, plan_id, now, start + plan["duration_days"] * 86400, phash))
-        con.execute("INSERT INTO processed_payments(payment_hash, processed_at) VALUES(?,?)",
-                    (phash, now))
+            "INSERT INTO subscriptions(user_id,plan_id,started_at,expires_at,payment_ref,status) "
+            "VALUES(?,?,?,?,?,'pending')",
+            (user_id, plan_id, now, 0, tx or None))
+        return {"status": "pending", "plan": plan_id, "planTitle": plan["title"],
+                "payTo": PAY_TO_ADDRESS, "amountUsdt": plan["price_usdt"]}
+
+
+@app.post("/api/subscriptions/confirm")
+async def confirm_subscription(
+    request: Request,
+    x_kairi_key: Optional[str] = Header(None),
+):
+    """Подтверждение заявки админом (роль admin в X-Kairi-Key).
+
+    Тело: {user_id, plan_id}. Pending-заявка превращается в активную
+    подписку (продление от текущей даты окончания).
+    """
+    payload = require_key(x_kairi_key)
+    if payload.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="admin only")
+    body = await request.json()
+    user_id = str(body.get("user_id", ""))
+    plan_id = str(body.get("plan_id", ""))
+    if not USER_ID_RE.match(user_id):
+        raise HTTPException(status_code=400, detail="bad user_id")
+    with _lock, db() as con:
+        row = con.execute(
+            "SELECT id, plan_id FROM subscriptions WHERE user_id=? AND plan_id=? "
+            "AND status='pending' ORDER BY started_at DESC LIMIT 1",
+            (user_id, plan_id)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="no pending request")
+        plan = con.execute("SELECT * FROM plans WHERE id=?", (plan_id,)).fetchone()
+        now = int(time.time())
+        base = con.execute(
+            "SELECT MAX(expires_at) AS m FROM subscriptions "
+            "WHERE user_id=? AND status='active'", (user_id,)).fetchone()["m"]
+        start = max(now, base or 0)
+        con.execute(
+            "UPDATE subscriptions SET status='active', started_at=?, expires_at=? WHERE id=?",
+            (now, start + plan["duration_days"] * 86400, row["id"]))
         return _subscription_state(con, user_id)
 
 
@@ -472,7 +628,7 @@ def _active_subscribers() -> list[dict]:
     now = int(time.time())
     with db() as con:
         rows = con.execute(
-            "SELECT DISTINCT user_id FROM subscriptions WHERE expires_at > ?",
+            "SELECT DISTINCT user_id FROM subscriptions WHERE status='active' AND expires_at > ?",
             (now,)).fetchall()
         out = []
         for r in rows:
