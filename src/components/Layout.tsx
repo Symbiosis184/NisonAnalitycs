@@ -3,6 +3,7 @@ import { Outlet, Link, useLocation } from 'react-router-dom';
 import { BarChart3, TrendingUp, BookOpen, FlaskConical, Heart, CreditCard } from 'lucide-react';
 import SupportModal from './SupportModal';
 import ContextMenu from './ContextMenu';
+import { PRICING_ENABLED } from '../App';
 
 export default function Layout() {
   const location = useLocation();
@@ -69,17 +70,20 @@ export default function Layout() {
                 <FlaskConical className="w-4 h-4" />
                 Бэктест
               </Link>
-              <Link
-                to="/pricing"
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  location.pathname === '/pricing'
-                    ? 'bg-amber-500/10 text-amber-400'
-                    : 'text-gray-400 hover:text-white hover:bg-white/5'
-                }`}
-              >
-                <CreditCard className="w-4 h-4" />
-                Тарифы
-              </Link>
+              {/* Ссылка «Тарифы» скрыта, пока страница закрыта (PRICING_ENABLED=false в App.tsx) */}
+              {PRICING_ENABLED && (
+                <Link
+                  to="/pricing"
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    location.pathname === '/pricing'
+                      ? 'bg-amber-500/10 text-amber-400'
+                      : 'text-gray-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <CreditCard className="w-4 h-4" />
+                  Тарифы
+                </Link>
+              )}
               <button
                 onClick={() => setSupportOpen(true)}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20"
@@ -131,17 +135,20 @@ export default function Layout() {
               <FlaskConical className="w-3.5 h-3.5" />
               Бэктест
             </Link>
-            <Link
-              to="/pricing"
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
-                location.pathname === '/pricing'
-                  ? 'bg-amber-500/10 text-amber-400'
-                  : 'text-gray-400 hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <CreditCard className="w-3.5 h-3.5" />
-              Тарифы
-            </Link>
+            {/* Ссылка «Тарифы» скрыта, пока страница закрыта (PRICING_ENABLED=false в App.tsx) */}
+            {PRICING_ENABLED && (
+              <Link
+                to="/pricing"
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
+                  location.pathname === '/pricing'
+                    ? 'bg-amber-500/10 text-amber-400'
+                    : 'text-gray-400 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <CreditCard className="w-3.5 h-3.5" />
+                Тарифы
+              </Link>
+            )}
             <button
               onClick={() => setSupportOpen(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20 flex-shrink-0"

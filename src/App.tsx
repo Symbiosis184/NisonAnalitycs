@@ -1,13 +1,20 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import { ErrorBoundary } from './components/ErrorBoundary';
+// Флаг доступа к странице «Тарифы». Страница закрыта до доработки приёма
+// платежей: маршрутизация на /pricing отключена (см. ниже), ссылка в навигации
+// не рендерится. Чтобы открыть тарифы после доработки — вернуть PRICING_ENABLED=true.
+export const PRICING_ENABLED = false;
 
 // Code-splitting: тяжёлые страницы грузятся лениво отдельными чанками
 const Analysis = lazy(() => import('./pages/Analysis'));
 const SignalJournal = lazy(() => import('./components/SignalJournal'));
 const BacktestPage = lazy(() => import('./pages/Backtest'));
+// Страница «Тарифы» временно закрыта (PRICING_ENABLED=false): lazy-импорт не
+// выполняется, поэтому чанк Pricing даже не попадает в продакшн-сборку.
+// Открыть: PRICING_ENABLED=true выше.
 const PricingPage = lazy(() => import('./pages/Pricing'));
 
 function PageFallback() {
@@ -51,14 +58,31 @@ export default function App() {
               </Suspense>
             }
           />
-          <Route
-            path="pricing"
-            element={
-              <Suspense fallback={<PageFallback />}>
-                <PricingPage />
-              </Suspense>
-            }
-          />
+          {/* Страница «Тарифы» закрыта до доработки: при PRICING_ENABLED=false
+              маршрут не регистрируется, прямой заход на /pricing отдаёт 404-страницу. */}
+          {PRICING_ENABLED && (
+            <Route
+              path="pricing"
+              element={
+                <Suspense fallback={<PageFallback />}>
+                  <PricingPage />
+                </Suspense>
+              }
+            />
+          )}
+          {!PRICING_ENABLED && (
+            <Route
+              path="pricing"
+              element={
+                <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
+                  <p className="text-gray-400 text-sm">Раздел временно недоступен — мы его дорабатываем.</p>
+                  <Link to="/" className="text-amber-400 text-sm underline hover:text-amber-300">
+                    Вернуться на обзор рынка
+                  </Link>
+                </div>
+              }
+            />
+          )}
         </Route>
       </Routes>
     </BrowserRouter>
