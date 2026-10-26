@@ -17,7 +17,10 @@ echo "==> 1/11 Установка пакетов (nginx, git, curl, certbot)"
 #      подписки с HMAC-подтверждением оплаты, uvicorn+venv, CSP connect-src 'self'
 # v12: самодиагностика деплоя в конце скрипта (проверка, что именно этот ревизия
 #      скрипта реально выполнена; защищает от «деплоя» из устаревшего кеша curl/bash)
-export DEPLOY_SCRIPT_REV="v12"
+# v13: страница /pricing на фронте — регистрация (POST /api/register), заявки на
+#      подписку (pending + confirm админом), env KAIRI_PAY_TO/KAIRI_TRIAL_DAYS,
+#      nginx location /api/register
+export DEPLOY_SCRIPT_REV="v13"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx python3-dnspython || {
@@ -152,6 +155,11 @@ After=network.target
 ExecStart=/opt/kairi-api/venv/bin/python3 -m uvicorn quotes_server:app --host 127.0.0.1 --port 8000 --workers 1
 WorkingDirectory=/opt/kairi-api
 Environment=KAIRI_QUOTES_DB=/var/lib/kairi/commerce.db
+# Адрес USDT (TRC-20) для оплаты тарифов — показывается на странице /pricing.
+# Задайте на сервере, например:  Environment=KAIRI_PAY_TO=TYourWalletAddress
+Environment=KAIRI_PAY_TO=
+# Пробный период в днях при регистрации (по умолчанию 3, если не задано).
+Environment=KAIRI_TRIAL_DAYS=3
 # Скан рынка для Telegram-алертов: пусто = выключен (безопасно по умолчанию).
 # Заполните на сервере в этом файле, например:
 #   Environment=KAIRI_ALERT_SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT
@@ -369,6 +377,12 @@ server {
         proxy_read_timeout 10s;
     }
     location /api/subscriptions {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_read_timeout 10s;
+    }
+    # регистрация аккаунта (email -> user_id + trial-подписка)
+    location /api/register {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host \$host;
         proxy_read_timeout 10s;
@@ -608,6 +622,12 @@ if nginx -T 2>/dev/null | grep -q "location /api/quotes/"; then
     echo "    OK   nginx: location /api/quotes/ присутствует"
 else
     echo "    !!   nginx: /api/quotes/ НЕ найден в конфиге — проверьте sites-enabled/kairi"
+    DIAG_FAIL="yes"
+fi
+if nginx -T 2>/dev/null | grep -q "location /api/register"; then
+    echo "    OK   nginx: location /api/register присутствует (v13)"
+else
+    echo "    !!   nginx: /api/register НЕ найден — страница «Тарифы» не сможет регистрировать пользователей"
     DIAG_FAIL="yes"
 fi
 curl -sf http://127.0.0.1:8000/api/quotes/healthz >/dev/null 2>&1 \

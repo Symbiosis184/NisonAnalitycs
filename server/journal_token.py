@@ -63,18 +63,45 @@ def issue_json(ttl: int = DEFAULT_TTL, role: str = "user") -> dict:
 
     Формат: <json-payload>.<hmac_sha256(secret, json)> — подпись считается от
     канонической JSON-строки (sort_keys), см. quotes_server.verify_access_token.
-    Роль 'user' даёт чтение котировок и журнала; роль 'admin' — ручные прогоны
-    алертов и подтверждение подписок (выдаётся только вручную с сервера:
+    ВАЖНО: quotes_server проверяет этот токен ключом MASTER_KEY_FILE
+    (/etc/kairi/journal.key), а НЕ journal.token_secret — поэтому подпись
+    здесь строится именно от master-ключа (load_master_secret). Роль 'user'
+    даёт чтение котировок и журнала; роль 'admin' — ручные прогоны алертов и
+    подтверждение подписок (выдаётся только вручную с сервера:
     journal_token.py --role admin). Права 'user' выдаёт деплой-скрипт при
     публикации статики (meta kairi-journal-token / kairi-api-token).
     """
     import json as _json
-    secret = load_secret()
+    secret = load_master_secret()
     exp = int(time.time()) + max(60, min(ttl, 24 * 3600))
     payload = {"role": role, "exp": exp}
     body = _json.dumps(payload, separators=(",", ":"), sort_keys=True)
     sig = hmac.new(secret, body.encode(), hashlib.sha256).hexdigest()
     return {"token": f"{body}.{sig}", "expiresAt": exp}
+
+
+def load_master_secret() -> bytes:
+    """Ключ, которым quotes_server подписывает/проверяет JSON-токены.
+
+    Совпадает с KAIRI_MASTER_KEY_FILE в quotes_server.py (по умолчанию
+    /etc/kairi/journal.key). Если файла нет — создаётся новый (0600), как и
+    в деплой-скрипте.
+    """
+    path = os.environ.get("KAIRI_MASTER_KEY_FILE", "/etc/kairi/journal.key")
+    try:
+        with open(path, "rb") as f:
+            secret = f.read().strip()
+            if secret:
+                return secret
+    except OSError:
+        pass
+    secret = os.urandom(32)
+    d = os.path.dirname(path) or "."
+    os.makedirs(d, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(secret + b"\n")
+    return secret
 
 
 def verify(token: str) -> bool:
