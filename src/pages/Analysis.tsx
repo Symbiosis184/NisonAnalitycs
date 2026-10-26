@@ -98,9 +98,19 @@ export default function Analysis() {
   const { anchorRef, scrolledPast } = useStickyHeaderState(true);
   const { setBadge } = useHeaderBadge();
   const livePriceFresh = !!liveCandle && Date.now() - liveCandle.ts < 30_000;
-  const currentPrice = livePriceFresh ? liveCandle!.close : report.price;
+  // Фолбэк цены: живая свеча → цена отчёта → последний закрытый бар → тик из URL.
+  // Guarantee: currentPrice всегда число — иначе в шапке мог появиться битый бейдж.
+  const lastClosedClose = report.candles.length > 0 ? report.candles[report.candles.length - 1].close : NaN;
+  const tickFromSymbol = Number.parseFloat(symbol || '');
+  const currentPrice = Number.isFinite(livePriceFresh ? liveCandle!.close : report.price)
+    ? (livePriceFresh ? liveCandle!.close : report.price)
+    : (Number.isFinite(lastClosedClose) ? lastClosedClose
+      : (Number.isFinite(tickFromSymbol) ? tickFromSymbol : 0));
   useEffect(() => {
     if (!symbol) return undefined;
+    // setBadge вызывается ТОЛЬКО внутри эффекта и только plain-объектом —
+    // это исключает «setState during render» и рендер не-строки в шапке
+    // (Minified React error #310 на продакшн-бандле).
     setBadge(scrolledPast
       ? { title: `${baseAsset}/USDT · ${timeframe}`, price: `$${formatPrice(currentPrice)}`, positive: isPositive }
       : null);

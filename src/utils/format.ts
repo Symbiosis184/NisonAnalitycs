@@ -1,4 +1,8 @@
 export function formatPrice(price: number): string {
+  // Защита от нечисловых/неконечных значений (NaN, undefined, Infinity):
+  // toLocaleString(NaN) возвращает строку "NaN", а React при рендере
+  // нетипизированных объектов бросает Minified React error #310.
+  if (typeof price !== 'number' || !Number.isFinite(price)) return '—';
   if (price >= 1000) return price.toLocaleString('ru-RU', { maximumFractionDigits: 0 });
   if (price >= 1) return price.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   if (price >= 0.01) return price.toLocaleString('ru-RU', { minimumFractionDigits: 4, maximumFractionDigits: 4 });

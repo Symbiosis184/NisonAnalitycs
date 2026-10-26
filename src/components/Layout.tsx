@@ -28,7 +28,14 @@ export function useHeaderBadge() {
 export default function Layout() {
   const location = useLocation();
   const [supportOpen, setSupportOpen] = useState(false);
-  const [badge, setBadge] = useState<HeaderBadge | null>(null);
+  const [badgeRaw, setBadge] = useState<HeaderBadge | null>(null);
+  // Нормализация бейджа: рендерим ТОЛЬКО строки. Если страница опубликовала
+  // битое значение (объект/undefined/NaN-строку), React выдал бы
+  // Minified error #310 и ErrorBoundary показал бы «Что-то пошло не так».
+  const badge: HeaderBadge | null =
+    badgeRaw && typeof badgeRaw.title === 'string' && typeof badgeRaw.price === 'string'
+      ? { title: badgeRaw.title, price: badgeRaw.price, positive: badgeRaw.positive }
+      : null;
 
   return (
     <HeaderBadgeContext.Provider value={{ badge, setBadge }}>
