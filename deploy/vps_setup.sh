@@ -15,7 +15,9 @@ echo "==> 1/11 Установка пакетов (nginx, git, curl, certbot)"
 # v10: server-side signal journal (sqlite API + nginx proxy + systemd unit)
 # v11: коммерческий backend — FastAPI quotes-proxy (/api/quotes/*), тарифы/
 #      подписки с HMAC-подтверждением оплаты, uvicorn+venv, CSP connect-src 'self'
-export DEPLOY_SCRIPT_REV="v11"
+# v12: самодиагностика деплоя в конце скрипта (проверка, что именно этот ревизия
+#      скрипта реально выполнена; защищает от «деплоя» из устаревшего кеша curl/bash)
+export DEPLOY_SCRIPT_REV="v12"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx python3-dnspython || {
@@ -595,6 +597,32 @@ EOF
 chmod 0644 /etc/cron.d/kairi-certbot-renew
 
 rm -rf "$BUILD_DIR"
+
+echo "==> Финальная самодиагностика деплоя (rev $DEPLOY_SCRIPT_REV)"
+# Проверям, что именно ЭТА ревизия скрипта реально отработала: если в выводе
+# нет строки «DEPLOY_REVISION=v12», значит был запущен устаревший кэш скрипта
+# (bash/ curl / старый raw-кеш GitHub) и «деплой» не применил новые конфиги.
+echo "    DEPLOY_REVISION=$DEPLOY_SCRIPT_REV"
+DIAG_FAIL=""
+if nginx -T 2>/dev/null | grep -q "location /api/quotes/"; then
+    echo "    OK   nginx: location /api/quotes/ присутствует"
+else
+    echo "    !!   nginx: /api/quotes/ НЕ найден в конфиге — проверьте sites-enabled/kairi"
+    DIAG_FAIL="yes"
+fi
+curl -sf http://127.0.0.1:8000/api/quotes/healthz >/dev/null 2>&1 \
+    && echo "    OK   commerce API (:8000) отвечает" \
+    || { echo "    !!   commerce API (:8000) не отвечает — systemctl status kairi-api"; DIAG_FAIL="yes"; }
+curl -sf http://127.0.0.1:8787/healthz >/dev/null 2>&1 \
+    && echo "    OK   journal API (:8787) отвечает" \
+    || echo "    ..   journal API (:8787) молчит — журнал останется локальным"
+BUNDLE=$(grep -o 'assets/index-[A-Za-z0-9_-]*\.js' "$WEB_ROOT/index.html" 2>/dev/null | head -1)
+echo "    Бандл во фронтенде: ${BUNDLE:-не найден}"
+grep -q 'kairi-api-token' "$WEB_ROOT/index.html" 2>/dev/null \
+    && echo "    OK   токен котировочного API встроен в index.html" \
+    || echo "    ..   токена котировочного API нет — фронт деградирует на прямые запросы к Bybit"
+[ -z "$DIAG_FAIL" ] && echo "    Все критичные проверки пройдены."
+
 echo ""
 echo "✅ Готово."
 if [ -n "$ISSUED" ]; then
