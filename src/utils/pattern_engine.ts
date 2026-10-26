@@ -2,11 +2,39 @@ import { Candle } from './candle';
 import { ema } from './indicators';
 import { ZoneVoter, timeframeKey, type TimeframeKey } from './zone_voter';
 import { findSwings } from './levels';
+import { getSwingTrend } from './trend_detection';
 
 /** Глубина окна свинг-детектора по временному масштабу (синхронно с ZONE_PARAMS в zone_voter). */
 const SWING_SPAN_BY_TF: Record<TimeframeKey, number> = {
   scalp: 2, intraday: 3, swing: 3, position: 4,
 };
+
+/**
+ * Канон Нисона для фильтра предшествующего тренда (гл. 13): intermediate-term
+ * определяется 65-дневной ПРОСТОЙ скользящей (SMA65) и серией свингов HH/HL vs
+ * LH/LL. maPeriod=65 — канонический период; swingLookback=20 — окно структурного
+ * детектора: getSwingTrend требует >= 2k+3 = 9 баров при span k=3, а последние
+ * 10 баров почти любого тренда содержат финальный откат (у Нисона разворотные
+ * формации растут ИЗ такого отката), поэтому 10-баровый срез давал БОКОВИК даже
+ * на эталонном тренде и лишал фильтр блокирующей силы (самоубийство по ТФ-канону).
+ */
+const NISON_MA_PERIOD = 65;
+const NISON_SWING_LOOKBACK = 20;
+
+/**
+ * Окно оценки наклона SMA (рабочий код: slopeWindow=5) и порог приращения за
+ * бар, нормированный на длину окна MA (slopeThreshold=0.001 при окне 5/65).
+ */
+const SLOPE_WINDOW = 5;
+const SLOPE_THRESHOLD_PER_BAR = 0.001;
+
+/**
+ * Минимальное чистое перемещение окна (в единицах ATR этого окна), при котором
+ * БОКОВИК фрактальной структуры трактуется как «неподтверждаема», а не как
+ * конфликт направления (см. swingVotes). 1×ATR за 20 баров — осмысленный сдвиг;
+ * на пиле net≈0, поэтому боковик остаётся боковиком.
+ */
+const SWING_NET_MIN_ATR = 1.0;
 
 export class SupportResistance {
   /**
@@ -348,98 +376,167 @@ export class PatternDetector {
  *
  * FIX (замена упрощённой эвристики): прежняя версия смотрела всего 6 свечей и
  * использовала фиксированные проценты (last <= first * 0.997 / last <= lo * 1.02),
- * из-за чего на боковых и пилообразных участках давала ложные срабатывания:
- * любое «пилообразное» закрытие вблизи дна окна проходило как спад, а шум ±0.3%
- * на волатильном инструменте — нет. Теперь тренд определяется по широкому
- * контексту и трём независимым признакам (структура свингов, положение относительно
- * MA, наклон MA), порог силы движения привязан к ATR окна, а не к проценту цены.
- * Порог остаётся OR-логикой («есть движение против сигнала»), но каждый признак
- * теперь структурный, а не одноэкстремальный.
+ * из-за чего на боковых и пилообразных участках давала ложные срабатывания.
+ * Теперь используется канонический фильтр Нисона (гл. 13, рабочий код):
+ * направление подтверждается тремя независимыми признаками — структурой свингов
+ * (HH/HL vs LH/LL), положением цены относительно SMA65 и наклоном самой SMA65.
+ * Все три должны согласоваться; боковик/пила => 'neutral'.
  */
-  /** Тренд по серии свингов: LL+LH (down), HH+HL (up), иначе neutral/unknown. */
-  private static swingTrend(seg: Candle[], span: number): 'up' | 'down' | 'neutral' | 'unknown' {
-    const swings = findSwings(seg, seg.length, span);
-    const lows = swings.filter(s => s.type === 'low').map(s => s.level);
-    const highs = swings.filter(s => s.type === 'high').map(s => s.level);
-    if (lows.length < 2 || highs.length < 2) return 'unknown';
-    const dLow = lows[lows.length - 1] - lows[lows.length - 2];
-    const dHigh = highs[highs.length - 1] - highs[highs.length - 2];
-    if (dLow < 0 && dHigh < 0) return 'down';   // серия понижающихся экстремумов
-    if (dLow > 0 && dHigh > 0) return 'up';     // серия повышающихся экстремумов
-    return 'neutral';                            // боковик / пила
+/**
+ * Простая скользящая по последним `period` закрытиям (рабочий код Нисон-фильтра:
+ * null — недостаточно данных). SMA, а не EMA: канон гл. 13 («The Sixty-Five Day
+ * Moving Average») формулируется через простые средние.
+ */
+  private static simpleMA(closes: number[], period: number): number | null {
+    // Защита от degenerate-period (рабочий код: period <= 0): иначе slice(-p)
+    // вернул бы весь массив и «SMA» стала средней по всей истории.
+    if (!Number.isInteger(period) || period <= 0 || closes.length < period) return null;
+    let sum = 0;
+    for (let i = closes.length - period; i < closes.length; i++) sum += closes[i];
+    return sum / period;
   }
 
-  /** Наклон MA по нормированному изменению за последние ~25% окна (в долях ATR). */
-  private static maSlope(values: number[], period: number, atr: number): number {
-    if (values.length < period + 2 || atr <= 0) return 0;
-    const m = ema(values, period);
-    const back = Math.max(2, Math.round(values.length * 0.25));
-    const i1 = values.length - 1;
-    const i0 = Math.max(period - 1, i1 - back);
-    if (i1 - i0 < 2) return 0;
-    return (m[i1] - m[i0]) / ((i1 - i0) * atr);
-  }
+  /**
+   * Контекст тренда по канону Нисона (гл. 13): направление предшествующего
+   * движения подтверждается НЕЗАВИСИМО тремя признаками — структурой свингов,
+   * положением цены относительно SMA65 и наклоном самой SMA65. Все три должны
+   * согласоваться; любой конфликт (или БОКОВИК структуры) => 'conflict'.
+   * Возвращает 'no-data', если истории меньше maPeriod: судить о тренде нельзя.
+   */
+  /**
+   * Голосование структурных признаков (гл. 13). Каждый признак — независимое
+   * наблюдение: локальная структура последних swingLookback баров (getSwingTrend,
+   * русскоязычные константы ВОСХОДЯЩИЙ/НИСХОДЯЩИЙ/БОКОВИК) и направление чистого
+   * перемещения окна (net-move: close[-1] vs close[-win]).
+   *
+   * Почему НЕ достаточно одного getSwingTrend: его фрактальный детект требует
+   * двух ПОДТВЕРЖДЁННЫХ экстремумов каждого типа, т.е. ≥ 2k+3 баров, а последние
+   * k баров тренда всегда «незрелые» (экстремум подтверждается только спустя k
+   * баров). На монотонном движении highs/lows вообще не различаются => БОКОВИК
+   * ровно там, где тренд максимальный (проверено: rally(25) и decline(25) =>
+   * БОКОВИК). Это системная слепая зона, а не сигнал об отсутствии тренда.
+   *
+   * now: БОКОВИК структуры при явном чистом перемещении окна (|net| >=
+   * SWING_NET_MIN_ATR × ATR) НЕ трактуется как конфликт — структура просто
+   * неподтверждаема; но и выдумывать направление запрещено: оба признака должны
+   * согласоваться (структура либо совпадает, либо нейтральна при сильном net).
+   */
+  private static swingVotes(
+    candles: Candle[],
+    direction: 'up' | 'down',
+    swingLookback: number,
+  ): boolean {
+    const win = Math.min(swingLookback, candles.length);
+    if (win < 4) return false;
+    const seg = candles.slice(-win);
+    const trend = getSwingTrend(seg);
 
-  /** Итоговая оценка тренда по широкому контексту (~20 свечей). */
-  private static trendContext(prev: Candle[]): 'up' | 'down' | 'neutral' {
-    const seg = prev.slice(-20);
-    if (seg.length < 8) return 'neutral'; // нет истории — не блокируем (см. precededBy*)
-
-    // ATR окна — масштаб силы движения (фиксированные проценты цены не работают
-    // одновременно на тихих и волатильных инструментах).
+    // Чистое перемещение окна в единицах ATR этого же окна.
     let trSum = 0;
     for (let i = 0; i < seg.length; i++) {
-      const c = seg[i];
-      const pc = i > 0 ? seg[i - 1].close : c.open;
-      trSum += Math.max(c.high - c.low, Math.abs(c.high - pc), Math.abs(c.low - pc));
+      const cd = seg[i];
+      const pc = i > 0 ? seg[i - 1].close : cd.open;
+      trSum += Math.max(cd.high - cd.low, Math.abs(cd.high - pc), Math.abs(cd.low - pc));
     }
     const atr = trSum / seg.length;
-    if (atr <= 0) return 'neutral';
+    if (atr <= 0) return false;
+    const net = seg[seg.length - 1].close - seg[0].close;
+    const strongNetUp = net >= atr * SWING_NET_MIN_ATR;
+    const strongNetDown = net <= -atr * SWING_NET_MIN_ATR;
 
-    const closes = seg.map(x => x.close);
-    const first = closes[0], last = closes[closes.length - 1];
-    const netMoveDown = (first - last) / atr;   // >0 — чистое снижение окна
-    const netMoveUp = (last - first) / atr;     // >0 — чистый рост окна
+    if (direction === 'down') {
+      if (trend === 'НИСХОДЯЩИЙ') return true;
+      // структура нейтральна/неподтверждаема — принимаем только явное нисходящее смещение
+      if (trend === 'БОКОВИК') return strongNetDown;
+      return false; // ВОСХОДЯЩИЙ — прямой конфликт
+    }
+    if (trend === 'ВОСХОДЯЩИЙ') return true;
+    if (trend === 'БОКОВИК') return strongNetUp;
+    return false;
+  }
 
-    const span = SWING_SPAN_BY_TF[PATTERN_TF_KEY];
-    const sw = this.swingTrend(seg, span);
+  private static nisonTrend(
+    candles: Candle[],
+    direction: 'up' | 'down',
+    maPeriod: number,
+    swingLookback: number,
+  ): 'match' | 'conflict' | 'no-data' {
+    // 1) Структурный фильтр (голосование свингов + чистого перемещения окна).
+    if (!this.swingVotes(candles, direction, swingLookback)) return 'conflict';
 
-    const slope20 = this.maSlope(closes, Math.min(10, Math.floor(seg.length / 2)), atr);
-    const slopeAll = this.maSlope(closes, seg.length, atr);
+    // 2) MA-фильтр: цена должна быть по нужную сторону от SMA.
+    const closes = candles.map(c => c.close);
+    const ma = this.simpleMA(closes, maPeriod);
+    if (ma === null) return 'no-data'; // недостаточно данных — тренд не подтверждён
+    const lastClose = closes[closes.length - 1];
+    if (direction === 'down' && lastClose > ma) return 'conflict';
+    if (direction === 'up' && lastClose < ma) return 'conflict';
 
-    const nearBottom = last <= Math.min(...seg.map(x => x.low)) + atr * 0.5;
-    const nearTop = last >= Math.max(...seg.map(x => x.high)) - atr * 0.5;
+    // 3) Наклон SMA: блокируем только ЯВНО противоположный наклон. У Нисона
+    // цена может уйти выше flat-MA65 в начале нового тренда («разворот» гл. 13),
+    // поэтому горизонтальная или слегка отстающая средняя — не конфликт; порог
+    // нормирован на длину окна MA (лаги SMA65 делают жёсткое требование к
+    // собственному наклону невыполнимым для свежих трендов).
+    const prevMA = this.simpleMA(closes.slice(0, -SLOPE_WINDOW), maPeriod);
+    if (prevMA !== null && prevMA > 0) {
+      const slope = (ma - prevMA) / prevMA; // относительное приращение за SLOPE_WINDOW баров
+      const threshold = SLOPE_THRESHOLD_PER_BAR * (SLOPE_WINDOW / maPeriod);
+      if (direction === 'down' && slope > threshold) return 'conflict'; // SMA явно растёт
+      if (direction === 'up' && slope < -threshold) return 'conflict';  // SMA явно падает
+    }
 
-    let bearVotes = 0, bullVotes = 0;
-    // 1) Структура свингов (главный признак у Нисона: серия экстремумов).
-    if (sw === 'down') bearVotes += 2;
-    if (sw === 'up') bullVotes += 2;
-    // 2) Наклон MA (короткой и всей окна) — угол тренда, нормирован по ATR.
-    if (slope20 <= -0.04) bearVotes++;
-    if (slope20 >= 0.04) bullVotes++;
-    if (slopeAll <= -0.03) bearVotes++;
-    if (slopeAll >= 0.03) bullVotes++;
-    // 3) Положение закрытия относительно MA — ниже/выше при значимом отрыве.
-    const ma = ema(closes, Math.min(10, Math.floor(seg.length / 2)));
-    const maLast = ma[ma.length - 1];
-    if (last < maLast - atr * 0.2) bearVotes++;
-    if (last > maLast + atr * 0.2) bullVotes++;
-    // 4) Значимое чистое перемещение окна (>= 1 ATR) или закрытие у его границы
-    //    (зеркало прежней эвристики, но в ATR-масштабе и на широком окне).
-    if (netMoveDown >= 1 || nearBottom) bearVotes++;
-    if (netMoveUp >= 1 || nearTop) bullVotes++;
+    return 'match';
+  }
 
-    if (bearVotes >= 3 && bearVotes > bullVotes) return 'down';
-    if (bullVotes >= 3 && bullVotes > bearVotes) return 'up';
+  /**
+   * Итоговая оценка тренда по широкому контексту. Логика рабочего кода:
+   * decline == hasPrecedingTrend(down), rally == hasPrecedingTrend(up),
+   * всё остальное (конфликт признаков) — neutral: боковик и пила больше не
+   * трактуются как «спад/ралли».
+   */
+  private static trendContext(prev: Candle[]): 'up' | 'down' | 'neutral' {
+    // Недостаточно истории даже для SMA65 — ни одно направление не подтверждено.
+    // Для вызывающей стороны это то же «не блокируем», что и боковик: судить о
+    // тренде нельзя, выдумывать направление запрещено (рабочий код возвращал
+    // false = «тренд не подтверждён» в обеих ветках).
+    if (prev.length < NISON_MA_PERIOD) return 'neutral';
+    if (this.nisonTrend(prev, 'down', NISON_MA_PERIOD, NISON_SWING_LOOKBACK) === 'match') return 'down';
+    if (this.nisonTrend(prev, 'up', NISON_MA_PERIOD, NISON_SWING_LOOKBACK) === 'match') return 'up';
     return 'neutral';
   }
 
   private static precededByDecline(prev: Candle[]): boolean {
-    return this.trendContext(prev) !== 'up';
+    // Канон (гл. 4-6): разворот бычьего сигнала требует спада; рабочий код
+    // возвращал false при недостатке данных (<SMA65) — тренд не подтверждён.
+    // Прежняя эвристика на короткой истории блокировки не давала; чтобы
+    // детектор не потерял чувствительность на интрадей-выборках, там, где
+    // SMA65 недоступна, используется та же каноническая тройка признаков на
+    // доступном окне (свинги + SMA по окну + её наклон) — см. fallbackTrend.
+    return this.fallbackTrend(prev) !== 'up';
   }
 
   private static precededByRally(prev: Candle[]): boolean {
-    return this.trendContext(prev) !== 'down';
+    return this.fallbackTrend(prev) !== 'down';
+  }
+
+  /**
+   * Тренд с адаптацией под длину истории: при >= SMA65 — строгий канон
+   * (trendContext); при нехватке данных — тот же трёхпризначный фильтр на
+   * максимально доступном окне, но с консервативным правилом: направление
+   * считается подтверждённым только при полном согласии признаков.
+   */
+  private static fallbackTrend(prev: Candle[]): 'up' | 'down' | 'neutral' {
+    if (prev.length >= NISON_MA_PERIOD) return this.trendContext(prev);
+    if (prev.length < 20) return 'neutral'; // слишком мало — не блокируем
+    // Fallback рабочего кода (fallbackMaPeriod=20): SMA считается по ПОСЛЕДНИМ
+    // 20 закрытиям, а не по maPeriod = длине всей истории. Прежняя версия брала
+    // maPeriod = prev.length, из-за чего при ~63 барах «SMA» совпадала с ценой и
+    // фильтр давал конфликт в каждом втором баре — то есть ровно тот ложный
+    // результат, от которого Нисон-фильтр защищает.
+    const maPeriod = Math.min(20, prev.length);
+    if (this.nisonTrend(prev, 'down', maPeriod, NISON_SWING_LOOKBACK) === 'match') return 'down';
+    if (this.nisonTrend(prev, 'up', maPeriod, NISON_SWING_LOOKBACK) === 'match') return 'up';
+    return 'neutral';
   }
 
   static isBullishEngulfing(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
