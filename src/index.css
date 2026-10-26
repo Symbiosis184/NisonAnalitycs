@@ -156,3 +156,20 @@ html {
 @media (prefers-reduced-motion: reduce) {
   .skeleton { animation: none; }
 }
+
+/* Пульсирующее сердечко в кнопке «Поддержать» (двойной удар, как сердцебиение) */
+@keyframes heart-beat {
+  0%, 100% { transform: scale(1); }
+  15%      { transform: scale(1.25); }
+  30%      { transform: scale(1); }
+  45%      { transform: scale(1.18); }
+  60%      { transform: scale(1); }
+}
+.heart-beat {
+  display: inline-block;
+  transform-origin: center;
+  animation: heart-beat 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .heart-beat { animation: none; }
+}

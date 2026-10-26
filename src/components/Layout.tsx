@@ -85,7 +85,7 @@ export default function Layout() {
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20"
                 title="Поддержать развитие проекта (TON)"
               >
-                <Heart className="w-4 h-4" />
+                <span className="heart-beat"><Heart className="w-4 h-4 fill-current" /></span>
                 Поддержать
               </button>
             </nav>
@@ -146,7 +146,7 @@ export default function Layout() {
               onClick={() => setSupportOpen(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20 flex-shrink-0"
             >
-              <Heart className="w-3.5 h-3.5" />
+              <span className="heart-beat"><Heart className="w-3.5 h-3.5 fill-current" /></span>
               Поддержать
             </button>
           </nav>
@@ -172,7 +172,7 @@ export default function Layout() {
                 onClick={() => setSupportOpen(true)}
                 className="flex items-center gap-1.5 text-amber-400/80 hover:text-amber-300 transition-colors"
               >
-                <Heart className="w-3.5 h-3.5" />
+                <span className="heart-beat"><Heart className="w-3.5 h-3.5 fill-current" /></span>
                 Поддержать проект
               </button>
             </div>
