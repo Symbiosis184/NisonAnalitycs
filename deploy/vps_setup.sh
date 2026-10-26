@@ -30,7 +30,14 @@ echo "==> 1/11 Установка пакетов (nginx, git, curl, certbot)"
 #      healthz kairi-api проверяется retry-циклом до 15 с (uvicorn стартует
 #      дольше прежнего sleep 2) с выводом journalctl при отказе; финальная
 #      диагностика дёргает реальные эндпоинты через nginx (Host: kairi.pro).
-export DEPLOY_SCRIPT_REV="v15"
+# v16: порт 8000 занят «старым сервисом аналитики» -> uvicorn падал с
+#      [Errno 98] address already in use и уходил в restart-loop. Перед
+#      установкой unit порт освобождается: systemd-юниты с ExecStart на :8000
+#      останавливаются, прямой listener убивается; в юнит добавлены
+#      KillMode=mixed + RestartSec/StartLimit (лечит orphan uvicorn worker'а,
+#      который держал сокет после main-процесса); выводятся PID/venv занявшего
+#      процесса для диагностики.
+export DEPLOY_SCRIPT_REV="v16"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx python3-dnspython || {
@@ -156,6 +163,39 @@ chmod 600 /etc/kairi/payment_secret
 mkdir -p /var/lib/kairi
 
 systemctl stop kairi-api 2>/dev/null || true
+
+# v16: освобождаем порт 8000 перед установкой unit. На этом сервере его держал
+# «старый сервис аналитики» (uvicorn вне systemd, слушал 0.0.0.0:8000) — из-за
+# этого kairi-api падал с [Errno 98] address already in use и уходил в
+# restart-loop. Лечим в два прохода: сначала останавливаем чужие systemd-юниты,
+# чей ExecStart биндит :8000 (чтобы не было respawn), затем убиваем прямой
+# listener (включая orphan uvicorn worker'ы, пережившие свой main-процесс).
+free_port_8000() {
+    local pids u
+    for u in $(systemctl list-units --type=service --all --no-pager --no-legend \
+               | awk '{print $1}' | grep -v '^kairi-api'); do
+        if systemctl cat "$u" 2>/dev/null | grep -qE '(--port[ =]8000|:8000)'; then
+            echo "    Останавливаю юнит '$u' — он занимал порт 8000"
+            systemctl disable --now "$u" >/dev/null 2>&1 || true
+        fi
+    done
+    pids=$(ss -tlnpH "sport = :8000" 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u || true)
+    if [ -n "$pids" ]; then
+        for p in $pids; do
+            echo "    Порт 8000 занят PID=$p ($(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null | cut -c1-120)) — завершаю"
+            kill "$p" 2>/dev/null || true
+        done
+        sleep 2
+        pids=$(ss -tlnpH "sport = :8000" 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u || true)
+        for p in $pids; do
+            echo "    PID=$p не завершился — SIGKILL"
+            kill -9 "$p" 2>/dev/null || true
+        done
+        [ -n "$pids" ] && sleep 1
+    fi
+}
+free_port_8000
+
 cat > /etc/systemd/system/kairi-api.service <<UNITEOF
 [Unit]
 Description=Kairi Analytics - commerce API (quotes proxy + subscriptions)
@@ -176,6 +216,14 @@ Environment=KAIRI_TRIAL_DAYS=3
 Environment=KAIRI_ALERT_SYMBOLS=
 Environment=KAIRI_ALERT_SCAN_MIN=15
 Restart=on-failure
+# v16: uvicorn при --workers 1 оставляет worker-потомка; при plain-Kill он
+# переживал main-процесс и держал сокет :8000 -> следующий старт падал с
+# Errno 98. KillMode=mixed гасит всю группу (SIGTERM main, SIGKILL потомкам).
+KillMode=mixed
+TimeoutStopSec=15
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
 NoNewPrivileges=yes
 PrivateTmp=yes
 
@@ -762,7 +810,7 @@ curl -sf http://127.0.0.1:8000/api/quotes/healthz >/dev/null 2>&1 \
 # 443 после выпуска) — ловит рассинхрон location'ов и падение проксирования.
 NGINX_PORT=443; NGINX_SCHEME=https
 [ -f "$CERT_DIR/fullchain.pem" ] || { NGINX_PORT=80; NGINX_SCHEME=http; }
-for ep in /api/plans /api/register; do
+for ep in /api/plans "/api/quotes/healthz"; do
     CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H "Host: $DOMAIN" \
         "${NGINX_SCHEME}://127.0.0.1:${NGINX_PORT}${ep}" 2>/dev/null || echo 000)
     if [ "$CODE" = "404" ]; then
