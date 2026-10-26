@@ -20,7 +20,10 @@ echo "==> 1/11 Установка пакетов (nginx, git, curl, certbot)"
 # v13: страница /pricing на фронте — регистрация (POST /api/register), заявки на
 #      подписку (pending + confirm админом), env KAIRI_PAY_TO/KAIRI_TRIAL_DAYS,
 #      nginx location /api/register
-export DEPLOY_SCRIPT_REV="v13"
+# v14: фикс «vite build ... Killed» на малых VPS: лимит heap для node
+#      (--max-old-space-size по свободной памяти), создание swap-файла 2G при
+#      его отсутствии; retry сборки с пониженным heap при OOM
+export DEPLOY_SCRIPT_REV="v14"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx python3-dnspython || {
@@ -208,11 +211,82 @@ fi
 dpkg --configure -a 2>/dev/null || true
 
 echo "==> 6/11 Сборка фронтенда из GitHub (main)"
+# --- v14: защита от OOM-киллера на VPS с малой RAM -------------------------
+# vite (esbuild+rollup, ~1500 модулей) легко съедает >1 ГБ; при отсутствии
+# swap ядро убивает node («Killed»). Гарантируем swap и лимитируем heap node.
+ensure_swap() {
+    if swapon --show 2>/dev/null | grep -q .; then
+        echo "    swap уже активен — пропускаем"
+        return 0
+    fi
+    if [ -f /swapfile ]; then
+        echo "    /swapfile существует, но не активен — включаю"
+        chmod 600 /swapfile && swapon /swapfile || true
+        swapon --show | grep -q . && return 0
+    fi
+    local need_kb=$((2*1024*1024))  # 2G в KB
+    if df -kP / | awk 'NR==2{print ($4>='"$need_kb"')?1:0}' | grep -q 1; then
+        echo "    swap отсутствует — создаю /swapfile 2G (~30-60 сек)"
+        if fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none; then
+            chmod 600 /swapfile
+            mkswap /swapfile >/dev/null
+            swapon /swapfile || echo "    НЕ УДАЛОСЬ включить swap (VZ/OpenVZ?) — продолжаем без него"
+            grep -q '^/swapfile' /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+        else
+            echo "    не хватило места под /swapfile — продолжаем без swap"
+        fi
+    else
+        echo "    свободно <2G на диске — swap не создаём"
+    fi
+}
+ensure_swap
+
+free_mb() { free -m | awk 'NR==2{print $7}'; }
+
+# heap = min(свободная RAM + половина swap, 1536), но не меньше 512 МБ
+calc_heap_mb() {
+    local ram avail swap_total h
+    avail=$(free -m | awk 'NR==2{print $7}'); [ -z "$avail" ] && avail=512
+    swap_total=$(free -m | awk 'NR==3{print $2}'); [ -z "$swap_total" ] && swap_total=0
+    h=$(( avail + swap_total / 2 ))
+    [ "$h" -gt 1536 ] && h=1536
+    [ "$h" -lt 512 ] && h=512
+    echo "$h"
+}
+
+stop_services_for_build() {
+    # освобождаем память на время сборки
+    systemctl stop kairi-api kairi-journal 2>/dev/null || true
+    sync; echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+}
+restore_services_after_build() {
+    systemctl start kairi-journal 2>/dev/null || true
+    systemctl start kairi-api 2>/dev/null || true
+}
+
 rm -rf "$BUILD_DIR"
 git clone --depth 50 "$REPO" -b main "$BUILD_DIR"
 cd "$BUILD_DIR"
 npm ci --silent --no-audit --no-fund
-npm run build
+
+HEAP_MB=$(calc_heap_mb)
+echo "    сборка с NODE_OPTIONS=--max-old-space-size=$HEAP_MB (доступно ~$(free_mb) МБ RAM)"
+stop_services_for_build
+if ! NODE_OPTIONS="--max-old-space-size=$HEAP_MB" npm run build; then
+    rc=$?
+    # rc=137 (SIGKILL) или «Killed» => OOM: retry с меньшим heap
+    HEAP_RETRY=$(( HEAP_MB * 3 / 4 )); [ "$HEAP_RETRY" -lt 384 ] && HEAP_RETRY=384
+    echo "    сборка упала (rc=$rc) — повтор с heap=$HEAP_RETRY МБ..."
+    stop_services_for_build
+    if ! NODE_OPTIONS="--max-old-space-size=$HEAP_RETRY" npm run build; then
+        restore_services_after_build
+        echo "ОШИБКА: vite build убит дважды. Мало памяти."
+        echo "  Варианты: 1) добавить RAM/swap вручную; 2) собрать локально:"
+        echo "  npm ci && npm run build, затем загрузить dist/ на сервер в $WEB_ROOT/"
+        exit 1
+    fi
+fi
+restore_services_after_build
 
 echo "==> 7/11 Публикация статики в $WEB_ROOT"
 mkdir -p "$WEB_ROOT"
