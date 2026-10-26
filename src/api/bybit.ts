@@ -1,7 +1,56 @@
 import { assertValidSymbol, isValidTimeframe, clampNumber } from '../utils/validation';
 import { fetchWithRetry } from '../utils/http';
 
-const BASE_URL = 'https://api.bybit.com';
+const BASE_URL = 'https://api.bybit.com'; // только fallback (dev без backend-прокси)
+
+// --- Серверный котировочный прокси (/api/quotes/*) ---------------------------
+// Коммерческий контур: браузер не ходит на api.bybit.com напрямую — запросы
+// идут через nginx на quotes_server.py (FastAPI), где стоит серверный кэш,
+// дедупликация и защита от abuse. Токен доступа — тот же X-Kairi-Key, что и
+// для журнала (meta kairi-journal-token / kairi-api-token в index.html).
+import { getJournalToken } from '../utils/journalSync';
+
+let quotesMode: 'proxy' | 'fallback' | null = null; // определяется по первому ответу
+
+/** true, если страница открыта на боевом домене (есть наш backend за nginx). */
+function hasBackend(): boolean {
+  try {
+    return typeof document !== 'undefined' &&
+      (!!document.querySelector('meta[name="kairi-api-token"]') ||
+       !!document.querySelector('meta[name="kairi-journal-token"]'));
+  } catch {
+    return false;
+  }
+}
+
+/** Токен котировочного API: расширенный JSON-токен (role=user), fallback — journal-токен. */
+function getApiToken(): string {
+  try {
+    const meta = document.querySelector('meta[name="kairi-api-token"]');
+    const t = (meta?.getAttribute('content') || '').trim();
+    if (t) return t;
+  } catch { /* нет DOM */ }
+  return getJournalToken();
+}
+
+async function proxyFetch(path: string, params: Record<string, string | number>): Promise<any | null> {
+  if (!hasBackend()) return null; // dev/vitest — сразу fallback на Bybit
+  const qs = Object.entries(params).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&');
+  const token = getApiToken();
+  try {
+    const res = await fetch(`${path}?${qs}`, {
+      headers: token ? { 'X-Kairi-Key': token } : {},
+      signal: (AbortSignal as any)?.timeout ? AbortSignal.timeout(10_000) : undefined,
+    });
+    if (res.status === 401 || res.status === 403) return null; // токен просрочен -> деградация
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    quotesMode = 'proxy';
+    const body = await res.json();
+    return body?.data ?? null;
+  } catch {
+    return null; // сеть/5xx -> fallback напрямую (как до коммерческого контура)
+  }
+}
 
 // --- Кэш и троттлинг обращений к Bybit -------------------------------------
 // Dashboard запрашивает 8 символов × 2 эндпоинта при каждой загрузке и
@@ -97,9 +146,16 @@ export async function fetchKlines(rawSymbol: string, interval: string, rawLimit:
   const bybitInterval = mapped || interval;
   // force: обход короткого кэша (закрытие бара по WS) — иначе реанализ
   // получит тот же кэшированный ответ и последний бар не обновится
-  const url = `${BASE_URL}/v5/market/kline?category=spot&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(bybitInterval)}&limit=${limit}${opts.force ? `&_t=${Date.now()}` : ''}`;
   const cacheKey = `klines:${symbol}:${bybitInterval}:${limit}`;
   if (opts.force) { cache.delete(cacheKey); inflight.delete(cacheKey); }
+
+  // 1) серверный прокси (боевой домен): /api/quotes/klines
+  const proxied = await proxyFetch('/api/quotes/klines',
+    { symbol, interval: bybitInterval, limit });
+  if (Array.isArray(proxied)) return proxied as Kline[];
+
+  // 2) fallback напрямую (dev-режим / backend недоступен)
+  const url = `${BASE_URL}/v5/market/kline?category=spot&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(bybitInterval)}&limit=${limit}${opts.force ? `&_t=${Date.now()}` : ''}`;
   const data = await cachedFetchJson(cacheKey, url, KLINES_TTL_MS);
   
   if (data.retCode !== 0) {
@@ -140,6 +196,12 @@ export async function fetchInstrumentInfo(rawSymbol: string): Promise<Instrument
 export async function fetch24hTicker(rawSymbol: string): Promise<Ticker24h> {
   // Валидация symbol защищает от инъекции параметров в URL запроса к Bybit
   const symbol = assertValidSymbol(rawSymbol);
+
+  // 1) серверный прокси (боевой домен)
+  const proxied = await proxyFetch('/api/quotes/ticker', { symbol });
+  if (proxied && typeof proxied.lastPrice === 'number') return proxied as Ticker24h;
+
+  // 2) fallback напрямую
   const url = `${BASE_URL}/v5/market/tickers?category=spot&symbol=${encodeURIComponent(symbol)}`;
   const data = await cachedFetchJson(`ticker:${symbol}`, url, TICKER_TTL_MS);
   

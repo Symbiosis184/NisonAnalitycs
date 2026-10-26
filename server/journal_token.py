@@ -58,10 +58,49 @@ def issue(ttl: int = DEFAULT_TTL) -> str:
     return f"{exp}.{sign(secret, exp)}"
 
 
+def issue_json(ttl: int = DEFAULT_TTL) -> dict:
+    """Расширенный токен для котировочного API (quotes_server.py).
+
+    Формат: <json-payload>.<hmac_sha256(secret, json)> — подпись считается от
+    канонической JSON-строки (sort_keys), см. quotes_server.verify_access_token.
+    Роль 'user' даёт чтение котировок и журнала; права выдаёт деплой-скрипт
+    при публикации статики (meta kairi-journal-token / kairi-api-token).
+    """
+    import json as _json
+    secret = load_secret()
+    exp = int(time.time()) + max(60, min(ttl, 24 * 3600))
+    payload = {"role": "user", "exp": exp}
+    body = _json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    sig = hmac.new(secret, body.encode(), hashlib.sha256).hexdigest()
+    return {"token": f"{body}.{sig}", "expiresAt": exp}
+
+
 def verify(token: str) -> bool:
-    """True, если токен подписан секретом и не просрочен."""
+    """True, если токен подписан секретом и не просрочен.
+
+    Поддерживает оба формата: классический "<exp>.<hmac>" (журнал) и
+    расширенный JSON-токен quotes_server ('{"exp":...,...}.<hmac>').
+    """
+    t = token.strip()
+    if t.startswith("{"):
+        # JSON-токен: подпись считается от канонической JSON-строки payload
+        body, _, sig = t.rpartition(".")
+        if not body or not sig:
+            return False
+        import json as _json
+        try:
+            payload = _json.loads(body)
+            exp = int(payload.get("exp", 0))
+        except (ValueError, TypeError):
+            return False
+        if exp < time.time():
+            return False
+        secret = load_secret()
+        canon = _json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        expected = hmac.new(secret, canon.encode(), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(sig.lower(), expected)
     try:
-        exp_s, sig = token.strip().split(".", 1)
+        exp_s, sig = t.split(".", 1)
         exp = int(exp_s)
     except (ValueError, AttributeError):
         return False
@@ -84,6 +123,10 @@ def main() -> int:
         except (IndexError, ValueError):
             print("usage: --ttl SECONDS", file=sys.stderr)
             return 2
+    if "--json" in args:  # расширенный токен для quotes_server (role=user)
+        import json as _json
+        print(_json.dumps(issue_json(ttl)))
+        return 0
     print(issue(ttl))
     return 0
 

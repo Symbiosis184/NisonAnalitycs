@@ -13,7 +13,9 @@ WWW_DOMAIN="www.kairi.pro"
 
 echo "==> 1/11 Установка пакетов (nginx, git, curl, certbot)"
 # v10: server-side signal journal (sqlite API + nginx proxy + systemd unit)
-export DEPLOY_SCRIPT_REV="v10"
+# v11: коммерческий backend — FastAPI quotes-proxy (/api/quotes/*), тарифы/
+#      подписки с HMAC-подтверждением оплаты, uvicorn+venv, CSP connect-src 'self'
+export DEPLOY_SCRIPT_REV="v11"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx python3-dnspython || {
@@ -107,6 +109,66 @@ curl -sf http://127.0.0.1:8787/healthz >/dev/null \
   && echo "    Journal API работает (127.0.0.1:8787)" \
   || echo "    !! Journal API не отвечает — журнал останется локальным (localStorage)"
 
+echo "==> 3b/11 Коммерческий backend-API (FastAPI quotes-proxy + подписки, v11)"
+# Котировочный прокси и тарифы/подписки (server/quotes_server.py): uvicorn в
+# venv на 127.0.0.1:8000, nginx проксирует /api/quotes/, /api/plans,
+# /api/subscriptions. Доступ по HMAC-токену X-Kairi-Key (journal_token.py).
+# Файлы берём из GitHub main (шаг клонирования BUILD_DIR идёт позже — 6/11).
+apt-get install -y -qq python3-venv python3-pip >/dev/null 2>&1 || true
+if [ ! -d /opt/kairi-api/venv ]; then
+    python3 -m venv /opt/kairi-api/venv || touch /tmp/kairi_api_broken
+fi
+if ! [ -f /tmp/kairi_api_broken ]; then
+    /opt/kairi-api/venv/bin/pip install -q --disable-pip-version-check \
+        fastapi 'uvicorn[standard]' httpx apscheduler \
+        || { echo "    !! pip install не выполнен — котировки пойдут напрямую (CSP-legacy)"; touch /tmp/kairi_api_broken; }
+fi
+mkdir -p /opt/kairi-api
+for f in quotes_server.py journal_token.py; do
+    curl -fsSL "https://raw.githubusercontent.com/Symbiosis184/NisonAnalitycs/main/server/$f" \
+        -o "/opt/kairi-api/$f" || { echo "    !! не удалось скачать $f"; touch /tmp/kairi_api_broken; }
+done
+chmod 644 /opt/kairi-api/*.py
+if ! [ -f /tmp/kairi_api_broken ]; then
+    /opt/kairi-api/venv/bin/python3 -m py_compile /opt/kairi-api/quotes_server.py \
+      || { echo "    !! quotes_server.py не компилируется"; touch /tmp/kairi_api_broken; }
+fi
+# Секрет подтверждения платежей (on-chain watcher подписывает им факт оплаты)
+if [ ! -s /etc/kairi/payment_secret ]; then
+    (umask 077 && openssl rand -hex 32 > /etc/kairi/payment_secret)
+fi
+chmod 600 /etc/kairi/payment_secret
+mkdir -p /var/lib/kairi
+
+systemctl stop kairi-api 2>/dev/null || true
+cat > /etc/systemd/system/kairi-api.service <<UNITEOF
+[Unit]
+Description=Kairi Analytics - commerce API (quotes proxy + subscriptions)
+After=network.target
+
+[Service]
+ExecStart=/opt/kairi-api/venv/bin/python3 -m uvicorn quotes_server:app --host 127.0.0.1 --port 8000 --workers 1
+WorkingDirectory=/opt/kairi-api
+Environment=KAIRI_QUOTES_DB=/var/lib/kairi/commerce.db
+# Скан рынка для Telegram-алертов: пусто = выключен (безопасно по умолчанию).
+# Заполните на сервере в этом файле, например:
+#   Environment=KAIRI_ALERT_SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT
+Environment=KAIRI_ALERT_SYMBOLS=
+Environment=KAIRI_ALERT_SCAN_MIN=15
+Restart=on-failure
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+UNITEOF
+systemctl daemon-reload
+systemctl enable --now kairi-api >/dev/null 2>&1 || systemctl restart kairi-api || true
+sleep 2
+curl -sf http://127.0.0.1:8000/api/quotes/healthz >/dev/null \
+  && echo "    Commerce API работает (127.0.0.1:8000)" \
+  || echo "    !! Commerce API не отвечает — фронтенд деградирует на прямые запросы к Bybit"
+
 echo "==> 4/11 Node.js 22 LTS (нужен для сборки фронтенда)"
 if ! command -v npm >/dev/null 2>&1; then
     if [ ! -f /etc/apt/sources.list.d/nodesource.list ]; then
@@ -154,11 +216,25 @@ JOURNAL_TOKEN=""
 if [ -f /opt/kairi-journal/journal_token.py ] && ! [ -f /tmp/kairi_journal_broken ]; then
     JOURNAL_TOKEN=$(python3 /opt/kairi-journal/journal_token.py --ttl 43200 2>/dev/null || true)
 fi
+# Расширенный JSON-токен (role=user) для котировочного API quotes_server.py.
+# Встраивается отдельным meta-тегом; journal-токен старого формата остаётся
+# для обратной совместимости (journal_server.verify принимает именно его).
+API_TOKEN=""
+if [ -f /opt/kairi-api/journal_token.py ] && ! [ -f /tmp/kairi_api_broken ]; then
+    API_TOKEN=$(/opt/kairi-api/venv/bin/python3 /opt/kairi-api/journal_token.py --ttl 43200 --json 2>/dev/null \
+                | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])' 2>/dev/null || true)
+fi
 if [ -n "$JOURNAL_TOKEN" ]; then
     sed -i "s|</title>|</title>\n    <meta name=\"kairi-journal-token\" content=\"$JOURNAL_TOKEN\">|" "$WEB_ROOT/index.html"
     echo "    Токен журнала встроен в index.html (TTL 12ч)"
 else
     echo "    !! Токен журнала не выдан — синхронизация будет работать в локальном режиме"
+fi
+if [ -n "$API_TOKEN" ]; then
+    sed -i "s|</title>|</title>\n    <meta name=\"kairi-api-token\" content=\"$API_TOKEN\">|" "$WEB_ROOT/index.html"
+    echo "    Токен котировочного API встроен в index.html (TTL 12ч)"
+else
+    echo "    !! Токен котировочного API не выдан — котировки пойдут напрямую (fallback)"
 fi
 chown -R www-data:www-data "$WEB_ROOT" && chmod -R a+rX "$WEB_ROOT"
 [ -n "$JOURNAL_TOKEN" ] && chmod 640 "$WEB_ROOT/index.html"
@@ -276,7 +352,33 @@ server {
         add_header Vary "Origin" always;
     }
 
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://mc.yandex.ru; style-src 'self' 'unsafe-inline'; connect-src 'self' https://api.bybit.com wss://stream.bybit.com wss://stream.binance.com:9443 https://stream.binance.com https://mc.yandex.ru; img-src 'self' data: https://mc.yandex.ru; font-src 'self' data:; frame-ancestors 'none'; upgrade-insecure-requests;" always;
+    # коммерческий backend (FastAPI на localhost:8000): котировочный прокси,
+    # тарифы и подписки. Котировки кэшируются на сервере — браузер больше не
+    # ходит на api.bybit.com напрямую (CSP connect-src 'self').
+    location /api/quotes/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_read_timeout 15s;
+        add_header Cache-Control "no-store" always;
+    }
+    location /api/plans {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_read_timeout 10s;
+    }
+    location /api/subscriptions {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_read_timeout 10s;
+    }
+    # очередь алертов (статус/привязка Telegram; ручной запуск — мастер-ключом)
+    location /api/alerts/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_read_timeout 30s;
+    }
+
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://mc.yandex.ru; style-src 'self' 'unsafe-inline'; connect-src 'self' wss://stream.bybit.com wss://stream.binance.com:9443 https://mc.yandex.ru; img-src 'self' data: https://mc.yandex.ru; font-src 'self' data:; frame-ancestors 'none'; upgrade-insecure-requests;" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "no-referrer" always;
 
