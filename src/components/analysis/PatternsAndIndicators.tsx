@@ -3,6 +3,7 @@
 import type { AnalysisReport } from '../../api/types';
 import type { PatternDTO } from '../../api/types';
 import { Icon } from '../ui/Icon';
+import { num } from '../../utils/num';
 
 export function ConfirmedPatternsList({ patterns, total }: { patterns: PatternDTO[]; total: number }) {
   return (
@@ -82,7 +83,7 @@ export function IndicatorsSection({ report }: { report: AnalysisReport }) {
           report.rsi > 70 ? 'text-red-400' :
           report.rsi < 30 ? 'text-green-400' : 'text-white'
         }`}>
-          {report.rsi.toFixed(1)}
+          {num(report.rsi).toFixed(1)}
         </div>
         {/* Честная зональная классификация: extremes — это <20/>80, а не 30/70 */}
         <div className="text-xs text-gray-400 mt-1">
@@ -105,7 +106,7 @@ export function IndicatorsSection({ report }: { report: AnalysisReport }) {
         <div className={`text-3xl font-bold ${
           report.macd.histogram > 0 ? 'text-green-400' : 'text-red-400'
         }`}>
-          {((report.macd.histogram / Math.max(report.price, 1e-9)) * 100).toFixed(3)}%
+          {((num(report.macd?.histogram) / Math.max(num(report.price), 1e-9)) * 100).toFixed(3)}%
         </div>
         <div className="text-xs text-gray-400 mt-1">
           {report.macd.histogram > 0 ? 'Бычий импульс' : 'Медвежий импульс'}
@@ -124,7 +125,7 @@ export function IndicatorsSection({ report }: { report: AnalysisReport }) {
           report.trend === 'ВОСХОДЯЩИЙ' ? 'text-green-400' :
           report.trend === 'НИСХОДЯЩИЙ' ? 'text-red-400' : 'text-yellow-400'
         }`}>
-          {(report.trend_strength * 100).toFixed(1)}%
+          {(num(report.trend_strength) * 100).toFixed(1)}%
         </div>
         <div className="text-xs text-gray-400 mt-1">
           Сила направленного движения ({report.trend})

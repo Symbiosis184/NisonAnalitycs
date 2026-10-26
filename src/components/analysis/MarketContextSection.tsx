@@ -3,6 +3,7 @@
 
 import { Activity, BarChart2, Target } from 'lucide-react';
 import type { AnalysisReport } from '../../api/types';
+import { num } from '../../utils/num';
 
 const getConsensusColor = (score: number) => {
   if (score >= 4) return 'text-green-400 bg-green-500/10 border-green-500/20';
@@ -71,10 +72,10 @@ export function MarketContextSection({ report, volumeRatio }: {
           Consensus Score
         </h3>
         <div className="text-2xl font-bold">
-          {report.consensus.score.toFixed(1)}/5
+          {num(report.consensus?.score).toFixed(1)}/5
         </div>
         <div className="text-xs text-gray-400 mt-1">
-          Уверенность: {report.consensus.confidence.toFixed(0)}%
+          Уверенность: {num(report.consensus?.confidence).toFixed(0)}%
         </div>
         <div className="text-xs text-gray-400 mt-1">
           {report.consensus.direction === 'buy' ? 'Бычий консенсус' :

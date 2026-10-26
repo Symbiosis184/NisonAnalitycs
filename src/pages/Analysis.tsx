@@ -90,7 +90,15 @@ export default function Analysis() {
   }
 
   const baseAsset = symbol?.replace('USDT', '') || '';
-  const isPositive = report.change_24h >= 0;
+  // Все числовые поля отчёта пропускаем через num(): если бэкенд/прокси вернул
+  // null/undefined/строку вместо числа, .toFixed()/операции давали бы NaN или
+  // TypeError — а рендер объекта в JSX вызывает Minified React error #310.
+  const num = (v: unknown): number => {
+    const n = typeof v === 'number' ? v : Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const change24h = num(report.change_24h);
+  const isPositive = change24h >= 0;
 
   // ── Mini-заголовок в шапке при прокрутке вниз ────────────────────────────
   // Когда родной заголовок карточки уходит под sticky-навигацию, в шапке
@@ -100,11 +108,13 @@ export default function Analysis() {
   const livePriceFresh = !!liveCandle && Date.now() - liveCandle.ts < 30_000;
   // Фолбэк цены: живая свеча → цена отчёта → последний закрытый бар → тик из URL.
   // Guarantee: currentPrice всегда число — иначе в шапке мог появиться битый бейдж.
-  const lastClosedClose = report.candles.length > 0 ? report.candles[report.candles.length - 1].close : NaN;
+  const lastClosedClose = report.candles.length > 0
+    ? num(report.candles[report.candles.length - 1].close) : NaN;
   const tickFromSymbol = Number.parseFloat(symbol || '');
-  const currentPrice = Number.isFinite(livePriceFresh ? liveCandle!.close : report.price)
-    ? (livePriceFresh ? liveCandle!.close : report.price)
-    : (Number.isFinite(lastClosedClose) ? lastClosedClose
+  const rawPrice = livePriceFresh ? num(liveCandle!.close) : num(report.price);
+  const currentPrice = Number.isFinite(rawPrice) && rawPrice > 0
+    ? rawPrice
+    : (Number.isFinite(lastClosedClose) && lastClosedClose > 0 ? lastClosedClose
       : (Number.isFinite(tickFromSymbol) ? tickFromSymbol : 0));
   useEffect(() => {
     if (!symbol) return undefined;
@@ -118,10 +128,13 @@ export default function Analysis() {
   }, [scrolledPast, symbol, baseAsset, timeframe, currentPrice, isPositive, setBadge]);
 
   const confirmedPatterns = report.patterns.filter((p) => p.confirmed);
-  const volumeRatio = report.candles.length > 0 
-    ? report.candles[report.candles.length - 1].volume / 
-      (report.candles.reduce((sum: number, c) => sum + c.volume, 0) / report.candles.length)
-    : 1;
+  // Consensus может отсутствовать у старых кэшированных отчётов — защищаемся.
+  const consensusScore = num(report.consensus?.score);
+  const lastBarVolume = report.candles.length > 0 ? num(report.candles[report.candles.length - 1].volume) : 0;
+  const avgVolume = report.candles.length > 0
+    ? report.candles.reduce((sum: number, c) => sum + num(c.volume), 0) / report.candles.length
+    : 0;
+  const volumeRatio = (avgVolume > 0 && Number.isFinite(avgVolume)) ? lastBarVolume / avgVolume : 1;
 
   // Сигналы с рассчитанным «путём цены» — для selectable-оверлея на профиле объёма
   const pathSignals = report.signals.filter((s) => s.path);
@@ -161,7 +174,7 @@ export default function Analysis() {
             )}
             <span className={`flex items-center gap-1 text-sm font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
               {isPositive ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-              {isPositive ? '+' : ''}{report.change_24h.toFixed(2)}%
+              {isPositive ? '+' : ''}{change24h.toFixed(2)}%
             </span>
           </div>
         </div>
@@ -195,7 +208,7 @@ export default function Analysis() {
             <span className={`text-xs font-semibold ${
               report.regime === 'ВОСХОДЯЩИЙ' ? 'text-green-400' : report.regime === 'НИСХОДЯЩИЙ' ? 'text-red-400' : 'text-yellow-400'
             }`}>{report.regime}</span>
-            <span className="text-xs text-gray-400">Consensus {report.consensus.score.toFixed(1)}/5 · Объём {volumeRatio.toFixed(2)}x</span>
+            <span className="text-xs text-gray-400">Consensus {consensusScore.toFixed(1)}/5 · Объём {volumeRatio.toFixed(2)}x</span>
           </>
         }
       >
@@ -230,7 +243,7 @@ export default function Analysis() {
             <>
               {report.wyckoff && (
                 <span className="text-xs text-gray-400">
-                  Вайкофф: {PHASE_SHORT[report.wyckoff.phase]} · {(report.wyckoff.confidence * 100).toFixed(0)}%
+                  Вайкофф: {PHASE_SHORT[report.wyckoff.phase] ?? report.wyckoff.phase} · {(num(report.wyckoff.confidence) * 100).toFixed(0)}%
                 </span>
               )}
               {report.delta_summary && (
@@ -312,9 +325,9 @@ export default function Analysis() {
         title="Индикаторы"
         badge={
           <>
-            <span className="text-xs text-gray-400">RSI {report.rsi.toFixed(1)}</span>
-            <span className="text-xs text-gray-400">MACD {report.macd.histogram.toFixed(2)}</span>
-            <span className="text-xs text-gray-400">Тренд {(report.trend_strength * 100).toFixed(1)}%</span>
+            <span className="text-xs text-gray-400">RSI {num(report.rsi).toFixed(1)}</span>
+            <span className="text-xs text-gray-400">MACD {num(report.macd?.histogram).toFixed(2)}</span>
+            <span className="text-xs text-gray-400">Тренд {(num(report.trend_strength) * 100).toFixed(1)}%</span>
           </>
         }
       >
