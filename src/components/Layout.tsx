@@ -1,15 +1,37 @@
-import { useState } from 'react';
+import { createContext, useContext, useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { BarChart3, TrendingUp, BookOpen, FlaskConical, Heart, CreditCard } from 'lucide-react';
 import SupportModal from './SupportModal';
 import ContextMenu from './ContextMenu';
 import { PRICING_ENABLED } from '../App';
 
+// Mini-заголовок в шапке: страница аналитики публикует сюда пару и цену,
+// когда пользователь прокрутил родной заголовок (см. Analysis.tsx).
+export interface HeaderBadge {
+  title: string;   // например "BTC/USDT · D"
+  price: string;   // уже отформатированная цена, например "$112 340"
+  positive?: boolean; // цвет цены по суточному изменению
+}
+
+interface HeaderBadgeCtx {
+  badge: HeaderBadge | null;
+  setBadge: (b: HeaderBadge | null) => void;
+}
+
+const HeaderBadgeContext = createContext<HeaderBadgeCtx>({ badge: null, setBadge: () => {} });
+
+/** Страница может показать/скрыть mini-заголовок в шапке навигации. */
+export function useHeaderBadge() {
+  return useContext(HeaderBadgeContext);
+}
+
 export default function Layout() {
   const location = useLocation();
   const [supportOpen, setSupportOpen] = useState(false);
+  const [badge, setBadge] = useState<HeaderBadge | null>(null);
 
   return (
+    <HeaderBadgeContext.Provider value={{ badge, setBadge }}>
     <div className="min-h-screen bg-surface-deep text-gray-100">
       <header className="border-b border-gray-800/60 bg-surface-raised/80 backdrop-blur-xl sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
@@ -34,6 +56,16 @@ export default function Layout() {
                 </p>
               </div>
             </Link>
+
+            {/* Mini-заголовок: пара + цена, когда страница аналитики прокручена вниз */}
+            {badge && (
+              <div className="hidden sm:flex items-center gap-2 min-w-0 px-3 py-1.5 rounded-lg bg-gray-800/60 border border-gray-700/60 max-w-[46%]">
+                <span className="text-xs font-semibold text-gray-300 whitespace-nowrap">{badge.title}</span>
+                <span className={`text-sm font-bold tabular-nums truncate ${
+                  badge.positive === undefined ? 'text-white' : badge.positive ? 'text-green-400' : 'text-red-400'
+                }`}>{badge.price}</span>
+              </div>
+            )}
 
             {/* Десктопная навигация */}
             <nav className="hidden md:flex items-center gap-4">
@@ -99,6 +131,16 @@ export default function Layout() {
               v{import.meta.env.VITE_APP_VERSION || '1.0'}
             </span>
           </div>
+
+          {/* Mini-заголовок на мобильных: пара + цена под шапкой, когда страница прокручена */}
+          {badge && (
+            <div className="md:hidden flex items-center gap-2 pb-2 min-w-0">
+              <span className="text-xs font-semibold text-gray-300 whitespace-nowrap">{badge.title}</span>
+              <span className={`text-sm font-bold tabular-nums ${
+                badge.positive === undefined ? 'text-white' : badge.positive ? 'text-green-400' : 'text-red-400'
+              }`}>{badge.price}</span>
+            </div>
+          )}
 
           {/* Мобильная горизонтальная навигация (под шапкой, скроллится) */}
           <nav className="md:hidden flex items-center gap-1 pb-2 overflow-x-auto -mx-3 px-3">
@@ -198,5 +240,6 @@ export default function Layout() {
       <SupportModal open={supportOpen} onClose={() => setSupportOpen(false)} />
       <ContextMenu onSupport={() => setSupportOpen(true)} />
     </div>
+    </HeaderBadgeContext.Provider>
   );
 }

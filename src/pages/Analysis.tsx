@@ -7,6 +7,8 @@ import { useBybitLiveCandle } from '../hooks/useBybitLiveCandle';
 import { useAnalysisData } from '../hooks/useAnalysisData';
 import { useAutoJournalSignals } from '../hooks/useAutoJournalSignals';
 import { useResponsiveChartHeight } from '../hooks/useResponsiveChartHeight';
+import { useStickyHeaderState } from '../hooks/useStickyHeaderState';
+import { useHeaderBadge } from '../components/Layout';
 import { MultiTFZonesPanel } from '../components/analysis/MultiTFZonesPanel';
 import { MarketContextSection } from '../components/analysis/MarketContextSection';
 import { VolumeContextSection, PHASE_SHORT } from '../components/analysis/VolumeContextSection';
@@ -89,6 +91,22 @@ export default function Analysis() {
 
   const baseAsset = symbol?.replace('USDT', '') || '';
   const isPositive = report.change_24h >= 0;
+
+  // ── Mini-заголовок в шапке при прокрутке вниз ────────────────────────────
+  // Когда родной заголовок карточки уходит под sticky-навигацию, в шапке
+  // появляется пара + актуальная цена (живая с WebSocket, если есть тик <30с).
+  const { anchorRef, scrolledPast } = useStickyHeaderState(true);
+  const { setBadge } = useHeaderBadge();
+  const livePriceFresh = !!liveCandle && Date.now() - liveCandle.ts < 30_000;
+  const currentPrice = livePriceFresh ? liveCandle!.close : report.price;
+  useEffect(() => {
+    if (!symbol) return undefined;
+    setBadge(scrolledPast
+      ? { title: `${baseAsset}/USDT · ${timeframe}`, price: `$${formatPrice(currentPrice)}`, positive: isPositive }
+      : null);
+    return () => setBadge(null);
+  }, [scrolledPast, symbol, baseAsset, timeframe, currentPrice, isPositive, setBadge]);
+
   const confirmedPatterns = report.patterns.filter((p) => p.confirmed);
   const volumeRatio = report.candles.length > 0 
     ? report.candles[report.candles.length - 1].volume / 
@@ -108,7 +126,7 @@ export default function Analysis() {
       </Link>
 
       {/* Заголовок с ценой */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+      <div ref={anchorRef} className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             <h1 className="text-2xl sm:text-3xl font-bold text-white">{baseAsset}/USDT</h1>
@@ -121,8 +139,8 @@ export default function Analysis() {
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2">
-            <span className="text-xl sm:text-2xl font-bold text-white">${formatPrice(liveCandle && Date.now() - liveCandle.ts < 30_000 ? liveCandle.close : report.price)}</span>
-            {liveCandle && Date.now() - liveCandle.ts < 30_000 && (
+            <span className="text-xl sm:text-2xl font-bold text-white">${formatPrice(currentPrice)}</span>
+            {livePriceFresh && (
               <span className="animate-live-pulse inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-500/10 border border-green-500/20 text-green-400 text-[11px] font-medium" title="Цена и свеча обновляются в реальном времени через WebSocket Bybit">
                 <span className="relative flex w-1.5 h-1.5">
                   <span className="absolute inline-flex w-full h-full rounded-full bg-green-400 opacity-60 animate-ping" />
