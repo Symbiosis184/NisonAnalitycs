@@ -68,6 +68,62 @@ export default function Analysis() {
   // Автоматическое сохранение обнаруженных сигналов в журнал
   useAutoJournalSignals(report?.signals, symbol, timeframe);
 
+  const baseAsset = symbol?.replace('USDT', '') || '';
+  // Все числовые поля отчёта пропускаем через num(): если бэкенд/прокси вернул
+  // null/undefined/строку вместо числа, .toFixed()/операции давали бы NaN или
+  // TypeError — а рендер объекта в JSX вызывает Minified React error #310.
+  const num = (v: unknown): number => {
+    const n = typeof v === 'number' ? v : Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const change24h = num(report?.change_24h);
+  const isPositive = change24h >= 0;
+
+  // ── Mini-заголовок в шапке при прокрутке вниз ────────────────────────────
+  // Когда родной заголовок карточки уходит под sticky-навигацию, в шапке
+  // появляется пара + актуальная цена (живая с WebSocket, если есть тик <30с).
+  // ВАЖНО: хук useStickyHeaderState вызывается БЕЗУСЛОВНО (в начале тела
+  // компонента), а включается/выключается через параметр enabled. Если бы мы
+  // делали `enabled ? useStickyHeaderState(true) : inert`, условный хук при
+  // переходе loading→ready менял бы порядок hooks и React падал с ошибкой
+  // #310 («Rendered fewer hooks than expected») — ровно так, как на проде.
+  const hasReport = !loading && !error && !!report;
+  const { anchorRef, scrolledPast } = useStickyHeaderState(hasReport);
+  const { setBadge } = useHeaderBadge();
+
+  // Данные бейджа + цена в заголовке — считаем лениво (без хуков), только
+  // когда отчёт готов. currentPrice всегда число — иначе в шапке или в
+  // заголовке мог появиться битый бейдж (#310).
+  const livePriceFresh = !!liveCandle && Date.now() - liveCandle.ts < 30_000;
+  let currentPrice = 0;
+  let badgeTitle: string | null = null;
+  let badgePrice: string | null = null;
+  if (hasReport && report) {
+    // Фолбэк цены: живая свеча → цена отчёта → последний закрытый бар → тик из URL.
+    const lastClosedClose = report.candles.length > 0
+      ? num(report.candles[report.candles.length - 1].close) : NaN;
+    const tickFromSymbol = Number.parseFloat(symbol || '');
+    const rawPrice = livePriceFresh ? num(liveCandle!.close) : num(report.price);
+    currentPrice = Number.isFinite(rawPrice) && rawPrice > 0
+      ? rawPrice
+      : (Number.isFinite(lastClosedClose) && lastClosedClose > 0 ? lastClosedClose
+        : (Number.isFinite(tickFromSymbol) ? tickFromSymbol : 0));
+    badgeTitle = `${baseAsset}/USDT · ${timeframe}`;
+    badgePrice = `$${formatPrice(currentPrice)}`;
+  }
+
+  // setBadge вызывается ТОЛЬКО внутри эффекта и только plain-объектом строк —
+  // это исключает «setState during render» и рендер не-строки в шапке (#310).
+  useEffect(() => {
+    if (!symbol || !scrolledPast || !badgeTitle || !badgePrice) {
+      setBadge(null);
+      return undefined;
+    }
+    setBadge({ title: badgeTitle, price: badgePrice, positive: isPositive });
+    return () => setBadge(null);
+  }, [scrolledPast, symbol, badgeTitle, badgePrice, isPositive, setBadge]);
+
+  // Ранние выходы — ПОСЛЕ всех хуков компонента (см. правило хуков React).
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -88,44 +144,6 @@ export default function Analysis() {
       </div>
     );
   }
-
-  const baseAsset = symbol?.replace('USDT', '') || '';
-  // Все числовые поля отчёта пропускаем через num(): если бэкенд/прокси вернул
-  // null/undefined/строку вместо числа, .toFixed()/операции давали бы NaN или
-  // TypeError — а рендер объекта в JSX вызывает Minified React error #310.
-  const num = (v: unknown): number => {
-    const n = typeof v === 'number' ? v : Number(v);
-    return Number.isFinite(n) ? n : 0;
-  };
-  const change24h = num(report.change_24h);
-  const isPositive = change24h >= 0;
-
-  // ── Mini-заголовок в шапке при прокрутке вниз ────────────────────────────
-  // Когда родной заголовок карточки уходит под sticky-навигацию, в шапке
-  // появляется пара + актуальная цена (живая с WebSocket, если есть тик <30с).
-  const { anchorRef, scrolledPast } = useStickyHeaderState(true);
-  const { setBadge } = useHeaderBadge();
-  const livePriceFresh = !!liveCandle && Date.now() - liveCandle.ts < 30_000;
-  // Фолбэк цены: живая свеча → цена отчёта → последний закрытый бар → тик из URL.
-  // Guarantee: currentPrice всегда число — иначе в шапке мог появиться битый бейдж.
-  const lastClosedClose = report.candles.length > 0
-    ? num(report.candles[report.candles.length - 1].close) : NaN;
-  const tickFromSymbol = Number.parseFloat(symbol || '');
-  const rawPrice = livePriceFresh ? num(liveCandle!.close) : num(report.price);
-  const currentPrice = Number.isFinite(rawPrice) && rawPrice > 0
-    ? rawPrice
-    : (Number.isFinite(lastClosedClose) && lastClosedClose > 0 ? lastClosedClose
-      : (Number.isFinite(tickFromSymbol) ? tickFromSymbol : 0));
-  useEffect(() => {
-    if (!symbol) return undefined;
-    // setBadge вызывается ТОЛЬКО внутри эффекта и только plain-объектом —
-    // это исключает «setState during render» и рендер не-строки в шапке
-    // (Minified React error #310 на продакшн-бандле).
-    setBadge(scrolledPast
-      ? { title: `${baseAsset}/USDT · ${timeframe}`, price: `$${formatPrice(currentPrice)}`, positive: isPositive }
-      : null);
-    return () => setBadge(null);
-  }, [scrolledPast, symbol, baseAsset, timeframe, currentPrice, isPositive, setBadge]);
 
   const confirmedPatterns = report.patterns.filter((p) => p.confirmed);
   // Consensus может отсутствовать у старых кэшированных отчётов — защищаемся.
