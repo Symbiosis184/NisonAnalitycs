@@ -155,6 +155,14 @@ export default function Layout() {
               </button>
             </div>
           </div>
+          <div className="mt-4 flex flex-wrap items-center justify-center sm:justify-between gap-x-4 gap-y-1 text-[11px] text-gray-600">
+            <p>Сервис носит информационный характер и не является индивидуальной инвестиционной рекомендацией.</p>
+            <nav aria-label="Правовые документы" className="flex items-center gap-3">
+              <a href="/legal/terms.html" className="hover:text-gray-400 transition-colors">Публичная оферта</a>
+              <span aria-hidden="true">•</span>
+              <a href="/legal/privacy.html" className="hover:text-gray-400 transition-colors">Политика конфиденциальности</a>
+            </nav>
+          </div>
         </div>
       </footer>
 
