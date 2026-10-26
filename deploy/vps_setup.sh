@@ -15,15 +15,22 @@ echo "==> 1/11 Установка пакетов (nginx, git, curl, certbot)"
 # v10: server-side signal journal (sqlite API + nginx proxy + systemd unit)
 # v11: коммерческий backend — FastAPI quotes-proxy (/api/quotes/*), тарифы/
 #      подписки с HMAC-подтверждением оплаты, uvicorn+venv, CSP connect-src 'self'
-# v12: самодиагностика деплоя в конце скрипта (проверка, что именно этот ревизия
-#      скрипта реально выполнена; защищает от «деплоя» из устаревшего кеша curl/bash)
+# v12: самодиагностика деплоя в конце скрипта (проверка, что именно эта ревизия
+#      скрипта реально выполнена; защищает от «деплоя» из устаревшего кеша)
 # v13: страница /pricing на фронте — регистрация (POST /api/register), заявки на
-#      подписку (pending + confirm админом), env KAIRI_PAY_TO/KAIRI_TRIAL_DAYS,
-#      nginx location /api/register
+#      подписку (pending + confirm админом), trial при регистрации,
+#      env KAIRI_PAY_TO/KAIRI_TRIAL_DAYS, nginx location /api/register
 # v14: фикс «vite build ... Killed» на малых VPS: лимит heap для node
 #      (--max-old-space-size по свободной памяти), создание swap-файла 2G при
 #      его отсутствии; retry сборки с пониженным heap при OOM
-export DEPLOY_SCRIPT_REV="v14"
+# v15: корень «нет изменений после деплоя»: до выпуска сертификата фронт жил на
+#      http://kairi.pro, а все commerce /api/* эндпоинты были только в
+#      HTTPS-сервере -> 404 от SPA-fallback. Добавлены location /api/quotes/,
+#      /api/plans, /api/subscriptions, /api/register, /api/alerts/ в HTTP-блок;
+#      healthz kairi-api проверяется retry-циклом до 15 с (uvicorn стартует
+#      дольше прежнего sleep 2) с выводом journalctl при отказе; финальная
+#      диагностика дёргает реальные эндпоинты через nginx (Host: kairi.pro).
+export DEPLOY_SCRIPT_REV="v15"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx python3-dnspython || {
@@ -176,11 +183,25 @@ PrivateTmp=yes
 WantedBy=multi-user.target
 UNITEOF
 systemctl daemon-reload
+systemctl reset-failed kairi-api >/dev/null 2>&1 || true
 systemctl enable --now kairi-api >/dev/null 2>&1 || systemctl restart kairi-api || true
-sleep 2
-curl -sf http://127.0.0.1:8000/api/quotes/healthz >/dev/null \
-  && echo "    Commerce API работает (127.0.0.1:8000)" \
-  || echo "    !! Commerce API не отвечает — фронтенд деградирует на прямые запросы к Bybit"
+# v15: uvicorn поднимается + импорт fastapi/apscheduler может занимать 3-10 с;
+# прежний sleep 2 давал ложное «не отвечает» даже при исправном сервисе.
+API_UP=""
+for i in $(seq 1 15); do
+    if curl -sf --max-time 2 http://127.0.0.1:8000/api/quotes/healthz >/dev/null 2>&1; then
+        API_UP="yes"; break
+    fi
+    sleep 1
+done
+if [ -n "$API_UP" ]; then
+    echo "    Commerce API работает (127.0.0.1:8000)"
+else
+    echo "    !! Commerce API не отвечает — диагностика:"
+    systemctl status kairi-api --no-pager -l 2>/dev/null | head -n 4 | sed 's/^/      /' || true
+    journalctl -u kairi-api --no-pager -n 8 2>/dev/null | sed 's/^/      /' || true
+    echo "       (фронтенд деградирует на прямые запросы к Bybit)"
+fi
 
 echo "==> 4/11 Node.js 22 LTS (нужен для сборки фронтенда)"
 if ! command -v npm >/dev/null 2>&1; then
@@ -384,6 +405,36 @@ $( [ "$with_ssl" = "yes" ] && echo '
         add_header Access-Control-Allow-Methods "GET, POST, DELETE, OPTIONS" always;
         add_header Access-Control-Allow-Headers "Content-Type, X-Kairi-Key" always;
         add_header Vary "Origin" always;
+    }
+
+    # v15: коммерческий backend должен работать и по HTTP (до выпуска
+    # сертификата), иначе фронт с http://kairi.pro получал 404 от
+    # SPA-fallback на все /api/* эндпоинты (тарифы/регистрация не работали).
+    location /api/quotes/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_read_timeout 15s;
+        add_header Cache-Control "no-store" always;
+    }
+    location /api/plans {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_read_timeout 10s;
+    }
+    location /api/subscriptions {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_read_timeout 10s;
+    }
+    location /api/register {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_read_timeout 10s;
+    }
+    location /api/alerts/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_read_timeout 30s;
     }' )
 }
 
@@ -707,6 +758,22 @@ fi
 curl -sf http://127.0.0.1:8000/api/quotes/healthz >/dev/null 2>&1 \
     && echo "    OK   commerce API (:8000) отвечает" \
     || { echo "    !!   commerce API (:8000) не отвечает — systemctl status kairi-api"; DIAG_FAIL="yes"; }
+# v15: сквозная проверка через nginx на актуальном порту (80 без сертификата,
+# 443 после выпуска) — ловит рассинхрон location'ов и падение проксирования.
+NGINX_PORT=443; NGINX_SCHEME=https
+[ -f "$CERT_DIR/fullchain.pem" ] || { NGINX_PORT=80; NGINX_SCHEME=http; }
+for ep in /api/plans /api/register; do
+    CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H "Host: $DOMAIN" \
+        "${NGINX_SCHEME}://127.0.0.1:${NGINX_PORT}${ep}" 2>/dev/null || echo 000)
+    if [ "$CODE" = "404" ]; then
+        echo "    !!   nginx: $ep отдаёт 404 (SPA-fallback) — прокси к :8000 не настроен"
+        DIAG_FAIL="yes"
+    elif [ "$CODE" = "000" ]; then
+        echo "    ..   nginx: $ep недоступен локально (код $CODE)"
+    else
+        echo "    OK   nginx: $ep отвечает HTTP $CODE (проксирует на commerce API)"
+    fi
+done
 curl -sf http://127.0.0.1:8787/healthz >/dev/null 2>&1 \
     && echo "    OK   journal API (:8787) отвечает" \
     || echo "    ..   journal API (:8787) молчит — журнал останется локальным"
