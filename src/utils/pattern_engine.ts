@@ -342,21 +342,104 @@ export class PatternDetector {
     return { found: true, name };
   }
 
-/** Контекст тренда по Нисону: разворотный сигнал действителен только после движения против него. */
+/**
+ * Контекст тренда по Нисону: разворотный сигнал действителен только после
+ * движения против него.
+ *
+ * FIX (замена упрощённой эвристики): прежняя версия смотрела всего 6 свечей и
+ * использовала фиксированные проценты (last <= first * 0.997 / last <= lo * 1.02),
+ * из-за чего на боковых и пилообразных участках давала ложные срабатывания:
+ * любое «пилообразное» закрытие вблизи дна окна проходило как спад, а шум ±0.3%
+ * на волатильном инструменте — нет. Теперь тренд определяется по широкому
+ * контексту и трём независимым признакам (структура свингов, положение относительно
+ * MA, наклон MA), порог силы движения привязан к ATR окна, а не к проценту цены.
+ * Порог остаётся OR-логикой («есть движение против сигнала»), но каждый признак
+ * теперь структурный, а не одноэкстремальный.
+ */
+  /** Тренд по серии свингов: LL+LH (down), HH+HL (up), иначе neutral/unknown. */
+  private static swingTrend(seg: Candle[], span: number): 'up' | 'down' | 'neutral' | 'unknown' {
+    const swings = findSwings(seg, seg.length, span);
+    const lows = swings.filter(s => s.type === 'low').map(s => s.level);
+    const highs = swings.filter(s => s.type === 'high').map(s => s.level);
+    if (lows.length < 2 || highs.length < 2) return 'unknown';
+    const dLow = lows[lows.length - 1] - lows[lows.length - 2];
+    const dHigh = highs[highs.length - 1] - highs[highs.length - 2];
+    if (dLow < 0 && dHigh < 0) return 'down';   // серия понижающихся экстремумов
+    if (dLow > 0 && dHigh > 0) return 'up';     // серия повышающихся экстремумов
+    return 'neutral';                            // боковик / пила
+  }
+
+  /** Наклон MA по нормированному изменению за последние ~25% окна (в долях ATR). */
+  private static maSlope(values: number[], period: number, atr: number): number {
+    if (values.length < period + 2 || atr <= 0) return 0;
+    const m = ema(values, period);
+    const back = Math.max(2, Math.round(values.length * 0.25));
+    const i1 = values.length - 1;
+    const i0 = Math.max(period - 1, i1 - back);
+    if (i1 - i0 < 2) return 0;
+    return (m[i1] - m[i0]) / ((i1 - i0) * atr);
+  }
+
+  /** Итоговая оценка тренда по широкому контексту (~20 свечей). */
+  private static trendContext(prev: Candle[]): 'up' | 'down' | 'neutral' {
+    const seg = prev.slice(-20);
+    if (seg.length < 8) return 'neutral'; // нет истории — не блокируем (см. precededBy*)
+
+    // ATR окна — масштаб силы движения (фиксированные проценты цены не работают
+    // одновременно на тихих и волатильных инструментах).
+    let trSum = 0;
+    for (let i = 0; i < seg.length; i++) {
+      const c = seg[i];
+      const pc = i > 0 ? seg[i - 1].close : c.open;
+      trSum += Math.max(c.high - c.low, Math.abs(c.high - pc), Math.abs(c.low - pc));
+    }
+    const atr = trSum / seg.length;
+    if (atr <= 0) return 'neutral';
+
+    const closes = seg.map(x => x.close);
+    const first = closes[0], last = closes[closes.length - 1];
+    const netMoveDown = (first - last) / atr;   // >0 — чистое снижение окна
+    const netMoveUp = (last - first) / atr;     // >0 — чистый рост окна
+
+    const span = SWING_SPAN_BY_TF[PATTERN_TF_KEY];
+    const sw = this.swingTrend(seg, span);
+
+    const slope20 = this.maSlope(closes, Math.min(10, Math.floor(seg.length / 2)), atr);
+    const slopeAll = this.maSlope(closes, seg.length, atr);
+
+    const nearBottom = last <= Math.min(...seg.map(x => x.low)) + atr * 0.5;
+    const nearTop = last >= Math.max(...seg.map(x => x.high)) - atr * 0.5;
+
+    let bearVotes = 0, bullVotes = 0;
+    // 1) Структура свингов (главный признак у Нисона: серия экстремумов).
+    if (sw === 'down') bearVotes += 2;
+    if (sw === 'up') bullVotes += 2;
+    // 2) Наклон MA (короткой и всей окна) — угол тренда, нормирован по ATR.
+    if (slope20 <= -0.04) bearVotes++;
+    if (slope20 >= 0.04) bullVotes++;
+    if (slopeAll <= -0.03) bearVotes++;
+    if (slopeAll >= 0.03) bullVotes++;
+    // 3) Положение закрытия относительно MA — ниже/выше при значимом отрыве.
+    const ma = ema(closes, Math.min(10, Math.floor(seg.length / 2)));
+    const maLast = ma[ma.length - 1];
+    if (last < maLast - atr * 0.2) bearVotes++;
+    if (last > maLast + atr * 0.2) bullVotes++;
+    // 4) Значимое чистое перемещение окна (>= 1 ATR) или закрытие у его границы
+    //    (зеркало прежней эвристики, но в ATR-масштабе и на широком окне).
+    if (netMoveDown >= 1 || nearBottom) bearVotes++;
+    if (netMoveUp >= 1 || nearTop) bullVotes++;
+
+    if (bearVotes >= 3 && bearVotes > bullVotes) return 'down';
+    if (bullVotes >= 3 && bullVotes > bearVotes) return 'up';
+    return 'neutral';
+  }
+
   private static precededByDecline(prev: Candle[]): boolean {
-    const seg = prev.slice(-6);
-    if (seg.length < 3) return true; // нет истории — не блокируем
-    const first = seg[0].close, last = seg[seg.length - 1].close;
-    const lo = Math.min(...seg.map(c => c.low));
-    return last <= first * 0.997 || last <= lo * 1.02;
+    return this.trendContext(prev) !== 'up';
   }
 
   private static precededByRally(prev: Candle[]): boolean {
-    const seg = prev.slice(-6);
-    if (seg.length < 3) return true;
-    const first = seg[0].close, last = seg[seg.length - 1].close;
-    const hi = Math.max(...seg.map(c => c.high));
-    return last >= first * 1.003 || last >= hi * 0.98;
+    return this.trendContext(prev) !== 'down';
   }
 
   static isBullishEngulfing(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
