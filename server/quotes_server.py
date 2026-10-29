@@ -266,6 +266,11 @@ class QuoteCache:
     # ошибку в памяти надолго.
     ERROR_TTL_S = 20
 
+    # serving-stale (staple): если источник недоступен (429/5xx/timeout), а
+    # у ключа есть данные не старше STALE_MAX_S — отдаём их вместо ошибки.
+    # Пользователь видит карточки с прошлыми ценами, а не «Ошибка загрузки».
+    STALE_MAX_S = 3 * 3600
+
     def get_or_fetch(self, key: str, ttl: int, fetcher, force: bool = False):
         now = time.time()
         with self._lock:
@@ -290,6 +295,10 @@ class QuoteCache:
             with self._lock:
                 res = self._results.get(key)
             if isinstance(res, BaseException):
+                # лидер упал — сначала пробуем отдать протухшие данные (stale)
+                stale = self.get_stale(key)
+                if stale is not None:
+                    return stale, True
                 # the leader's upstream request failed — mirror its error
                 if isinstance(res, HTTPException):
                     raise res
@@ -308,6 +317,11 @@ class QuoteCache:
                 prev = self._data.get(key)
                 if prev is None or prev[0] <= time.time():
                     self._data[key] = (time.time() + self.ERROR_TTL_S, exc)
+            # serving-stale: есть относительно свежие данные — отдаём их,
+            # а ошибку оставляем в кэше как троттл для последующих запросов
+            stale = self.get_stale(key)
+            if stale is not None:
+                return stale, True
             raise
         with self._lock:
             self._results[key] = value
@@ -315,6 +329,15 @@ class QuoteCache:
             self._inflight.pop(key, None)
             self._data[key] = (time.time() + ttl, value)
         return value, False
+
+    def get_stale(self, key: str):
+        """Данные (не ошибка) не старше STALE_MAX_S, даже если TTL истёк."""
+        with self._lock:
+            hit = self._data.get(key)
+        if hit and not isinstance(hit[1], BaseException) \
+                and hit[0] >= time.time() - self.STALE_MAX_S:
+            return hit[1]
+        return None
 
 
 cache = QuoteCache()

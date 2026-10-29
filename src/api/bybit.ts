@@ -224,6 +224,15 @@ async function fetchStockKlines(base: string, resolution: string, limit: number,
       const klines = proxied as Kline[];
       cache.set(cacheKey, { value: klines, expires: Date.now() + KLINES_TTL_MS });
       return klines;
+    } catch (err) {
+      // serving-stale на клиенте: источник (Yahoo) временно недоступен или
+      // ограничил частоту запросов — отдаём последние успешные свечи, даже
+      // если их TTL истёк. Дашборд показывает карточки с прошлыми ценами
+      // вместо «Ошибка загрузки».
+      if (Array.isArray(hit?.value) && hit!.value.length > 0) {
+        return hit!.value as Kline[];
+      }
+      throw err;
     } finally {
       inflight.delete(cacheKey);
     }

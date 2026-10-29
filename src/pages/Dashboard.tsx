@@ -260,7 +260,7 @@ export default function Dashboard() {
   // иначе запоздавший крипто-тик обновил бы уже скрытые карточки).
   useEffect(() => {
     if (Object.keys(realTimePrices).length === 0) return;
-    const mk = marketKind;
+    const mk = activeMarketRef.current;
     setMarketData(prev => {
       const next = prev.map(item => {
         const rtPrice = realTimePrices[item.symbol];
@@ -279,6 +279,12 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [realTimePrices]);
 
+  // Активный рынок держим в ref: асинхронные continuation'ы (setMarketData и
+  // т.п.) сравнивают свой рынок с ФАКТИЧЕСКИ текущим на момент ответа —
+  // иначе запоздалый ответ/тик чужого рынка перетирает уже скрытые карточки.
+  const activeMarketRef = useRef<MarketKind>(marketKind);
+  activeMarketRef.current = marketKind;
+
   const loadData = async (mk: MarketKind = marketKind) => {
     try {
       setLoading(true);
@@ -294,21 +300,22 @@ export default function Dashboard() {
 
       // Пользователь мог переключить рынок, пока запрос шёл — не перезаписываем
       // чужими карточками; в кэш своего рынка пишем в любом случае.
-      if (mk !== marketKind) return;
+      if (activeMarketRef.current !== mk) return;
       marketCache.current[mk] = data;
       setMarketData(data);
       setLastUpdate(new Date());
     } catch (err) {
       console.error('Ошибка загрузки:', err);
-      if (mk === marketKind) setError(describeNetworkError(err));
+      if (activeMarketRef.current === mk) setError(describeNetworkError(err));
     } finally {
-      if (mk === marketKind) setLoading(false);
+      if (activeMarketRef.current === mk) setLoading(false);
     }
   };
 
   /** Переключение Crypto ⇄ TradFi: карточки прошлого рынка скрываем сразу. */
   const handleMarketChange = (mk: MarketKind) => {
     if (mk === marketKind) return;
+    activeMarketRef.current = mk;  // синхронно: запоздалые ответы старого рынка больше не пишутся в UI
     setMarketKind(mk);
     setCustomCard(null);   // карточка «Ваш запрос» тоже относится к старому рынку
     setError(null);
