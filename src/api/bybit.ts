@@ -46,6 +46,17 @@ function unwrapProxy(body: any): any {
   return body ?? null;
 }
 
+/** Тело ошибки прокси (FastAPI отдаёт {'detail': ...}) — для понятных сообщений. */
+async function readErrorDetail(res: Response): Promise<string> {
+  try {
+    const body = await res.json();
+    const d = body?.detail ?? body?.error ?? '';
+    return String(d).slice(0, 200);
+  } catch {
+    return '';
+  }
+}
+
 async function proxyFetch(path: string, params: Record<string, string | number>, force = false): Promise<any | null> {
   if (!hasBackend()) return null; // dev/vitest — сразу fallback на Bybit
   const qs = Object.entries(params).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&');
@@ -63,6 +74,45 @@ async function proxyFetch(path: string, params: Record<string, string | number>,
   } catch {
     return null; // сеть/5xx -> fallback напрямую (как до коммерческого контура)
   }
+}
+
+/**
+ * То же, что proxyFetch, но ошибки сервера НЕ глотаются: бросаем Error с
+ * detail из ответа. Нужно для источников без browser-fallback (Yahoo-акции):
+ * раньше любая ошибка прокси превращалась в запутанное «прокси не отвечает».
+ */
+async function proxyFetchStrict(path: string, params: Record<string, string | number>, force = false): Promise<any> {
+  if (!hasBackend()) {
+    throw new Error('Источник данных по акциям недоступен: нет серверного прокси (Yahoo Finance работает только на боевом домене).');
+  }
+  const qs = Object.entries(params).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&');
+  const token = getApiToken();
+  let res: Response;
+  try {
+    res = await fetch(`${path}?${qs}${force ? `${qs ? '&' : '?'}_t=${Date.now()}` : ''}`, {
+      headers: token ? { 'X-Kairi-Key': token } : {},
+      signal: (AbortSignal as any)?.timeout ? AbortSignal.timeout(10_000) : undefined,
+    });
+  } catch {
+    throw new Error('Источник данных по акциям недоступен: котировочный прокси (Yahoo Finance) не отвечает. Попробуйте позже.');
+  }
+  if (res.status === 401 || res.status === 403) {
+    throw new Error('Сессия истекла — обновите страницу и войдите заново.');
+  }
+  if (!res.ok) {
+    const detail = await readErrorDetail(res);
+    if (res.status === 404 && /unknown symbol/i.test(detail)) {
+      throw new Error('Акция не найдена на Yahoo Finance — проверьте тикер.');
+    }
+    if (res.status === 429 || /rate.?limit|too many/i.test(detail)) {
+      throw new Error('Yahoo Finance временно ограничил запросы (лимит частоты). Попробуйте через минуту.');
+    }
+    throw new Error(detail ? `Ошибка источника данных (${res.status}): ${detail}`
+                           : `Источник данных по акциям недоступен (HTTP ${res.status}). Попробуйте позже.`);
+  }
+  quotesMode = 'proxy';
+  const body = await res.json();
+  return unwrapProxy(body);
 }
 
 // --- Кэш и троттлинг обращений к Bybit -------------------------------------
@@ -118,11 +168,17 @@ const STOCK_INTERVAL_MAP: Record<string, string> = {
   'D': 'D', 'W': 'W', 'M': 'M',
 };
 
-/** ТФ приложения -> интервал Yahoo ('30','60','D','W'); null — недоступен. */
+// Ключи YAHOO_INTERVAL на сервере — только строчные формы ('d','w'), поэтому
+// в прокси отправляем нижний регистр: сервер делает iv=interval.lower(), а
+// клиентский TTL (kline_ttl) тоже матчит 'd'/'w', а не 'D'/'W'.
+const YAHOO_WIRE_FORM: Record<string, string> = { D: 'd', W: 'w', M: 'm' };
+
+/** ТФ приложения -> интервал Yahoo ('30','60','d','w'); null — недоступен. */
 export function toYahooResolution(tf: unknown): string | null {
   const bybitForm = toBybitInterval(tf);
   if (!bybitForm) return null;
-  return STOCK_INTERVAL_MAP[bybitForm] ?? null;
+  const mapped = STOCK_INTERVAL_MAP[bybitForm] ?? null;
+  return mapped ? (YAHOO_WIRE_FORM[mapped] ?? mapped) : null;
 }
 
 // Глобальный троттлер исходящих запросов к прокси (min interval между стартами).
@@ -159,11 +215,11 @@ async function fetchStockKlines(base: string, resolution: string, limit: number,
   const p = (async (): Promise<Kline[]> => {
     try {
       const proxied = await throttledStockFetch(() =>
-        proxyFetch('/api/quotes/klines',
+        proxyFetchStrict('/api/quotes/klines',
           { symbol: `${base}:STOCK`, interval: resolution, limit, exchange: 'yahoo' }, force));
       if (!Array.isArray(proxied)) {
         // Yahoo работает только через серверный прокси — browser-fallback нет (CORS).
-        throw new Error('Источник данных по акциям недоступен: котировочный прокси (Yahoo Finance) не отвечает. Попробуйте позже.');
+        throw new Error('Источник данных по акциям недоступен: котировочный прокси (Yahoo Finance) вернул неожиданный ответ. Попробуйте позже.');
       }
       const klines = proxied as Kline[];
       cache.set(cacheKey, { value: klines, expires: Date.now() + KLINES_TTL_MS });
@@ -190,7 +246,7 @@ async function fetchStockQuote(base: string): Promise<Ticker24h> {
       };
     }
   } catch { /* падаем на фолбэк по свечам */ }
-  const candles = await fetchStockKlines(base, 'D', 3, false);
+  const candles = await fetchStockKlines(base, 'd', 3, false);
   const last = candles[candles.length - 1];
   const prev = candles.length >= 2 ? candles[candles.length - 2] : last;
   const change = last.close - prev.close;

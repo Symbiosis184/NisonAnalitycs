@@ -259,11 +259,24 @@ class QuoteCache:
             return KLINES_TTL["w"]
         return KLINES_TTL["m"]
 
-    def get_or_fetch(self, key: str, ttl: int, fetcher):
+    # Короткий TTL для неудачных обращений к источнику: без него каждая
+    # перезагрузка страницы снова «долбит» Yahoo/Bybit заведомо падающим
+    # запросом (429-спирали, неизвестные тикеры). 20 секунд — достаточно,
+    # чтобы переключить пользователя на рабочий инструмент, но не держать
+    # ошибку в памяти надолго.
+    ERROR_TTL_S = 20
+
+    def get_or_fetch(self, key: str, ttl: int, fetcher, force: bool = False):
         now = time.time()
         with self._lock:
             hit = self._data.get(key)
-            if hit and hit[0] > now:
+            if not force and hit and hit[0] > now:
+                # свежая ошибка в кэше — зеркалим её, не дёргая источник
+                if isinstance(hit[1], BaseException):
+                    err = hit[1]
+                    if isinstance(err, HTTPException):
+                        raise err
+                    raise HTTPException(status_code=502, detail=str(err) or "upstream error")
                 return hit[1], True
             ev = self._inflight.get(key)
             if ev is not None:
@@ -291,6 +304,10 @@ class QuoteCache:
                 self._results[key] = exc
                 ev.set()
                 self._inflight.pop(key, None)
+                # запоминаем ошибку на короткий TTL (не перекрываем свежие данные)
+                prev = self._data.get(key)
+                if prev is None or prev[0] <= time.time():
+                    self._data[key] = (time.time() + self.ERROR_TTL_S, exc)
             raise
         with self._lock:
             self._results[key] = value
@@ -439,6 +456,7 @@ def quotes_klines(
     interval: str = Query("1h"),
     limit: int = Query(200, ge=1, le=1000),
     exchange: str = Query("bybit"),
+    _t: int = Query(None),  # force-bust клиентского кэша (закрытие бара по WS)
     x_kairi_key: Optional[str] = Header(None),
 ):
     require_key(x_kairi_key)
@@ -487,7 +505,7 @@ def quotes_klines(
             "symbol": symbol, "interval": BINANCE_INTERVAL[iv], "limit": limit})
         return _normalize_binance_klines(data)
 
-    value, from_cache = cache.get_or_fetch(key, cache.kline_ttl(iv), fetch)
+    value, from_cache = cache.get_or_fetch(key, cache.kline_ttl(iv), fetch, force=_t is not None)
     if exchange == "yahoo" and isinstance(value, list) and len(value) > limit:
         value = value[-limit:]  # окно range даёт запас сверху — режем по limit
     return {"data": value, "cached": from_cache, "exchange": exchange}
