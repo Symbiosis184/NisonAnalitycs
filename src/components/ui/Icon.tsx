@@ -1,14 +1,14 @@
 // Единая SVG-иконка (Lucide) — замена эмодзи в UI для профессионального вида.
 import {
   AlertTriangle, ArrowLeftRight, BarChart2, BookOpen, CandlestickChart,
-  CheckCircle2, FlaskConical, Footprints, Info, ScrollText, Target, TrendingDown,
+  CheckCircle2, Clock, FlaskConical, Footprints, Info, ScrollText, Target, TrendingDown,
   TrendingUp, XOctagon, Zap,
 } from 'lucide-react';
 
 export type IconName =
   | 'check' | 'warning' | 'stop' | 'info'
   | 'trend-up' | 'trend-down' | 'range' | 'flash'
-  | 'target' | 'volume' | 'flask' | 'book' | 'candle' | 'story' | 'path';
+  | 'target' | 'volume' | 'flask' | 'book' | 'candle' | 'story' | 'path' | 'clock';
 
 const ICONS: Record<IconName, typeof CheckCircle2> = {
   check: CheckCircle2,
@@ -26,6 +26,7 @@ const ICONS: Record<IconName, typeof CheckCircle2> = {
   candle: CandlestickChart,
   story: ScrollText,
   path: Footprints,
+  clock: Clock,
 };
 
 /** Инлайновая иконка: baseline-выравнивание рядом с текстом, размер по font-size (1em). */

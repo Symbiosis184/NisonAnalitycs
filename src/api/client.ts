@@ -255,6 +255,8 @@ export class ApiClient {
       hasVolume: p.hasVolume,
       atLevel: p.atLevel,
       story: patternStory(p.name),
+      // Дата/время подтверждения — закрытие подтверждающего бара (см. utils/patterns.ts)
+      confirmedTime: p.confirmedTime ?? null,
     }));
     
     // Многомерный объём + фазовый контекст (запрос пользователя): профиль объёма

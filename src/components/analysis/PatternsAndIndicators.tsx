@@ -4,8 +4,9 @@ import type { AnalysisReport } from '../../api/types';
 import type { PatternDTO } from '../../api/types';
 import { Icon } from '../ui/Icon';
 import { num } from '../../utils/num';
+import { formatConfirmedTime } from '../../utils/format';
 
-export function ConfirmedPatternsList({ patterns, total }: { patterns: PatternDTO[]; total: number }) {
+export function ConfirmedPatternsList({ patterns, total, timeframe }: { patterns: PatternDTO[]; total: number; timeframe?: string }) {
   return (
     <div className="panel p-6 ">
       <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
@@ -42,6 +43,16 @@ export function ConfirmedPatternsList({ patterns, total }: { patterns: PatternDT
                   </div>
                   <div className="text-xs text-gray-400">
                     Уверенность: {pattern.confidence}%
+                    {/* Дата/время подтверждения — закрытие подтверждающей свечи (Нисон) */}
+                    {(() => {
+                      const confirmedAt = formatConfirmedTime(pattern.confirmedTime, timeframe);
+                      return confirmedAt ? (
+                        <span className="ml-2 inline-flex items-center gap-1 whitespace-nowrap text-gray-500">
+                          <Icon name="clock" className="text-gray-600" />
+                          Подтверждён: {confirmedAt}
+                        </span>
+                      ) : null;
+                    })()}
                   </div>
                 </div>
               </div>

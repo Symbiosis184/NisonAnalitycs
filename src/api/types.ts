@@ -28,6 +28,11 @@ export interface PatternDTO {
   atLevel: boolean;
   /** Краткое «повествование» по методологии книги */
   story: string;
+  /**
+   * openTime (мс) бара, закрытие которого подтвердило формацию (по Нисону).
+   * null — если подтверждения ещё нет (pending).
+   */
+  confirmedTime?: number | null;
 }
 
 /** Торговый сигнал (из SignalGenerator) */

@@ -25,6 +25,45 @@ export interface PatternResult {
   status?: PatternStatus;
   hasVolume: boolean;
   atLevel: boolean;
+  /**
+   * openTime (мс) бара, закрытие которого ПОДТВЕРДИЛО формацию (по Нисону —
+   * факт закрытия следующей свечи в направлении паттерна). Для «завершённых»
+   * моделей (гл. 3–6), у которых подтверждение внутри самой формации, — это
+   * время последней свечи паттерна. null — если подтверждения ещё нет
+   * (pending/cancelled).
+   */
+  confirmedTime: number | null;
+}
+
+/**
+ * Длительность одного бара в мс по ТФ (поддерживает канон '30m'/'1H'/'D' и
+ * числовые минуты Bybit '30'/'60'/'240'). Локально, а не из api/client.ts:
+ * движок паттернов не должен тянуть граф модулей API-анализа.
+ */
+function tfDurationMs(tf: string): number | undefined {
+  const t = String(tf).trim();
+  if (/^\d+$/.test(t)) return Number(t) * 60_000; // минуты (формы Bybit)
+  switch (t.toUpperCase()) {
+    case '1M': return 60_000;      // '1m' — минутный ТФ
+    case '5M': return 5 * 60_000;
+    case '15M': return 15 * 60_000;
+    case '30M': return 30 * 60_000;
+    case '1H': case '60M': return 60 * 60_000;
+    case '2H': case '120M': return 2 * 60 * 60_000;
+    case '4H': case '240M': return 4 * 60 * 60_000;
+    case 'D': case '1D': return 24 * 60 * 60_000;
+    case 'W': case '1W': return 7 * 24 * 60 * 60_000;
+    default: return undefined;
+  }
+}
+
+/**
+ * Момент ЗАКРЫТИЯ бара (openTime + длительность ТФ). Бар считается живым
+ * (подтверждение невозможно) до этого времени — на нём формация остаётся
+ * pending. Fallback: если ТФ неизвестен, берём сам openTime.
+ */
+function barCloseTime(bar: Candle, tfMs: number | undefined): number {
+  return tfMs ? bar.time + tfMs : bar.time;
 }
 
 /**
@@ -58,6 +97,10 @@ export function detectPatterns(candles: Candle[], timeframe: string = 'D'): Patt
   // будет использовать параметры масштаба выбранного интервала.
   setPatternTimeframe(timeframe);
   const patterns: PatternResult[] = [];
+  // Длительность бара выбранного ТФ — чтобы датировать МОМЕНТ подтверждения
+  // фактическим закрытием подтверждающей свечи (openTime + длительность ТФ),
+  // а не открытием её бара.
+  const tfMs = tfDurationMs(timeframe);
   
   // FIX канона (гл. 3–4 «ожидание → подтверждение»): цикл раньше шёл до
   // length - 1, т.е. ПОСЛЕДНЯЯ закрытая свеча никогда не проверялась как
@@ -306,16 +349,31 @@ export function detectPatterns(candles: Candle[], timeframe: string = 'D'): Patt
         check.type === 'медвежий' ? lastPatternCandle.isBearish :
         false;
       let status: PatternStatus;
+      // Момент подтверждения (openTime мс) — бар, закрытие которого стало
+      // фактом подтверждения; null для pending/cancelled.
+      let confirmBar: Candle | null = null;
       if (!next) {
         status = noNeedNext && inFormationOk ? 'confirmed' : 'pending';
+        if (status === 'confirmed') confirmBar = lastPatternCandle;
       } else {
         const ok =
           check.type === 'бычий' ? next.isBullish && next.close > patternHigh :
           check.type === 'медвежий' ? next.isBearish && next.close < patternLow :
           false;
-        status = ok || (noNeedNext && inFormationOk) ? 'confirmed' : 'cancelled';
+        if (ok) {
+          // Подтверждение следующей свечой (закрытие next-бара).
+          status = 'confirmed';
+          confirmBar = next;
+        } else if (noNeedNext && inFormationOk) {
+          // Завершённая модель: подтверждение — последняя свеча самой формации.
+          status = 'confirmed';
+          confirmBar = lastPatternCandle;
+        } else {
+          status = 'cancelled';
+        }
       }
       const confirmed = status === 'confirmed';
+      const confirmedTime = confirmed && confirmBar ? barCloseTime(confirmBar, tfMs) : null;
       
       // Правильный расчёт среднего объёма с защитой от деления на ноль
       const volumePeriod = Math.min(20, prev.length);
@@ -352,6 +410,7 @@ export function detectPatterns(candles: Candle[], timeframe: string = 'D'): Patt
         status,
         hasVolume,
         atLevel,
+        confirmedTime,
       });
     }
   }

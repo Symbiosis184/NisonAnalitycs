@@ -306,7 +306,7 @@ export default function Analysis() {
           title="Подтверждённые паттерны"
           badge={<span className="text-xs text-gray-400">{confirmedPatterns.length} из {report.patterns.length} · подтверждены объёмом/уровнем</span>}
         >
-          <ConfirmedPatternsList patterns={confirmedPatterns} total={report.patterns.length} />
+          <ConfirmedPatternsList patterns={confirmedPatterns} total={report.patterns.length} timeframe={report.timeframe} />
         </Collapsible>
       )}
 
