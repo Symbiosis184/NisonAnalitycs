@@ -12,7 +12,7 @@ import type { MarketKind } from '../api/market';
 import { marketLabel, STOCK_SUFFIX } from '../api/market';
 
 
-/** Топ-8 по умолчанию: крипта (Bybit спот) и акции США (Finnhub free tier). */
+/** Топ-8 по умолчанию: крипта (Bybit спот) и акции США (Yahoo Finance, бесплатно). */
 const CRYPTO_SYMBOLS = [
   'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 
   'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT'
@@ -287,7 +287,7 @@ export default function Dashboard() {
 
       if (data.length === 0) {
         throw new Error(mk === 'stock'
-          ? 'Не удалось получить данные по акциям (Finnhub). Убедитесь, что на сервере задан FINNHUB_API_KEY.'
+          ? 'Не удалось получить данные по акциям (Yahoo Finance). Котировочный прокси недоступен — попробуйте позже.'
           : 'Не удалось получить данные с Bybit API');
       }
 

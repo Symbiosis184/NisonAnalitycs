@@ -42,6 +42,7 @@ import re
 import sqlite3
 import threading
 import time
+import urllib.parse
 from contextlib import contextmanager
 from typing import Any, Optional
 
@@ -58,35 +59,39 @@ TOKEN_TTL_S = int(os.environ.get("KAIRI_TOKEN_TTL", "900"))
 ALLOWED_EXCHANGES = {
     "bybit": "https://api.bybit.com",
     "binance": "https://api.binance.com",
-    # TradFi: американские акции (бесплатный tier). Ключ только на сервере.
-    "finnhub": "https://finnhub.io",
+    # TradFi: американские акции — Yahoo Finance chart API (бесплатно, без ключа).
+    "yahoo": "https://query1.finance.yahoo.com",
 }
 # SSRF-защита: хост котировочных источников фиксируется списком из env.
 ALLOWED_HOSTS = {
     h.strip().lower()
     for h in os.environ.get(
-        "KAIRI_QUOTES_ALLOWED_HOSTS", "api.bybit.com,api.binance.com,finnhub.io"
+        "KAIRI_QUOTES_ALLOWED_HOSTS",
+        "api.bybit.com,api.binance.com,query1.finance.yahoo.com,query2.finance.yahoo.com",
     ).split(",")
     if h.strip()
 }
 
-# Ключ Finnhub (free tier) задаётся на сервере: systemd Environment=/env-файл.
-# В браузер не попадает — обращения к finnhub.io идут только из этого прокси.
-FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY", "")
-# Free tier: 60 req/min (soft ~30/sec). Серверный троттлер — страховка поверх
-# клиентского; между стартами исходящих запросов к Finnhub выдерживаем паузу.
-FINNHUB_MIN_INTERVAL_S = float(os.environ.get("KAIRI_FINNHUB_MIN_INTERVAL", "1.0"))
-_finnhub_lock = threading.Lock()
-_finnhub_last_at = [0.0]
+# Yahoo Finance не требует ключа, но отдаёт 429 запросам без нормального
+# User-Agent и агрессивно троттлит спам — держим серверную паузу между
+# исходящими запросами (страховка поверх клиентского троттлера во фронтенде).
+YAHOO_MIN_INTERVAL_S = float(os.environ.get("KAIRI_YAHOO_MIN_INTERVAL", "0.5"))
+YAHOO_USER_AGENT = os.environ.get(
+    "KAIRI_YAHOO_USER_AGENT",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+)
+_yahoo_lock = threading.Lock()
+_yahoo_last_at = [0.0]
 
 
-def _finnhub_throttle() -> None:
-    """Блокирующая пауза до следующего разрешённого запроса к Finnhub."""
-    with _finnhub_lock:
-        wait = FINNHUB_MIN_INTERVAL_S - (time.time() - _finnhub_last_at[0])
+def _yahoo_throttle() -> None:
+    """Блокирующая пауза до следующего разрешённого запроса к Yahoo Finance."""
+    with _yahoo_lock:
+        wait = YAHOO_MIN_INTERVAL_S - (time.time() - _yahoo_last_at[0])
         if wait > 0:
             time.sleep(wait)
-        _finnhub_last_at[0] = time.time()
+        _yahoo_last_at[0] = time.time()
 
 
 SYMBOL_RE = re.compile(r"^[A-Z0-9]{3,25}$")
@@ -271,17 +276,27 @@ class QuoteCache:
             ev.wait(timeout=15)
             with self._lock:
                 res = self._results.get(key)
+            if isinstance(res, BaseException):
+                # the leader's upstream request failed — mirror its error
+                if isinstance(res, HTTPException):
+                    raise res
+                raise HTTPException(status_code=502, detail=str(res) or "upstream error")
             if res is not None:
                 return res, True
             raise HTTPException(status_code=504, detail="upstream timeout")
         try:
             value = fetcher()
-        finally:
+        except BaseException as exc:  # noqa: BLE001 — propagate to waiters too
             with self._lock:
-                self._results[key] = value
+                self._results[key] = exc
                 ev.set()
                 self._inflight.pop(key, None)
-                self._data[key] = (time.time() + ttl, value)
+            raise
+        with self._lock:
+            self._results[key] = value
+            ev.set()
+            self._inflight.pop(key, None)
+            self._data[key] = (time.time() + ttl, value)
         return value, False
 
 
@@ -295,15 +310,21 @@ BINANCE_INTERVAL = {
     "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m",
     "1h": "1h", "2h": "2h", "4h": "4h", "1d": "1d", "1w": "1w",
 }
-# TradFi (Finnhub free tier): внутридневные resolution доступны только для
-# американских акций; 'M'/'W' принимаем от клиента в канонической форме.
-FINNHUB_RESOLUTION = {
-    "30m": "30", "1h": "60", "2h": "120", "4h": "240",
-    "1d": "D", "1w": "W", "1mo": "M",
-    # канонические формы, которые приходят от фронтенда ('30', '60', 'D', 'W')
-    "30": "30", "60": "60", "120": "120", "240": "240",
-    "d": "D", "w": "W", "m": "M",
+# TradFi (Yahoo Finance chart API): интервалы эндпоинта + шаг в секундах.
+# Внутридневные интервалы доступны для истории ~60 дней; D/W/M — годы истории.
+YAHOO_INTERVAL = {
+    "1m": ("1m", 60), "5m": ("5m", 300), "15m": ("15m", 900),
+    "30m": ("30m", 1800), "30": ("30m", 1800),
+    "1h": ("60m", 3600), "60": ("60m", 3600),
+    "2h": ("2h", 7200), "120": ("2h", 7200),
+    "4h": ("4h", 14400), "240": ("4h", 14400),
+    "1d": ("1d", 86400), "d": ("1d", 86400), "D": ("1d", 86400),
+    "1w": ("1wk", 604800), "w": ("1wk", 604800), "W": ("1wk", 604800),
+    "1mo": ("1mo", 2592000), "m": ("1mo", 2592000), "M": ("1mo", 2592000),
 }
+# Максимальное окно range по тирам Yahoo: 1m — 7 дней (в пределах дня),
+# остальные внутридневные — до 60 дней; недельные/месячные фильтруются по to.
+YAHOO_MAX_RANGE_S = {"1m": 7 * 86400}
 
 
 def _normalize_bybit_klines(raw: dict) -> list[dict]:
@@ -323,24 +344,35 @@ def _normalize_binance_klines(raw: list) -> list[dict]:
     } for r in raw]
 
 
-def _normalize_finnhub_klines(raw: dict, resolution: str) -> list[dict]:
-    """Finnhub /api/v1/stock/candle -> канон Kline[] (хронологический порядок).
+def _normalize_yahoo_klines(raw: Any) -> list[dict]:
+    """Yahoo v8/finance/chart -> канон Kline[] (хронологический порядок).
 
-    Ответ: {c:[...], h:[...], l:[...], o:[...], v:[...], t:[секунды], s:'ok'|'no_data'}.
-    openTime приводим к миллисекундам; для внутридневных ТФ последний бар может
-    быть незакрытым — это нормально (фронтенд сам отделяет live-бар).
+    Ответ: {chart:{result:[{timestamp:[секунды], indicators:{quote:[{open,
+    high,low,close,volume}]}}]}}. null-бары (нерабочие минуты/гэпы) отбрасываем.
     """
-    if not isinstance(raw, dict) or raw.get("s") != "ok":
+    try:
+        result = raw["chart"]["result"][0]
+    except (KeyError, IndexError, TypeError):
         raise HTTPException(status_code=404, detail="no data for symbol")
-    ts = raw.get("t") or []
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=404, detail="no data for symbol")
+    ts = result.get("timestamp") or []
+    try:
+        q = result["indicators"]["quote"][0]
+    except (KeyError, IndexError, TypeError):
+        raise HTTPException(status_code=404, detail="empty candle series")
     out = []
     for i in range(len(ts)):
         try:
+            o, h, l, c = q["open"][i], q["high"][i], q["low"][i], q["close"][i]
+            if None in (o, h, l, c):
+                continue  # пустые бары вне сессии
+            v = q.get("volume") or []
+            vol = float(v[i]) if i < len(v) and v[i] is not None else 0.0
             out.append({
                 "openTime": int(ts[i]) * 1000,
-                "open": float(raw["o"][i]), "high": float(raw["h"][i]),
-                "low": float(raw["l"][i]), "close": float(raw["c"][i]),
-                "volume": float(raw["v"][i]),
+                "open": float(o), "high": float(h),
+                "low": float(l), "close": float(c), "volume": vol,
             })
         except (KeyError, IndexError, TypeError, ValueError):
             continue
@@ -349,21 +381,25 @@ def _normalize_finnhub_klines(raw: dict, resolution: str) -> list[dict]:
     return out
 
 
-def _finnhub_get(path: str, params: dict) -> Any:
-    """GET к finnhub.io с серверным ключом и троттлингом под free tier."""
-    if not FINNHUB_API_KEY:
-        raise HTTPException(status_code=503, detail="finnhub not configured")
-    _finnhub_throttle()
-    url = f"{ALLOWED_EXCHANGES['finnhub']}{path}"
+def _yahoo_get(path: str, params: dict) -> Any:
+    """GET к Yahoo Finance chart API (без ключа) с троттлингом и UA-заголовком."""
+    _yahoo_throttle()
+    url = f"{ALLOWED_EXCHANGES['yahoo']}{path}"
     host = url.split("/")[2].lower()
     if host not in ALLOWED_HOSTS:
         raise HTTPException(status_code=400, detail="host not allowed")
     try:
-        r = httpx.get(url, params={**params, "token": FINNHUB_API_KEY}, timeout=8.0)
+        r = httpx.get(url, params=params, timeout=8.0,
+                      headers={"User-Agent": YAHOO_USER_AGENT,
+                               "Accept": "application/json,text/plain,*/*"})
         if r.status_code == 429:
-            raise HTTPException(status_code=429, detail="finnhub rate limited")
+            raise HTTPException(status_code=429, detail="yahoo rate limited")
         r.raise_for_status()
-        return r.json()
+        body = r.json()
+        # Chart API может вернуть 200 с error-телом (неизвестный тикер)
+        if isinstance(body, dict) and body.get("chart", {}).get("error"):
+            raise HTTPException(status_code=404, detail="unknown symbol")
+        return body
     except HTTPException:
         raise
     except httpx.HTTPStatusError as e:
@@ -409,11 +445,11 @@ def quotes_klines(
     is_stock = bool(STOCK_SYMBOL_RE.match(symbol))
     if not (SYMBOL_RE.match(symbol) or is_stock):
         raise HTTPException(status_code=400, detail="bad symbol")
-    iv = interval.lower()
-    if exchange == "finnhub":
+    iv = interval.lower()  # канон для кэша/проверок; YAHOO_INTERVAL содержит и 'D'/'W'/'M'
+    if exchange == "yahoo":
         if not is_stock:
-            raise HTTPException(status_code=400, detail="finnhub requires TICKER:STOCK")
-        if iv not in FINNHUB_RESOLUTION:
+            raise HTTPException(status_code=400, detail="yahoo requires TICKER:STOCK")
+        if iv not in YAHOO_INTERVAL:
             raise HTTPException(status_code=400, detail="bad interval")
     elif iv not in BYBIT_INTERVAL:
         raise HTTPException(status_code=400, detail="bad interval")
@@ -423,22 +459,25 @@ def quotes_klines(
     key = f"k:{exchange}:{symbol}:{iv}:{limit}"
 
     def fetch():
-        if exchange == "finnhub":
+        if exchange == "yahoo":
             base = symbol.split(":")[0]
-            resolution = FINNHUB_RESOLUTION[iv]
-            # Finnhub принимает range (from/to в секундах) либо 'count' через to=now.
-            # Считаем окно по шагу: внутридневные — минуты, D/W/M — дни.
-            step_s = {"1": 60, "5": 300, "15": 900, "30": 1800, "60": 3600,
-                      "120": 7200, "240": 14400}.get(resolution)
-            if step_s:
-                frm = int(time.time()) - step_s * (limit + 8)
-            else:
-                days_per_bar = {"D": 2, "W": 8, "M": 32}.get(resolution, 2)
-                frm = int(time.time()) - 86400 * days_per_bar * (limit + 2)
-            data = _finnhub_get("/api/v1/stock/candle", {
-                "symbol": base, "resolution": resolution,
-                "from": frm, "to": int(time.time())})
-            return _normalize_finnhub_klines(data, resolution)
+            yv, step_s = YAHOO_INTERVAL[iv]
+            # Окно считаем по шагу бара с запасом на нерабочие дни/часы:
+            # внутридневные — бары*шаг (с ограничением max range тира),
+            # D/W/M — календарные дни на бар.
+            now = int(time.time())
+            window = step_s * (limit + 8)
+            max_range = YAHOO_MAX_RANGE_S.get(yv)
+            if max_range:
+                window = min(window, max_range)
+            params = {"symbol": base, "interval": yv,
+                      "range": f"{max(1, window // 86400)}d" if window >= 86400 else "1d"}
+            if yv in ("1wk", "1mo"):
+                # недельные/месячные за range-окном не гарантированы — просим from/to
+                params = {"symbol": base, "interval": yv,
+                          "period1": str(now - window), "period2": str(now)}
+            data = _yahoo_get("/v8/finance/chart/" + urllib.parse.quote(base), params)
+            return _normalize_yahoo_klines(data)
         if exchange == "bybit":
             data = _http_get(f"{ALLOWED_EXCHANGES[exchange]}/v5/market/kline", {
                 "category": "spot", "symbol": symbol,
@@ -449,8 +488,8 @@ def quotes_klines(
         return _normalize_binance_klines(data)
 
     value, from_cache = cache.get_or_fetch(key, cache.kline_ttl(iv), fetch)
-    if exchange == "finnhub" and isinstance(value, list) and len(value) > limit:
-        value = value[-limit:]  # окно from/to даёт запас сверху — режем по limit
+    if exchange == "yahoo" and isinstance(value, list) and len(value) > limit:
+        value = value[-limit:]  # окно range даёт запас сверху — режем по limit
     return {"data": value, "cached": from_cache, "exchange": exchange}
 
 
@@ -470,19 +509,38 @@ def quotes_ticker(
     key = f"t:{exchange}:{symbol}"
 
     def fetch():
-        if exchange == "finnhub":
-            # /api/v1/quote: {c: цена, d: изменение, dp: %} — пустой ответ = нет тикера
-            q = _finnhub_get("/api/v1/quote", {"symbol": symbol.split(":")[0]})
-            last = q.get("c") if isinstance(q, dict) else None
+        if exchange == "yahoo":
+            # Chart API meta: regularMarketPrice / previousClose / change%.
+            base = symbol.split(":")[0]
+            body = _yahoo_get(f"/v8/finance/chart/{urllib.parse.quote(base)}",
+                              {"symbol": base, "interval": "1d", "range": "5d"})
             try:
-                last_f = float(last)
+                meta = body["chart"]["result"][0]["meta"]
+            except (KeyError, IndexError, TypeError):
+                raise HTTPException(status_code=404, detail="unknown symbol")
+            try:
+                last_f = float(meta.get("regularMarketPrice"))
             except (TypeError, ValueError):
                 raise HTTPException(status_code=404, detail="unknown symbol")
             if last_f <= 0:
                 raise HTTPException(status_code=404, detail="unknown symbol")
+            prev = meta.get("chartPreviousClose") or meta.get("previousClose")
+            try:
+                prev_f = float(prev) if prev is not None else 0.0
+            except (TypeError, ValueError):
+                prev_f = 0.0
+            # regularMarketChangePercent у Yahoo приходит в процентах (1.477 => +1.477%)
+            pct_raw = meta.get("regularMarketChangePercent")
+            try:
+                pct = float(pct_raw) if pct_raw is not None else None
+            except (TypeError, ValueError):
+                pct = None
+            if pct is None:
+                pct = ((last_f - prev_f) / prev_f * 100) if prev_f > 0 else 0.0
+            change = last_f - prev_f if prev_f > 0 else 0.0
             return {"lastPrice": last_f,
-                    "priceChange": float(q.get("d") or 0),
-                    "priceChangePercent": float(q.get("dp") or 0)}
+                    "priceChange": round(change, 8),
+                    "priceChangePercent": round(pct, 4)}
         if exchange == "bybit":
             rows = _http_get(f"{ALLOWED_EXCHANGES[exchange]}/v5/market/tickers",
                              {"category": "spot", "symbol": symbol}

@@ -104,29 +104,29 @@ async function cachedFetchJson(key: string, url: string, ttlMs: number): Promise
 const KLINES_TTL_MS = 30_000;   // свечи переиспользуем 30 секунд
 const TICKER_TTL_MS = 10_000;   // тикер — 10 секунд
 
-// --- TradFi: американские акции через Finnhub (бесплатный tier) --------------
-// Ограничения бесплатного плана учитаны здесь же:
-//  • история до ~1 года, максимум 30 000 баров за запрос — берём ≤1000;
-//  • внутридневные интервалы (1/5/15/30/60 минут) доступны только для
-//    американских акций — это ровно наши 30m/1H;
-//  • soft limit ~30 запросов/сек — защищаемся глобальным троттлером ниже.
-// Ключ FINNHUB_API_KEY задаётся на сервере (systemd Environment=), в браузер
-// не попадает: прямые обращения к finnhub.io идут ТОЛЬКО через прокси
-// /api/quotes/* (dev-фолбэк с ключом запрещён намеренно).
+// --- TradFi: американские акции через Yahoo Finance (бесплатно, без ключа) ---
+// Особенности источника учитаны здесь же:
+//  • история D/W/M — годы, внутридневные 1m–60m — ~60 дней (этого хватает
+//    для наших ТФ; более длинные внутридневные окна Yahoo не отдаёт);
+//  • ответа без авторизации нет нормального User-Agent — заголовок и троттлинг
+//    настраиваются на стороне серверного прокси;
+//  • прямые обращения из браузера к query1.finance.yahoo.com невозможны (CORS),
+//    поэтому котировки акций идут ТОЛЬКО через прокси /api/quotes/*
+//    (dev-фолбэк с ключом запрещён намеренно — ключей у Yahoo-источника нет).
 const STOCK_INTERVAL_MAP: Record<string, string> = {
   '30': '30', '60': '60', '120': '120', '240': '240',
   'D': 'D', 'W': 'W', 'M': 'M',
 };
 
-/** ТФ приложения -> Finnhub resolution ('30','60','D','W'); null — недоступен. */
-export function toFinnhubResolution(tf: unknown): string | null {
+/** ТФ приложения -> интервал Yahoo ('30','60','D','W'); null — недоступен. */
+export function toYahooResolution(tf: unknown): string | null {
   const bybitForm = toBybitInterval(tf);
   if (!bybitForm) return null;
   return STOCK_INTERVAL_MAP[bybitForm] ?? null;
 }
 
 // Глобальный троттлер исходящих запросов к прокси (min interval между стартами).
-const STOCK_MIN_INTERVAL_MS = 350; // ≈ 2.9 req/s — запас под лимит бесплатного тарифа
+const STOCK_MIN_INTERVAL_MS = 350; // ≈ 2.9 req/s — запас под мягкие лимиты Yahoo
 let lastStockReqAt = 0;
 let stockQueue: Promise<unknown> = Promise.resolve();
 
@@ -143,13 +143,13 @@ function throttledStockFetch<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Свечи акции через котировочный прокси (ключ Finnhub — только на сервере).
+ * Свечи акции через котировочный прокси (Yahoo Finance — на стороне сервера).
  * Общий путь с fetchKlines: глобальный троттлер + короткий клиентский кэш
- * (in-flight coalescing), чтобы не выбить бесплатный лимит Finnhub при
+ * (in-flight coalescing), чтобы не спровоцировать троттлинг Yahoo при
  * каскаде ТФ и мульти-ТФ зонах (несколько параллельных запросов).
  */
 async function fetchStockKlines(base: string, resolution: string, limit: number, force: boolean): Promise<Kline[]> {
-  const cacheKey = `klines:finnhub:${base}:${resolution}:${limit}`;
+  const cacheKey = `klines:yahoo:${base}:${resolution}:${limit}`;
   if (force) { cache.delete(cacheKey); inflight.delete(cacheKey); }
   const hit = cache.get(cacheKey);
   if (hit && hit.expires > Date.now()) return hit.value as Kline[];
@@ -160,10 +160,10 @@ async function fetchStockKlines(base: string, resolution: string, limit: number,
     try {
       const proxied = await throttledStockFetch(() =>
         proxyFetch('/api/quotes/klines',
-          { symbol: `${base}:STOCK`, interval: resolution, limit, exchange: 'finnhub' }, force));
+          { symbol: `${base}:STOCK`, interval: resolution, limit, exchange: 'yahoo' }, force));
       if (!Array.isArray(proxied)) {
-        // Ключ Finnhub живёт только на сервере — прямого browser-fallback нет.
-        throw new Error('Источник данных по акциям недоступен: котировочный прокси (Finnhub) не отвечает. Попробуйте позже.');
+        // Yahoo работает только через серверный прокси — browser-fallback нет (CORS).
+        throw new Error('Источник данных по акциям недоступен: котировочный прокси (Yahoo Finance) не отвечает. Попробуйте позже.');
       }
       const klines = proxied as Kline[];
       cache.set(cacheKey, { value: klines, expires: Date.now() + KLINES_TTL_MS });
@@ -180,7 +180,7 @@ async function fetchStockKlines(base: string, resolution: string, limit: number,
 async function fetchStockQuote(base: string): Promise<Ticker24h> {
   try {
     const proxied = await throttledStockFetch(() =>
-      proxyFetch('/api/quotes/ticker', { symbol: `${base}:STOCK`, exchange: 'finnhub' }));
+      proxyFetch('/api/quotes/ticker', { symbol: `${base}:STOCK`, exchange: 'yahoo' }));
     if (proxied && Number.isFinite(Number(proxied.lastPrice))) {
       const q = proxied as { lastPrice: number; priceChange?: number; priceChangePercent?: number };
       return {
@@ -256,10 +256,10 @@ export async function fetchKlines(rawSymbol: string, interval: string, rawLimit:
 
   const bybitInterval = mapped || interval;
 
-  // ── TradFi: американские акции (Finnhub, бесплатный tier) ──────────────────
+  // ── TradFi: американские акции (Yahoo Finance, бесплатно без ключа) ────────
   const { base: stockBase, market } = parseMarket(symbol);
   if (market === 'stock') {
-    const resolution = toFinnhubResolution(bybitInterval);
+    const resolution = toYahooResolution(bybitInterval);
     if (!resolution) {
       throw new Error(`Таймфрейм ${String(interval).slice(0, 16)} недоступен для акций`);
     }
@@ -304,7 +304,7 @@ export interface InstrumentInfo {
 export async function fetchInstrumentInfo(rawSymbol: string): Promise<InstrumentInfo | null> {
   const symbol = assertValidSymbol(rawSymbol);
   // Акции: проверка существования тикера — по ответу /quote на сервере
-  // (Finnhub отдаёт {} / null для неизвестного символа).
+  // (Yahoo отдаёт error/пустой ответ для неизвестного тикера).
   const { base, market } = parseMarket(symbol);
   if (market === 'stock') {
     try {
@@ -330,7 +330,7 @@ export async function fetch24hTicker(rawSymbol: string): Promise<Ticker24h> {
   // Валидация symbol защищает от инъекции параметров в URL запроса к Bybit
   const symbol = assertValidSymbol(rawSymbol);
 
-  // TradFi: акции — только через серверный прокси (ключ Finnhub на сервере)
+  // TradFi: акции — только через серверный прокси (у Yahoo нет CORS-доступа из браузера)
   const { base: stockBase, market: stockMarket } = parseMarket(symbol);
   if (stockMarket === 'stock') return fetchStockQuote(stockBase);
 
