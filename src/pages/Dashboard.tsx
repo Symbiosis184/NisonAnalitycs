@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import Seo from '../components/ui/Seo';
 import { dashboardMeta } from '../utils/seo';
@@ -11,16 +11,6 @@ import { describeNetworkError } from '../utils/http';
 import type { MarketKind } from '../api/market';
 import { marketLabel, STOCK_SUFFIX } from '../api/market';
 
-
-/** Топ-8 по умолчанию: крипта (Bybit спот) и акции США (Yahoo Finance, бесплатно). */
-const CRYPTO_SYMBOLS = [
-  'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 
-  'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT'
-];
-const STOCK_SYMBOLS = [
-  'AAPL:STOCK', 'MSFT:STOCK', 'NVDA:STOCK', 'AMZN:STOCK',
-  'META:STOCK', 'TSLA:STOCK', 'GOOGL:STOCK', 'AMD:STOCK',
-];
 
 /** Переключатель рынков Crypto / TradFi (акции США). */
 function MarketTabs({ value, onChange }: { value: MarketKind; onChange: (m: MarketKind) => void }) {
@@ -228,7 +218,12 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
 
 
 export default function Dashboard() {
+  // Карточки всегда относятся только к активному рынку: при переключении
+  // Crypto ⇄ TradFi чужие карточки мгновенно исчезают (без «смеси» рынков).
   const [marketData, setMarketData] = useState<MarketOverview[]>([]);
+  // Кэш последнего состояния каждого рынка — для возврата без мигания пустотой
+  // после загрузки (данные подставляются из кэша, затем обновляются REST/WS).
+  const marketCache = useRef<Record<MarketKind, MarketOverview[]>>({ crypto: [], stock: [] });
   const [marketKind, setMarketKind] = useState<MarketKind>('crypto');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -261,10 +256,13 @@ export default function Dashboard() {
   const symbols = marketData.filter(m => !m.symbol.endsWith(STOCK_SUFFIX)).map(m => m.symbol);
   const realTimePrices = useBinanceWebSocket(symbols);
 
-  // Обновляем цены в market данными из WebSocket
+  // Обновляем цены в market данными из WebSocket (только активного рынка —
+  // иначе запоздавший крипто-тик обновил бы уже скрытые карточки).
   useEffect(() => {
-    if (Object.keys(realTimePrices).length > 0) {
-      setMarketData(prev => prev.map(item => {
+    if (Object.keys(realTimePrices).length === 0) return;
+    const mk = marketKind;
+    setMarketData(prev => {
+      const next = prev.map(item => {
         const rtPrice = realTimePrices[item.symbol];
         if (rtPrice) {
           return {
@@ -274,8 +272,11 @@ export default function Dashboard() {
           };
         }
         return item;
-      }));
-    }
+      });
+      marketCache.current[mk] = next;
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [realTimePrices]);
 
   const loadData = async (mk: MarketKind = marketKind) => {
@@ -292,24 +293,47 @@ export default function Dashboard() {
       }
 
       // Пользователь мог переключить рынок, пока запрос шёл — не перезаписываем
-      if (mk === marketKind) setMarketData(data);
+      // чужими карточками; в кэш своего рынка пишем в любом случае.
+      if (mk !== marketKind) return;
+      marketCache.current[mk] = data;
+      setMarketData(data);
       setLastUpdate(new Date());
     } catch (err) {
       console.error('Ошибка загрузки:', err);
-      setError(describeNetworkError(err));
+      if (mk === marketKind) setError(describeNetworkError(err));
     } finally {
+      if (mk === marketKind) setLoading(false);
+    }
+  };
+
+  /** Переключение Crypto ⇄ TradFi: карточки прошлого рынка скрываем сразу. */
+  const handleMarketChange = (mk: MarketKind) => {
+    if (mk === marketKind) return;
+    setMarketKind(mk);
+    setCustomCard(null);   // карточка «Ваш запрос» тоже относится к старому рынку
+    setError(null);
+    const cached = marketCache.current[mk];
+    if (cached.length > 0) {
+      // Уже загружали этот рынок — показываем кэш без мигания скелетоном,
+      // автообновление ниже освежит цены.
+      setMarketData(cached);
       setLoading(false);
+    } else {
+      setMarketData([]);   // карточки другого рынка исчезают немедленно
+      setLoading(true);
     }
   };
 
   // Загрузка/автообновление — при каждой смене рынка (интервал пересоздаётся)
   useEffect(() => {
-    setCustomCard(null);
     loadData(marketKind);
     const interval = setInterval(() => loadData(marketKind), 60000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [marketKind]);
+
+  // Данные каждого рынка относятся только к нему: если пользователь переключился,
+  // пока запрос шёл, карточки чужого рынка НЕ показываем (см. guard в loadData).
 
   return (
     <div className="space-y-6">
@@ -333,7 +357,7 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="flex items-center gap-2 self-start sm:self-auto">
-          <MarketTabs value={marketKind} onChange={setMarketKind} />
+          <MarketTabs value={marketKind} onChange={handleMarketChange} />
           <button
             onClick={() => loadData()}
             disabled={loading}
