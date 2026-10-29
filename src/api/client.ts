@@ -15,6 +15,7 @@ import { buildVolumeProfile, summarizeDelta } from '../utils/volume_profile';
 import { runBacktest, type FormationBounds } from '../utils/backtest';
 import { tagTradesByRegime, detectDegradation, statsByRegime, edgeVerdict } from '../utils/edge_verification';
 import { aggregateConsensus } from '../utils/consensus';
+import { parseMarket } from './market';
 import type {
   AnalysisReport,
   MultiTFZonesDTO,
@@ -537,18 +538,22 @@ export class ApiClient {
 
   /**
    * Анализ произвольного инструмента с дашборда: проверяем существование
-   * тикера на Bybit (спот, USDT-пары), нормализуем символ (TAO -> TAOUSDT)
+   * тикера (Bybit спот USDT-пара для крипты; Finnhub — для акций США),
+   * нормализуем символ (TAO -> TAOUSDT, AAPL + рынок stock -> AAPL:STOCK)
    * и возвращаем карточку в формате MarketOverviewItem.
    */
-  async analyzeCustomSymbol(rawSymbol: string): Promise<MarketOverviewItem> {
-    const base = rawSymbol.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-    if (!base) throw new Error('Введите название криптовалюты, например TAO или ARB');
-    const symbol = base.endsWith('USDT') ? base : `${base}USDT`;
+  async analyzeCustomSymbol(rawSymbol: string, market: 'crypto' | 'stock' = 'crypto'): Promise<MarketOverviewItem> {
+    const base = rawSymbol.trim().toUpperCase().replace(/[^A-Z0-9.]/g, '').replace(/\.+$/, '');
+    if (!base) throw new Error(market === 'stock' ? 'Введите тикер акции, например AAPL или MSFT' : 'Введите название криптовалюты, например TAO или ARB');
+    const symbol = market === 'stock' ? `${base}:STOCK` : (base.endsWith('USDT') ? base : `${base}USDT`);
 
-    // Проверяем наличие инструмента через instruments-info (кэш/троттлинг общие)
+    // Проверяем наличие инструмента (крипто — instruments-info Bybit; акции —
+    // живой ответ /quote Finnhub через прокси; кэш/троттлинг общие)
     const info = await fetchInstrumentInfo(symbol);
     if (!info || !info.is_trading) {
-      throw new Error(`Инструмент ${symbol} не найден среди спотовых USDT-пар Bybit`);
+      throw new Error(market === 'stock'
+        ? `Акция ${base} не найдена (Finnhub). Проверьте тикер — доступны только котировки США.`
+        : `Инструмент ${symbol} не найден среди спотовых USDT-пар Bybit`);
     }
 
     let overview: MarketOverviewItem;
@@ -560,11 +565,24 @@ export class ApiClient {
     return overview;
   }
 
-  /** Одна карчка обзора рынка для конкретного символа (переиспользуется дашбордом). */
+  /** Одна карточка обзора рынка для конкретного символа (переиспользуется дашбордом). */
   private async buildOverviewItem(symbol: string): Promise<MarketOverviewItem> {
     const analysis = await this.getAnalysis(symbol, 'D');
     const volumes = analysis.candles.map((c) => c.volume);
     const avgVolume = volumes.reduce((sum, v) => sum + v, 0) / volumes.length;
+    // Для акций change_24h переопределяем изменением за последний закрытый день:
+    // Finnhub-котировка вне сессии может показывать 0%, а Bybit-семантика «24ч»
+    // к акциям неприменима (рынок работает 09:30–16:00 ET).
+    const isStock = parseMarket(symbol).market === 'stock';
+    let stockDayChange = analysis.change_24h;
+    if (isStock) {
+      const dc = analysis.candles;
+      const lastClosed = dc[dc.length - 1];
+      const prevClosed = dc[dc.length - 2];
+      if (lastClosed && prevClosed && prevClosed.close > 0) {
+        stockDayChange = ((lastClosed.close - prevClosed.close) / prevClosed.close) * 100;
+      }
+    }
     const confirmedPatterns = analysis.patterns
       .filter((p) => p.confirmed)
       .map((p) => ({ name: p.name, type: p.type, confirmed: p.confirmed, confidence: p.confidence }));
@@ -580,7 +598,7 @@ export class ApiClient {
     return {
       symbol,
       price: analysis.price,
-      change_24h: analysis.change_24h,
+      change_24h: isStock ? stockDayChange : analysis.change_24h,
       trend: analysis.trend,
       regime: analysis.regime,
       patterns: confirmedPatterns,
@@ -593,8 +611,12 @@ export class ApiClient {
     };
   }
 
-  async getMarketOverview(): Promise<MarketOverviewItem[]> {
-    const symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT'];
+  /** Дефолтный топ-8 крипто (Bybit спот) и топ-8 акций США (Finnhub free tier). */
+  static readonly DEFAULT_CRYPTO_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT'];
+  static readonly DEFAULT_STOCK_SYMBOLS = ['AAPL:STOCK', 'MSFT:STOCK', 'NVDA:STOCK', 'AMZN:STOCK', 'META:STOCK', 'TSLA:STOCK', 'GOOGL:STOCK', 'AMD:STOCK'];
+
+  async getMarketOverview(market: 'crypto' | 'stock' = 'crypto'): Promise<MarketOverviewItem[]> {
+    const symbols = market === 'stock' ? ApiClient.DEFAULT_STOCK_SYMBOLS : ApiClient.DEFAULT_CRYPTO_SYMBOLS;
     
     const results = await Promise.all(
       symbols.map(async (symbol): Promise<MarketOverviewItem | null> => {
@@ -604,7 +626,19 @@ export class ApiClient {
           // Рассчитываем средний объём
           const volumes = analysis.candles.map((c) => c.volume);
           const avgVolume = volumes.reduce((sum, v) => sum + v, 0) / volumes.length;
-          
+
+          // Изменение для карточки: крипта — 24ч тикер Bybit; акции — изменение
+          // последнего дневного бара (семантика «24 часа» к сессиям NYSE неприменима).
+          let change = analysis.change_24h;
+          if (parseMarket(symbol).market === 'stock') {
+            const dc = analysis.candles;
+            const lastClosed = dc[dc.length - 1];
+            const prevClosed = dc[dc.length - 2];
+            if (lastClosed && prevClosed && prevClosed.close > 0) {
+              change = ((lastClosed.close - prevClosed.close) / prevClosed.close) * 100;
+            }
+          }
+
           // Извлекаем подтверждённые паттерны
           const confirmedPatterns = analysis.patterns
             .filter((p) => p.confirmed)
@@ -637,7 +671,7 @@ export class ApiClient {
           return {
             symbol,
             price: analysis.price,
-            change_24h: analysis.change_24h,
+            change_24h: change,
             trend: analysis.trend,
             regime: analysis.regime,
             patterns: confirmedPatterns,
@@ -683,8 +717,8 @@ class ApiClientFacade {
   getAnalysis(symbol: string, timeframe: string = 'D') {
     return analysisProvider.getAnalysis(symbol, timeframe);
   }
-  getMarketOverview() {
-    return api.getMarketOverview();
+  getMarketOverview(market: 'crypto' | 'stock' = 'crypto') {
+    return api.getMarketOverview(market);
   }
   planForSignal(signal: SignalDTO, settings: RiskSettings) {
     return api.planForSignal(signal, settings);

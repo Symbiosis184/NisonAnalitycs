@@ -8,17 +8,50 @@ import type { MarketOverviewItem as MarketOverview } from '../api/types';
 import { formatPrice, formatVolume } from '../utils/format';
 import { useBinanceWebSocket } from '../hooks/useBinanceWebSocket';
 import { describeNetworkError } from '../utils/http';
+import type { MarketKind } from '../api/market';
+import { marketLabel, STOCK_SUFFIX } from '../api/market';
 
 
-const SYMBOLS = [
+/** Топ-8 по умолчанию: крипта (Bybit спот) и акции США (Finnhub free tier). */
+const CRYPTO_SYMBOLS = [
   'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 
   'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT'
 ];
+const STOCK_SYMBOLS = [
+  'AAPL:STOCK', 'MSFT:STOCK', 'NVDA:STOCK', 'AMZN:STOCK',
+  'META:STOCK', 'TSLA:STOCK', 'GOOGL:STOCK', 'AMD:STOCK',
+];
+
+/** Переключатель рынков Crypto / TradFi (акции США). */
+function MarketTabs({ value, onChange }: { value: MarketKind; onChange: (m: MarketKind) => void }) {
+  const tab = (m: MarketKind, label: string) => (
+    <button
+      onClick={() => onChange(m)}
+      aria-pressed={value === m}
+      className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-colors whitespace-nowrap ${
+        value === m
+          ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+          : 'text-gray-400 hover:text-gray-200 border border-transparent'
+      }`}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-gray-900/60 border border-gray-800/60">
+      {tab('crypto', 'Крипто')}
+      {tab('stock', 'TradFi · Акции США')}
+    </div>
+  );
+}
 
 /** Тело карточки инструмента — переиспользуется для топ-8 и произвольного тикера. */
 function MarketCardBody({ item }: { item: MarketOverview }) {
   const isPositive = item.change_24h >= 0;
-  const baseAsset = item.symbol.replace('USDT', '');
+  // Крипта: 'BTCUSDT' -> 'BTC'; акции: 'AAPL:STOCK' -> 'AAPL'.
+  const baseAsset = item.symbol.endsWith(STOCK_SUFFIX)
+    ? item.symbol.slice(0, -STOCK_SUFFIX.length)
+    : item.symbol.replace('USDT', '');
   const confirmedPatterns = item.patterns.filter(p => p.confirmed);
   const volumeRatio = item.avgVolume > 0 ? item.volume / item.avgVolume : 1;
   const getTrendIcon = (trend: string) => {
@@ -195,7 +228,8 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
 
 
 export default function Dashboard() {
-  const [market, setMarket] = useState<MarketOverview[]>([]);
+  const [marketData, setMarketData] = useState<MarketOverview[]>([]);
+  const [marketKind, setMarketKind] = useState<MarketKind>('crypto');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
@@ -207,12 +241,12 @@ export default function Dashboard() {
   const [customError, setCustomError] = useState<string | null>(null);
 
   const handleAnalyze = async () => {
-    const base = query.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const base = query.trim().toUpperCase().replace(marketKind === 'stock' ? /[^A-Z0-9.]/g : /[^A-Z0-9]/g, '').replace(/\.+$/, '');
     if (!base) return;
     setCustomLoading(true);
     setCustomError(null);
     try {
-      const item = await api.analyzeCustomSymbol(base);
+      const item = await api.analyzeCustomSymbol(base, marketKind);
       setCustomCard(item);
     } catch (err) {
       setCustomCard(null);
@@ -223,13 +257,14 @@ export default function Dashboard() {
   };
 
   // WebSocket для real-time цен
-  const symbols = market.map(m => m.symbol);
+  // WS real-time — только крипто-тикеры (Binance); акции приходят из REST-прокси.
+  const symbols = marketData.filter(m => !m.symbol.endsWith(STOCK_SUFFIX)).map(m => m.symbol);
   const realTimePrices = useBinanceWebSocket(symbols);
 
   // Обновляем цены в market данными из WebSocket
   useEffect(() => {
     if (Object.keys(realTimePrices).length > 0) {
-      setMarket(prev => prev.map(item => {
+      setMarketData(prev => prev.map(item => {
         const rtPrice = realTimePrices[item.symbol];
         if (rtPrice) {
           return {
@@ -243,18 +278,21 @@ export default function Dashboard() {
     }
   }, [realTimePrices]);
 
-  const loadData = async () => {
+  const loadData = async (mk: MarketKind = marketKind) => {
     try {
       setLoading(true);
       setError(null);
-      
-      const data = await api.getMarketOverview();
-      
+
+      const data = await api.getMarketOverview(mk);
+
       if (data.length === 0) {
-        throw new Error('Не удалось получить данные с Bybit API');
+        throw new Error(mk === 'stock'
+          ? 'Не удалось получить данные по акциям (Finnhub). Убедитесь, что на сервере задан FINNHUB_API_KEY.'
+          : 'Не удалось получить данные с Bybit API');
       }
-      
-      setMarket(data);
+
+      // Пользователь мог переключить рынок, пока запрос шёл — не перезаписываем
+      if (mk === marketKind) setMarketData(data);
       setLastUpdate(new Date());
     } catch (err) {
       console.error('Ошибка загрузки:', err);
@@ -264,11 +302,14 @@ export default function Dashboard() {
     }
   };
 
+  // Загрузка/автообновление — при каждой смене рынка (интервал пересоздаётся)
   useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 60000);
+    setCustomCard(null);
+    loadData(marketKind);
+    const interval = setInterval(() => loadData(marketKind), 60000);
     return () => clearInterval(interval);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [marketKind]);
 
   return (
     <div className="space-y-6">
@@ -291,14 +332,17 @@ export default function Dashboard() {
             )}
           </div>
         </div>
-        <button
-          onClick={loadData}
-          disabled={loading}
-          className="self-start sm:self-auto flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 transition-colors disabled:opacity-50"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          Обновить
-        </button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <MarketTabs value={marketKind} onChange={setMarketKind} />
+          <button
+            onClick={() => loadData()}
+            disabled={loading}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            Обновить
+          </button>
+        </div>
       </div>
 
       {/* Поиск произвольной криптовалюты */}
@@ -311,7 +355,7 @@ export default function Dashboard() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') handleAnalyze(); }}
-              placeholder="Введите тикер, например TAO, ARB, PEPE…"
+              placeholder={marketKind === 'stock' ? "Введите тикер акции, например AAPL, MSFT…" : "Введите тикер, например TAO, ARB, PEPE…"}
               maxLength={20}
               className="w-full pl-9 pr-9 py-2.5 rounded-lg bg-gray-900/60 border border-gray-700/60 text-white placeholder-gray-400 text-sm focus:outline-none focus:border-amber-500/50"
             />
@@ -334,7 +378,7 @@ export default function Dashboard() {
           </button>
         </div>
         <p className="text-xs text-gray-400 mt-2">
-          Анализ любой спотовой USDT-пары Bybit по методологии Нисона. Нажмите Enter или «Анализировать», затем кликните по карточке для полного анализа.
+          {marketLabel(marketKind)} — анализ по методологии Нисона. Нажмите Enter или «Анализировать», затем кликните по карточке для полного анализа.
         </p>
         {customError && (
           <div className="mt-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 flex items-start gap-2">
@@ -355,7 +399,7 @@ export default function Dashboard() {
       )}
 
       <div className="grid grid-cols-1 xs:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
-        {loading && market.length === 0 ? (
+        {loading && marketData.length === 0 ? (
           Array.from({ length: 8 }).map((_, i) => (
             <div key={i} className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50 animate-pulse">
               <div className="h-6 w-20 bg-gray-700 rounded mb-3" />
@@ -366,7 +410,7 @@ export default function Dashboard() {
         ) : (
           [
             ...(customCard ? [{ ...customCard, __custom: true }] : []),
-            ...market,
+            ...marketData,
           ].map((item) => {
             return (
               <Link
@@ -398,7 +442,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      {!loading && market.length === 0 && !error && (
+      {!loading && marketData.length === 0 && !error && (
         <div className="text-center py-12">
           <Activity className="w-12 h-12 text-gray-600 mx-auto mb-4" />
           <p className="text-gray-400">Нет данных для отображения</p>

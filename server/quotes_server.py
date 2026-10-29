@@ -58,17 +58,40 @@ TOKEN_TTL_S = int(os.environ.get("KAIRI_TOKEN_TTL", "900"))
 ALLOWED_EXCHANGES = {
     "bybit": "https://api.bybit.com",
     "binance": "https://api.binance.com",
+    # TradFi: американские акции (бесплатный tier). Ключ только на сервере.
+    "finnhub": "https://finnhub.io",
 }
 # SSRF-защита: хост котировочных источников фиксируется списком из env.
 ALLOWED_HOSTS = {
     h.strip().lower()
     for h in os.environ.get(
-        "KAIRI_QUOTES_ALLOWED_HOSTS", "api.bybit.com,api.binance.com"
+        "KAIRI_QUOTES_ALLOWED_HOSTS", "api.bybit.com,api.binance.com,finnhub.io"
     ).split(",")
     if h.strip()
 }
 
+# Ключ Finnhub (free tier) задаётся на сервере: systemd Environment=/env-файл.
+# В браузер не попадает — обращения к finnhub.io идут только из этого прокси.
+FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY", "")
+# Free tier: 60 req/min (soft ~30/sec). Серверный троттлер — страховка поверх
+# клиентского; между стартами исходящих запросов к Finnhub выдерживаем паузу.
+FINNHUB_MIN_INTERVAL_S = float(os.environ.get("KAIRI_FINNHUB_MIN_INTERVAL", "1.0"))
+_finnhub_lock = threading.Lock()
+_finnhub_last_at = [0.0]
+
+
+def _finnhub_throttle() -> None:
+    """Блокирующая пауза до следующего разрешённого запроса к Finnhub."""
+    with _finnhub_lock:
+        wait = FINNHUB_MIN_INTERVAL_S - (time.time() - _finnhub_last_at[0])
+        if wait > 0:
+            time.sleep(wait)
+        _finnhub_last_at[0] = time.time()
+
+
 SYMBOL_RE = re.compile(r"^[A-Z0-9]{3,25}$")
+# Фондовый тикер вида 'AAPL:STOCK' (см. src/api/market.ts): база 1–10 символов.
+STOCK_SYMBOL_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}:STOCK$")
 INTERVAL_RE = re.compile(r"^[0-9]{1,4}[mMhHdDwW]?$|^[DdWw]$")
 
 USER_ID_RE = re.compile(r"^[a-z0-9_-]{3,64}$")
@@ -272,6 +295,15 @@ BINANCE_INTERVAL = {
     "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m",
     "1h": "1h", "2h": "2h", "4h": "4h", "1d": "1d", "1w": "1w",
 }
+# TradFi (Finnhub free tier): внутридневные resolution доступны только для
+# американских акций; 'M'/'W' принимаем от клиента в канонической форме.
+FINNHUB_RESOLUTION = {
+    "30m": "30", "1h": "60", "2h": "120", "4h": "240",
+    "1d": "D", "1w": "W", "1mo": "M",
+    # канонические формы, которые приходят от фронтенда ('30', '60', 'D', 'W')
+    "30": "30", "60": "60", "120": "120", "240": "240",
+    "d": "D", "w": "W", "m": "M",
+}
 
 
 def _normalize_bybit_klines(raw: dict) -> list[dict]:
@@ -289,6 +321,55 @@ def _normalize_binance_klines(raw: list) -> list[dict]:
         "openTime": int(r[0]), "open": float(r[1]), "high": float(r[2]),
         "low": float(r[3]), "close": float(r[4]), "volume": float(r[5]),
     } for r in raw]
+
+
+def _normalize_finnhub_klines(raw: dict, resolution: str) -> list[dict]:
+    """Finnhub /api/v1/stock/candle -> канон Kline[] (хронологический порядок).
+
+    Ответ: {c:[...], h:[...], l:[...], o:[...], v:[...], t:[секунды], s:'ok'|'no_data'}.
+    openTime приводим к миллисекундам; для внутридневных ТФ последний бар может
+    быть незакрытым — это нормально (фронтенд сам отделяет live-бар).
+    """
+    if not isinstance(raw, dict) or raw.get("s") != "ok":
+        raise HTTPException(status_code=404, detail="no data for symbol")
+    ts = raw.get("t") or []
+    out = []
+    for i in range(len(ts)):
+        try:
+            out.append({
+                "openTime": int(ts[i]) * 1000,
+                "open": float(raw["o"][i]), "high": float(raw["h"][i]),
+                "low": float(raw["l"][i]), "close": float(raw["c"][i]),
+                "volume": float(raw["v"][i]),
+            })
+        except (KeyError, IndexError, TypeError, ValueError):
+            continue
+    if not out:
+        raise HTTPException(status_code=404, detail="empty candle series")
+    return out
+
+
+def _finnhub_get(path: str, params: dict) -> Any:
+    """GET к finnhub.io с серверным ключом и троттлингом под free tier."""
+    if not FINNHUB_API_KEY:
+        raise HTTPException(status_code=503, detail="finnhub not configured")
+    _finnhub_throttle()
+    url = f"{ALLOWED_EXCHANGES['finnhub']}{path}"
+    host = url.split("/")[2].lower()
+    if host not in ALLOWED_HOSTS:
+        raise HTTPException(status_code=400, detail="host not allowed")
+    try:
+        r = httpx.get(url, params={**params, "token": FINNHUB_API_KEY}, timeout=8.0)
+        if r.status_code == 429:
+            raise HTTPException(status_code=429, detail="finnhub rate limited")
+        r.raise_for_status()
+        return r.json()
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=f"upstream {e.response.status_code}")
+    except Exception as e:
+        raise HTTPException(status_code=504, detail=f"upstream error: {type(e).__name__}")
 
 
 def _http_get(url: str, params: dict) -> Any:
@@ -325,10 +406,16 @@ def quotes_klines(
     x_kairi_key: Optional[str] = Header(None),
 ):
     require_key(x_kairi_key)
-    if not SYMBOL_RE.match(symbol):
+    is_stock = bool(STOCK_SYMBOL_RE.match(symbol))
+    if not (SYMBOL_RE.match(symbol) or is_stock):
         raise HTTPException(status_code=400, detail="bad symbol")
     iv = interval.lower()
-    if iv not in BYBIT_INTERVAL:
+    if exchange == "finnhub":
+        if not is_stock:
+            raise HTTPException(status_code=400, detail="finnhub requires TICKER:STOCK")
+        if iv not in FINNHUB_RESOLUTION:
+            raise HTTPException(status_code=400, detail="bad interval")
+    elif iv not in BYBIT_INTERVAL:
         raise HTTPException(status_code=400, detail="bad interval")
     if exchange not in ALLOWED_EXCHANGES:
         raise HTTPException(status_code=400, detail="unknown exchange")
@@ -336,6 +423,22 @@ def quotes_klines(
     key = f"k:{exchange}:{symbol}:{iv}:{limit}"
 
     def fetch():
+        if exchange == "finnhub":
+            base = symbol.split(":")[0]
+            resolution = FINNHUB_RESOLUTION[iv]
+            # Finnhub принимает range (from/to в секундах) либо 'count' через to=now.
+            # Считаем окно по шагу: внутридневные — минуты, D/W/M — дни.
+            step_s = {"1": 60, "5": 300, "15": 900, "30": 1800, "60": 3600,
+                      "120": 7200, "240": 14400}.get(resolution)
+            if step_s:
+                frm = int(time.time()) - step_s * (limit + 8)
+            else:
+                days_per_bar = {"D": 2, "W": 8, "M": 32}.get(resolution, 2)
+                frm = int(time.time()) - 86400 * days_per_bar * (limit + 2)
+            data = _finnhub_get("/api/v1/stock/candle", {
+                "symbol": base, "resolution": resolution,
+                "from": frm, "to": int(time.time())})
+            return _normalize_finnhub_klines(data, resolution)
         if exchange == "bybit":
             data = _http_get(f"{ALLOWED_EXCHANGES[exchange]}/v5/market/kline", {
                 "category": "spot", "symbol": symbol,
@@ -346,6 +449,8 @@ def quotes_klines(
         return _normalize_binance_klines(data)
 
     value, from_cache = cache.get_or_fetch(key, cache.kline_ttl(iv), fetch)
+    if exchange == "finnhub" and isinstance(value, list) and len(value) > limit:
+        value = value[-limit:]  # окно from/to даёт запас сверху — режем по limit
     return {"data": value, "cached": from_cache, "exchange": exchange}
 
 
@@ -356,7 +461,8 @@ def quotes_ticker(
     x_kairi_key: Optional[str] = Header(None),
 ):
     require_key(x_kairi_key)
-    if not SYMBOL_RE.match(symbol):
+    is_stock = bool(STOCK_SYMBOL_RE.match(symbol))
+    if not (SYMBOL_RE.match(symbol) or is_stock):
         raise HTTPException(status_code=400, detail="bad symbol")
     if exchange not in ALLOWED_EXCHANGES:
         raise HTTPException(status_code=400, detail="unknown exchange")
@@ -364,6 +470,19 @@ def quotes_ticker(
     key = f"t:{exchange}:{symbol}"
 
     def fetch():
+        if exchange == "finnhub":
+            # /api/v1/quote: {c: цена, d: изменение, dp: %} — пустой ответ = нет тикера
+            q = _finnhub_get("/api/v1/quote", {"symbol": symbol.split(":")[0]})
+            last = q.get("c") if isinstance(q, dict) else None
+            try:
+                last_f = float(last)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=404, detail="unknown symbol")
+            if last_f <= 0:
+                raise HTTPException(status_code=404, detail="unknown symbol")
+            return {"lastPrice": last_f,
+                    "priceChange": float(q.get("d") or 0),
+                    "priceChangePercent": float(q.get("dp") or 0)}
         if exchange == "bybit":
             rows = _http_get(f"{ALLOWED_EXCHANGES[exchange]}/v5/market/tickers",
                              {"category": "spot", "symbol": symbol}

@@ -18,9 +18,11 @@ export const SEO_SYMBOLS: ReadonlyArray<{ symbol: string; name: string }> = [
   { symbol: 'AVAXUSDT', name: 'Avalanche' },
 ];
 
-/** Красивый тикер: BTCUSDT -> BTC/USDT */
+/** Красивый тикер: BTCUSDT -> BTC/USDT; акции AAPL:STOCK -> AAPL */
 export function prettyTicker(symbol: string): string {
-  return symbol.endsWith('USDT') ? `${symbol.slice(0, -4)}/USDT` : symbol;
+  const s = symbol.toUpperCase();
+  if (s.endsWith(':STOCK')) return s.slice(0, -':STOCK'.length);
+  return s.endsWith('USDT') ? `${s.slice(0, -4)}/USDT` : s;
 }
 
 export interface PageMeta {

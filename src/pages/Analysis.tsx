@@ -22,6 +22,7 @@ import { EdgeVerificationPanel } from '../components/MarketContextPanels';
 import { formatPrice } from '../utils/format';
 import { loadRiskSettings, saveRiskSettings } from '../utils/risk_settings';
 import { isValidSymbol } from '../utils/validation';
+import { isStockSymbol } from '../api/market';
 
 export default function Analysis() {
   const rawSymbol = useParams<{ symbol: string }>().symbol;
@@ -68,7 +69,10 @@ export default function Analysis() {
   // Автоматическое сохранение обнаруженных сигналов в журнал
   useAutoJournalSignals(report?.signals, symbol, timeframe);
 
-  const baseAsset = symbol?.replace('USDT', '') || '';
+  const baseAsset = symbol?.replace('USDT', '') ?? ''; // 'BTCUSDT' -> 'BTC', 'AAPL:STOCK' -> 'AAPL'
+  // Для акций ':STOCK' суффикс убираем, но рынок помним: заголовок 'AAPL', без '/USDT'
+  const isStock = isStockSymbol(symbol);
+  const displayPair = isStock ? baseAsset : `${baseAsset}/USDT`;
   // Все числовые поля отчёта пропускаем через num(): если бэкенд/прокси вернул
   // null/undefined/строку вместо числа, .toFixed()/операции давали бы NaN или
   // TypeError — а рендер объекта в JSX вызывает Minified React error #310.
@@ -108,7 +112,7 @@ export default function Analysis() {
       ? rawPrice
       : (Number.isFinite(lastClosedClose) && lastClosedClose > 0 ? lastClosedClose
         : (Number.isFinite(tickFromSymbol) ? tickFromSymbol : 0));
-    badgeTitle = `${baseAsset}/USDT · ${timeframe}`;
+    badgeTitle = `${displayPair} · ${timeframe}`;
     badgePrice = `$${formatPrice(currentPrice)}`;
   }
 
@@ -170,7 +174,7 @@ export default function Analysis() {
       <div ref={anchorRef} className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-            <h1 className="text-2xl sm:text-3xl font-bold text-white">{baseAsset}/USDT</h1>
+            <h1 className="text-2xl sm:text-3xl font-bold text-white">{displayPair}</h1>
             <span className={`px-3 py-1 rounded-lg text-sm font-medium ${
               report.trend === 'ВОСХОДЯЩИЙ' ? 'bg-green-500/10 text-green-400 border border-green-500/20' :
               report.trend === 'НИСХОДЯЩИЙ' ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
@@ -237,7 +241,7 @@ export default function Analysis() {
       <Collapsible
         storageKey="chart"
         icon={<ChartIcon className="w-5 h-5 text-amber-400" />}
-        title={`График ${baseAsset}/USDT · ${timeframe}`}
+        title={`График ${displayPair} · ${timeframe}`}
         badge={<span className="text-xs text-gray-400">{report.patterns.length} паттернов · {report.support.length + report.resistance.length} зон</span>}
       >
         <CandlestickChart
