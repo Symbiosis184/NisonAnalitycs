@@ -1,6 +1,6 @@
 {
   "name": "nison-analytics",
-  "version": "1.1beta",
+  "version": "1.2beta",
   "private": true,
   "type": "module",
   "scripts": {

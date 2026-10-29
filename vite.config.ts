@@ -6,8 +6,8 @@ import type { Plugin } from "vite";
 import { DEV_CSP } from "./vite.csp";
 
 // Версия приложения берётся из package.json (единый источник правды).
-// Бета-статус задаётся явно перед релизом 1.1beta, либо переменной окружения:
-//   VITE_APP_VERSION=1.1beta npm run build
+// Бета-статус задаётся явно перед релизом 1.2beta, либо переменной окружения:
+//   VITE_APP_VERSION=1.2beta npm run build
 const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
 const APP_VERSION = process.env.VITE_APP_VERSION ?? pkg.version;
 

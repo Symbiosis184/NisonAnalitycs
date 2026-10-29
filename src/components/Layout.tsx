@@ -53,9 +53,9 @@ export default function Layout() {
                   <span className="truncate">Kairi <span className="text-amber-400">Analytics</span></span>
                   <span
                     className="hidden sm:inline-flex text-[11px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30 normal-case tracking-normal flex-shrink-0"
-                    title={import.meta.env.VITE_APP_VERSION ? `v${import.meta.env.VITE_APP_VERSION}` : 'v1.0'}
+                    title={import.meta.env.VITE_APP_VERSION ? `v${import.meta.env.VITE_APP_VERSION}` : 'v1.2beta'}
                   >
-                    v{import.meta.env.VITE_APP_VERSION || '1.0'}
+                    v{import.meta.env.VITE_APP_VERSION || '1.2beta'}
                   </span>
                 </h1>
                 <p className="hidden sm:block text-[11px] text-gray-400 -mt-0.5 tracking-wider uppercase">
@@ -135,7 +135,7 @@ export default function Layout() {
 
             {/* Мобильная строка версионного бейджа */}
             <span className="md:hidden text-[11px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30 flex-shrink-0">
-              v{import.meta.env.VITE_APP_VERSION || '1.0'}
+              v{import.meta.env.VITE_APP_VERSION || '1.2beta'}
             </span>
           </div>
 
@@ -217,7 +217,7 @@ export default function Layout() {
         <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-6 sm:py-8">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <p className="text-xs sm:text-sm text-gray-400 text-center sm:text-left">
-              © 2026 Kairi Analytics v{import.meta.env.VITE_APP_VERSION || '1.0'}. Powered by Steve Nison's methodology.
+              © 2026 Kairi Analytics v{import.meta.env.VITE_APP_VERSION || '1.2beta'}. Powered by Steve Nison's methodology.
             </p>
             <div className="flex items-center gap-3 sm:gap-4 text-xs text-gray-600">
               <span>Data: Bybit API</span>

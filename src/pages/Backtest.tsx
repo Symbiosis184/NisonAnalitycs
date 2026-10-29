@@ -129,7 +129,7 @@ export default function BacktestPage() {
       if (evCount < 3) continue; // слишком мало наблюдений — не показываем
       const config = { detect, direction, costs, signalManagement: true };
       const res = runBacktest(candles, config);
-      // v1.1beta: walk-forward (train 300 / test 100) и режим рынка на момент каждой сделки
+      // v1.2beta: walk-forward (train 300 / test 100) и режим рынка на момент каждой сделки
       const wf = runWalkForward(candles, config, { trainBars: 300, testBars: 100, warmup: 60 });
       // Вердикт по стратегии: expectancy + OOS-подтверждение → человеческий вывод
       const exp = expectancyCI(res.trades.map((t) => t.netR));
@@ -202,7 +202,7 @@ export default function BacktestPage() {
             <Stat label="Худшая expectancy" value={overall.length ? `${fmt(Math.min(...overall.map(o => o.avgNetR)))} R` : '—'} good={false} />
           </div>
 
-          {/* v1.1beta: режим рынка */}
+          {/* v1.2beta: режим рынка */}
           {candles.length >= 80 && (() => {
             const rg = detectRegime(candles);
             const labels: Record<string, { icon: IconName; text: string }> = {
