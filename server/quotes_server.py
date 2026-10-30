@@ -118,12 +118,21 @@ USER_ID_RE = re.compile(r"^[a-z0-9_-]{3,64}$")
 KLINES_TTL = {"m": 30, "h": 120, "d": 3600, "w": 21600}  # секунды по шагу ТФ
 
 
-def _read_secret(path: str) -> str:
+def _secret_bytes(path: str) -> bytes:
+    """Сырые байты секрета — идентично journal_token.load_master_secret/load_secret
+    (открывают файл в 'rb' и подписывают именно байты). Хранить секрет как str
+    нельзя: он может быть не-UTF-8 (os.urandom), а обратное кодирование ломает
+    HMAC-совпадение между выпуском токена и его проверкой."""
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "rb") as f:
             return f.read().strip()
     except OSError:
-        return ""
+        return b""
+
+
+def _read_secret(path: str) -> str:
+    # Совместимость со старыми вызовами: latin-1 — байто-безопасная 1:1 строка.
+    return _secret_bytes(path).decode("latin-1")
 
 
 # --- HMAC-токены доступа ------------------------------------------------------
@@ -168,7 +177,7 @@ def verify_access_token(token: str, role_required: Optional[str] = None) -> Opti
         return None
     secrets = []
     for path in (MASTER_KEY_FILE, os.environ.get("KAIRI_JOURNAL_TOKEN_SECRET", "/etc/kairi/journal.token_secret")):
-        s = _read_secret(path)
+        s = _secret_bytes(path)
         if s and s not in secrets:
             secrets.append(s)
     if not secrets:
@@ -182,7 +191,7 @@ def verify_access_token(token: str, role_required: Optional[str] = None) -> Opti
     ok = False
     for secret in secrets:
         for v in variants:
-            expected = hmac.new(secret.encode(), v.encode(), hashlib.sha256).hexdigest()
+            expected = hmac.new(secret, v.encode(), hashlib.sha256).hexdigest()
             if hmac.compare_digest(expected, sig):
                 ok = True
                 break
