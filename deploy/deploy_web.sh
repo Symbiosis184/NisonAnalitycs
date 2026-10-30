@@ -28,6 +28,30 @@ rm -rf "${WEB_DIR:?}/"*
 cp -a "$REPO_DIR/dist/." "$WEB_DIR/"
 chmod -R a+rX "$WEB_DIR"
 
+# Токены доступа (meta kairi-api-token / kairi-journal-token) НЕ могут лежать
+# в git (подписываются секретами боевого сервера). dist/index.html из репо —
+# «чистый», поэтому после копирования обязательно выполняем инъекцию токенов:
+# без них браузер получает 401/403 на /api/quotes/* («Не удалось получить
+# данные с биржи»). Скрипт идемпотентен, TTL 12 ч.
+INJ_SRC="$REPO_DIR/deploy/inject_tokens.py"
+INJ_DST=/opt/kairi-api/inject_tokens.py
+if [ -f "$INJ_SRC" ]; then
+    cp "$INJ_SRC" "$INJ_DST"
+fi
+if [ -f "$INJ_DST" ]; then
+    echo "==> Инъекция браузерных токенов в index.html"
+    WEB_DIR="$WEB_DIR" python3 "$INJ_DST" \
+      || echo "    !! не удалось встроить токены — котировки вернут 401/403; выполните сначала restart_kairi_api.sh"
+else
+    echo "    !! inject_tokens.py не найден — токены не встроены (403 на /api/quotes/*)"
+fi
+chown -R www-data:www-data "$WEB_DIR" 2>/dev/null || true
+
 echo "==> Проверка:"
 grep -o 'assets/index-[A-Za-z0-9_-]*\.js' "$WEB_DIR/index.html"
+if grep -q 'kairi-api-token' "$WEB_DIR/index.html"; then
+    echo "OK: токен котировочного API присутствует в index.html"
+else
+    echo "!! ВНИМАНИЕ: meta kairi-api-token ОТСУТСТВУЕТ — страницы акций будут падать с 403"
+fi
 echo "OK: фронтенд обновлён. Сделайте Ctrl+Shift+R в браузере."

@@ -28,6 +28,8 @@ for f in quotes_server.py journal_token.py; do
     curl -fsSL --max-time 30 "$REPO_RAW/server/$f" -o "/tmp/kairi_$f" || { echo "    !! не удалось скачать $f"; ok_dl=0; }
 done
 curl -fsSL --max-time 30 "$REPO_RAW/deploy/vps_setup.sh" -o /tmp/kairi_vps_setup.sh || true
+curl -fsSL --max-time 30 "$REPO_RAW/deploy/inject_tokens.py" -o "$APP_DIR/inject_tokens.py" || true
+chmod 644 "$APP_DIR/inject_tokens.py" 2>/dev/null || true
 if [ "$ok_dl" = "0" ]; then
     echo "    Скачивание не удалось — перезапускаю сервис на текущем коде без обновления."
 else
