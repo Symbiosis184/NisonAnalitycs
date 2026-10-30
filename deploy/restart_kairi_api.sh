@@ -27,6 +27,7 @@ ok_dl=1
 for f in quotes_server.py journal_token.py; do
     curl -fsSL --max-time 30 "$REPO_RAW/server/$f" -o "/tmp/kairi_$f" || { echo "    !! не удалось скачать $f"; ok_dl=0; }
 done
+curl -fsSL --max-time 30 "$REPO_RAW/deploy/vps_setup.sh" -o /tmp/kairi_vps_setup.sh || true
 if [ "$ok_dl" = "0" ]; then
     echo "    Скачивание не удалось — перезапускаю сервис на текущем коде без обновления."
 else
@@ -39,6 +40,23 @@ else
     done
     chmod 644 "$APP_DIR"/*.py
 fi
+
+echo "==> 1.5 Ключ Twelve Data и секреты"
+mkdir -p /etc/kairi
+if [ ! -s /etc/kairi/twelvedata.key ]; then
+    echo "091e319b4dba4cd9a25e02f65cbe9b54" > /etc/kairi/twelvedata.key
+    chmod 600 /etc/kairi/twelvedata.key
+    echo "    создан /etc/kairi/twelvedata.key (из vps_setup.sh)"
+else
+    echo "    /etc/kairi/twelvedata.key уже существует — не трогаю"
+fi
+# X-Kairi-Key (HMAC-секрет доступа к прокси): если ещё нет — сгенерировать через vps_setup.sh
+SECRET_LINE=$(grep -h '^KAIRI_SECRET=' /opt/kairi-api/.env /etc/kairi/env 2>/dev/null | head -1 || true)
+if [ -z "$SECRET_LINE" ] && [ -f /tmp/kairi_vps_setup.sh ]; then
+    echo "    KAIRI_SECRET не найден в .env — запускаю vps_setup.sh для генерации секретов..."
+    bash /tmp/kairi_vps_setup.sh || echo "    !! vps_setup.sh завершился с ошибкой — проверьте вручную"
+fi
+rm -f /tmp/kairi_vps_setup.sh
 
 echo "==> 2/4 Проверка синтаксиса python до рестарта"
 PY="$APP_DIR/venv/bin/python3"
