@@ -262,16 +262,20 @@ class QuoteCache:
 
     @staticmethod
     def kline_ttl(interval: str) -> int:
+        # Ключи — ТОЛЬКО канонические интервалы приложения ('15','30','60',
+        # '120','240','D','W','M' и крипто-минутные формы). Проверка по точному
+        # совпадению: эвристики вроде endswith("m") ошибочно относили месячные
+        # 'M' к минутным (TTL 30 с вместо 6 ч) и раздували запросы к источнику.
         i = interval.lower()
-        if i.endswith("m"):
-            return KLINES_TTL["m"]
-        if i.endswith("h") or i in ("60", "240"):
-            return KLINES_TTL["h"]
         if i in ("d", "1d"):
             return KLINES_TTL["d"]
         if i in ("w", "1w"):
             return KLINES_TTL["w"]
-        return KLINES_TTL["m"]
+        if i in ("m", "1mo"):
+            return KLINES_TTL["w"]  # месячные бары обновляются редко
+        if i in ("60", "120", "240", "480", "1h", "2h", "4h", "8h"):
+            return KLINES_TTL["h"]
+        return KLINES_TTL["m"]  # 1/3/5/15/30 и прочие минуты
 
     # Короткий TTL для неудачных обращений к источнику: без него каждая
     # перезагрузка страницы снова «долбит» источник заведомо падающим
@@ -338,8 +342,11 @@ class QuoteCache:
                 if prev is None or prev[0] <= time.time():
                     self._data[key] = (time.time() + self._err_ttl(exc), exc)
             # serving-stale: есть относительно свежие данные — отдаём их,
-            # а ошибку оставляем в кэше как троттл для последующих запросов
-            stale = self.get_stale(key)
+            # а ошибку оставляем в кэше как троттл для последующих запросов.
+            # ВАЖНО: берём значение напрямую из _data (успешное значение там
+            # перезаписывается только успешным fetch'ем) — get_stale читает
+            # _results, куда лидер только что записал исключение.
+            stale = self._stale_value(key)
             if stale is not None:
                 return stale, True
             raise
@@ -352,6 +359,15 @@ class QuoteCache:
 
     def get_stale(self, key: str):
         """Данные (не ошибка) не старше STALE_MAX_S, даже если TTL истёк."""
+        with self._lock:
+            hit = self._data.get(key)
+        if hit and not isinstance(hit[1], BaseException) \
+                and hit[0] >= time.time() - self.STALE_MAX_S:
+            return hit[1]
+        return None
+
+    def _stale_value(self, key: str):
+        """Stale-значение из _data без чтения _results (исключений там полно)."""
         with self._lock:
             hit = self._data.get(key)
         if hit and not isinstance(hit[1], BaseException) \
@@ -373,12 +389,18 @@ BINANCE_INTERVAL = {
 # TradFi (Twelvedata time_series): интервал эндпоинта + шаг в секундах.
 # Бесплатный тариф отдаёт годы дневной/недельной/месячной истории и несколько
 # месяцев внутридневных данных — этого хватает для всех ТФ приложения.
+# Wire-формы интервалов Twelvedata (проверено живым запросом):
+# 1min, 5min, 15min, 30min, 45min, 1h, 2h, 4h, 8h, 1day, 1week, 1month.
+# '1hour' и т.п. — НЕ поддерживаются (400 Bad Request).
 TD_INTERVAL = {
-    "1m": ("1min", 60), "5m": ("5min", 300), "15m": ("15min", 900),
+    "1m": ("1min", 60), "1": ("1min", 60),
+    "5m": ("5min", 300), "5": ("5min", 300),
+    "15m": ("15min", 900), "15": ("15min", 900),
     "30m": ("30min", 1800), "30": ("30min", 1800),
-    "1h": ("1hour", 3600), "60": ("1hour", 3600),
-    "2h": ("2hour", 7200), "120": ("2hour", 7200),
-    "4h": ("4hour", 14400), "240": ("4hour", 14400),
+    "1h": ("1h", 3600), "60": ("1h", 3600),
+    "2h": ("2h", 7200), "120": ("2h", 7200),
+    "4h": ("4h", 14400), "240": ("4h", 14400),
+    "8h": ("8h", 28800), "480": ("8h", 28800),
     "1d": ("1day", 86400), "d": ("1day", 86400), "D": ("1day", 86400),
     "1w": ("1week", 604800), "w": ("1week", 604800), "W": ("1week", 604800),
     "1mo": ("1month", 2592000), "m": ("1month", 2592000), "M": ("1month", 2592000),
@@ -402,6 +424,21 @@ def _normalize_binance_klines(raw: list) -> list[dict]:
     } for r in raw]
 
 
+def _raise_td_error(body: dict) -> None:
+    """Единая расшифровка error-ответов Twelvedata (HTTP 429 и 200-with-error)."""
+    msg = str(body.get("message", ""))
+    low = msg.lower()
+    if ("/api/rate" in msg or "rate limit" in low or "credits" in low
+            or "per minute" in low or "per day" in low):
+        # Пример: "You have run out of API credits for the current minute..."
+        raise HTTPException(status_code=429, detail="twelvedata rate limited")
+    if "quota" in low:
+        raise HTTPException(status_code=429, detail="twelvedata daily quota exceeded")
+    if "invalid interval" in low or "symbol not found" in low:
+        raise HTTPException(status_code=400, detail="bad request to twelvedata")
+    raise HTTPException(status_code=404, detail="unknown symbol")
+
+
 def _normalize_td_klines(raw: Any) -> list[dict]:
     """Twelvedata time_series -> канон Kline[] (хронологический порядок).
 
@@ -412,12 +449,7 @@ def _normalize_td_klines(raw: Any) -> list[dict]:
     одинаковый для всех баров одного интервала).
     """
     if isinstance(raw, dict) and raw.get("status") == "error":
-        msg = str(raw.get("message", ""))
-        if "/api/rate" in msg or "rate limit" in msg.lower():
-            raise HTTPException(status_code=429, detail="twelvedata rate limited")
-        if "quota" in msg.lower():
-            raise HTTPException(status_code=429, detail="twelvedata daily quota exceeded")
-        raise HTTPException(status_code=404, detail="unknown symbol")
+        _raise_td_error(raw)
     values = raw.get("values") if isinstance(raw, dict) else None
     if not isinstance(values, list):
         raise HTTPException(status_code=404, detail="no data for symbol")
@@ -477,10 +509,7 @@ def _td_get(path: str, params: dict) -> Any:
         body = r.json()
         # Twelvedata может вернуть 200 с error-телом (неизвестный тикер/лимит)
         if isinstance(body, dict) and body.get("status") == "error":
-            msg = str(body.get("message", ""))
-            if "/api/rate" in msg or "rate limit" in msg.lower() or "quota" in msg.lower():
-                raise HTTPException(status_code=429, detail="twelvedata rate limited")
-            raise HTTPException(status_code=404, detail="unknown symbol")
+            _raise_td_error(body)
         return body
     except HTTPException:
         raise
@@ -550,7 +579,7 @@ def quotes_klines(
             body = _td_get("/time_series", {
                 "symbol": base, "interval": tv,
                 "outputsize": str(min(5000, limit + 10)),
-                "orderbook": "false", "format": "JSON"})
+                "format": "JSON"})
             return _normalize_td_klines(body)
         if exchange == "bybit":
             data = _http_get(f"{ALLOWED_EXCHANGES[exchange]}/v5/market/kline", {
