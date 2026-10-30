@@ -14,6 +14,25 @@ export interface CandleDTO {
   volume: number;
 }
 
+/** Гэп (гл. 7 Нисона): разрыв между закрытием предыдущей сессии и открытием текущей */
+export interface GapDTO {
+  /** openTime (мс) бара, который ОТКРЫЛ гэп */
+  time: number;
+  /** close предыдущего бара */
+  prevClose: number;
+  /** open текущего бара */
+  open: number;
+  /** верхняя граница зоны гэпа */
+  top: number;
+  /** нижняя граница зоны гэпа */
+  bottom: number;
+  direction: 'up' | 'down';
+  /** размер гэпа в % от prevClose */
+  pct: number;
+  /** true — гэп ещё не закрыт (ни одна последующая свеча не пересекла весь диапазон разрыва) */
+  unfilled: boolean;
+}
+
 /** Тип паттерна для UI (маппинг русской классификации Нисона) */
 export type PatternDirection = 'bullish' | 'bearish' | 'neutral';
 
@@ -195,6 +214,8 @@ export interface AnalysisReport {
   resistance: ZoneDTO[];
   regime: Regime;
   regime_description: string;
+  /** Гэпы (гл. 7 Нисона): только для рынков с сессиями (акции); на крипте — [] */
+  gaps?: GapDTO[];
   /** Фаза цикла Вайкоффа по всему инструменту (запрос: контекст рынка, utils/wyckoff) */
   wyckoff?: {
     phase: 'accumulation' | 'markup' | 'distribution' | 'markdown' | 'transition';

@@ -3,6 +3,7 @@ import { Candle } from '../utils/candle';
 import { ema, rsi, macd } from '../utils/indicators';
 import { detectPatterns, patternStory } from '../utils/patterns';
 import { setMarket as setPatternMarket } from '../utils/pattern_engine';
+import { detectGaps } from '../utils/gaps';
 import { requiresNextCandleConfirmation } from '../utils/pattern_ids';
 import { signalGenerator } from '../utils/signal_generator';
 import { ZoneVoter, timeframeKey } from '../utils/zone_voter';
