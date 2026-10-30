@@ -150,6 +150,8 @@ for f in quotes_server.py journal_token.py; do
     curl -fsSL "https://raw.githubusercontent.com/Symbiosis184/NisonAnalitycs/main/server/$f" \
         -o "/opt/kairi-api/$f" || { echo "    !! не удалось скачать $f"; touch /tmp/kairi_api_broken; }
 done
+curl -fsSL "https://raw.githubusercontent.com/Symbiosis184/NisonAnalitycs/main/deploy/inject_tokens.py" \
+    -o "/opt/kairi-api/inject_tokens.py" || echo "    .. inject_tokens.py не скачан (не критично)"; chmod 644 /opt/kairi-api/inject_tokens.py 2>/dev/null || true
 chmod 644 /opt/kairi-api/*.py
 if ! [ -f /tmp/kairi_api_broken ]; then
     /opt/kairi-api/venv/bin/python3 -m py_compile /opt/kairi-api/quotes_server.py \
@@ -388,6 +390,12 @@ if [ -f /opt/kairi-api/journal_token.py ] && ! [ -f /tmp/kairi_api_broken ]; the
     API_TOKEN=$(/opt/kairi-api/venv/bin/python3 /opt/kairi-api/journal_token.py --ttl 43200 --json 2>/dev/null \
                 | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])' 2>/dev/null || true)
 fi
+# Проверка целостности: токен не должен содержать кавычек/фигурных скобок
+# (base64url-формат). Legacy JSON-токен с " обрезался бы внутри content="..."
+# в index.html и давал 403 на /api/quotes/*. Битый токен выбрасываем.
+case "$API_TOKEN" in
+    *'"'*|*'{'*|*'}'*) echo "    !! API-токен содержит спецсимволы (битый legacy-формат) — пересоздаём через inject_tokens.py"; API_TOKEN="" ;;
+esac
 if [ -n "$JOURNAL_TOKEN" ]; then
     sed -i "s|</title>|</title>\n    <meta name=\"kairi-journal-token\" content=\"$JOURNAL_TOKEN\">|" "$WEB_ROOT/index.html"
     echo "    Токен журнала встроен в index.html (TTL 12ч)"
@@ -396,7 +404,11 @@ else
 fi
 if [ -n "$API_TOKEN" ]; then
     sed -i "s|</title>|</title>\n    <meta name=\"kairi-api-token\" content=\"$API_TOKEN\">|" "$WEB_ROOT/index.html"
-    echo "    Токен котировочного API встроен в index.html (TTL 12ч)"
+    echo "    Токен котировочного API встроен в index.html (TTL 12ч, base64url)"
+elif [ -f /opt/kairi-api/inject_tokens.py ] && ! [ -f /tmp/kairi_api_broken ]; then
+    WEB_DIR="$WEB_ROOT" /opt/kairi-api/venv/bin/python3 /opt/kairi-api/inject_tokens.py \
+        && echo "    Токены котировочного API обновлены через inject_tokens.py" \
+        || echo "    !! inject_tokens.py не справился — котировки пойдут напрямую (fallback)"
 else
     echo "    !! Токен котировочного API не выдан — котировки пойдут напрямую (fallback)"
 fi

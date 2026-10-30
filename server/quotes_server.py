@@ -134,18 +134,61 @@ def sign_payload(payload: dict, secret: str) -> str:
     return body + "." + sig
 
 
+def _decode_token_body(body: str):
+    """Payload токена: base64url(JSON) — новый формат (без кавычек, безопасен
+    для HTML-атрибутов), либо сырой JSON — legacy. None если не распалось."""
+    import base64 as _b64
+    if body.startswith("{"):
+        try:
+            obj = json.loads(body)
+            return obj if isinstance(obj, dict) else None
+        except ValueError:
+            return None
+    try:
+        pad = "=" * (-len(body) % 4)
+        obj = json.loads(_b64.b64decode(body + pad))
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        return None
+
+
 def verify_access_token(token: str, role_required: Optional[str] = None) -> Optional[dict]:
-    """Возвращает payload токена, если подпись/HMAC/TTL валидны."""
-    secret = _read_secret(MASTER_KEY_FILE)
-    if not secret or "." not in token:
+    """Возвращает payload токена, если подпись/HMAC/TTL валидны.
+
+    Принимает оба формата: 'eyJ….<hex>' (base64url-payload, выдаётся
+    journal_token.issue_json после фикса 403) и legacy '{"exp":…}.<hex>'.
+    Подпись сверяется с master-ключом; дополнительно принимается подпись
+    journal.token_secret (защита от ложного 403, если токен был выпущен
+    другим секретом до перезапуска сервиса)."""
+    if not token or "." not in token:
         return None
     body, _, sig = token.rpartition(".")
-    expected = hmac.new(secret.encode(), body.encode(), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected, sig):
+    payload = _decode_token_body(body)
+    if payload is None:
         return None
-    try:
-        payload = json.loads(body)
-    except ValueError:
+    secrets = []
+    for path in (MASTER_KEY_FILE, os.environ.get("KAIRI_JOURNAL_TOKEN_SECRET", "/etc/kairi/journal.token_secret")):
+        s = _read_secret(path)
+        if s and s not in secrets:
+            secrets.append(s)
+    if not secrets:
+        return None
+    signed = body
+    if body.startswith("{"):
+        # legacy: допускаем и каноническую форму JSON
+        variants = {body, json.dumps(payload, separators=(",", ":"), sort_keys=True)}
+    else:
+        variants = {body}
+    ok = False
+    for secret in secrets:
+        for v in variants:
+            expected = hmac.new(secret.encode(), v.encode(), hashlib.sha256).hexdigest()
+            if hmac.compare_digest(expected, sig):
+                ok = True
+                break
+        if ok:
+            break
+    if not ok:
         return None
     if payload.get("exp", 0) < time.time():
         return None

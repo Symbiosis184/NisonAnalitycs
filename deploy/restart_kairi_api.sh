@@ -91,6 +91,21 @@ if [ -n "$UP" ]; then
            echo "       Исправьте: echo ВАШ_КЛЮЧ > /etc/kairi/twelvedata.key && chmod 600 /etc/kairi/twelvedata.key && systemctl restart kairi-api" ;;
         *) echo "    ВНИМАНИЕ: TradFi-эндпоинт вернул HTTP $code — смотрите journalctl -u kairi-api -n 20" ;;
     esac
+    # Инъекция свежих браузерных токенов в index.html: старый JSON-формат
+    # ("{"exp":...}") ломал HTML-атрибут content="..." (деплой обрезал токен,
+    # браузер присылал мусор -> 403 invalid or expired token). Новый формат —
+    # base64url без кавычек; скрипт идемпотентен и сам определяет WEB_DIR.
+    if [ -f "$APP_DIR/journal_token.py" ]; then
+        INJ="$APP_DIR/inject_tokens.py"
+        curl -fsSL --max-time 30 "$REPO_RAW/deploy/inject_tokens.py" -o /tmp/kairi_inject.py \
+            && mv /tmp/kairi_inject.py "$INJ" && chmod 644 "$INJ" || true
+        [ -f "$INJ" ] || INJ="/opt/nison-build/deploy/inject_tokens.py"
+        if [ -f "$INJ" ]; then
+            "$PY" "$INJ" 2>&1 | sed 's/^/      /' || echo "    !! инъекция токенов не выполнена — проверьте inject_tokens.py вручную"
+        else
+            echo "    !! inject_tokens.py не найден — пропуск токенов (акции могут отдавать 403 до следующего vps_setup.sh)"
+        fi
+    fi
     echo "    Готово. Активная ревизия:"
     git -C /opt/nison-build log --oneline -1 2>/dev/null | sed 's/^/      /' || true
     systemctl is-active kairi-api kairi-journal nginx | sed 's/^/      /'

@@ -61,23 +61,29 @@ def issue(ttl: int = DEFAULT_TTL) -> str:
 def issue_json(ttl: int = DEFAULT_TTL, role: str = "user") -> dict:
     """Расширенный токен для котировочного API (quotes_server.py).
 
-    Формат: <json-payload>.<hmac_sha256(secret, json)> — подпись считается от
-    канонической JSON-строки (sort_keys), см. quotes_server.verify_access_token.
-    ВАЖНО: quotes_server проверяет этот токен ключом MASTER_KEY_FILE
-    (/etc/kairi/journal.key), а НЕ journal.token_secret — поэтому подпись
-    здесь строится именно от master-ключа (load_master_secret). Роль 'user'
-    даёт чтение котировок и журнала; роль 'admin' — ручные прогоны алертов и
-    подтверждение подписок (выдаётся только вручную с сервера:
-    journal_token.py --role admin). Права 'user' выдаёт деплой-скрипт при
-    публикации статики (meta kairi-journal-token / kairi-api-token).
+    ФОРМАТ (без кавычек!): base64url(json-payload) + "." + hex(hmac).
+    Исторически payload вставлялся в токен «сырым» JSON вида
+    {"exp":...,"role":"user"} — двойные кавычки ломали HTML-атрибут
+    content="..." в index.html (деплой обрезал токен до символа {, браузер
+    получал мусор, quotes_server отвечал 403 invalid or expired token).
+    Base64url-обёртка исключает любые спецсимволы: токен безопасно ложится
+    в meta-тег sed'ом/regex'ом и в заголовок X-Kairi-Key.
+
+    Подпись считается HMAC-SHA256 от base64url-строки payload (master-ключ
+    /etc/kairi/journal.key — см. load_master_secret; проверка на стороне
+    quotes_server.verify_access_token использует тот же алгоритм).
+    Обратная совместимость: verify()/verify_access_token() понимают и старый
+    «сырой JSON»-формат (выданные ранее токены действительны до истечения TTL).
     """
+    import base64 as _b64
     import json as _json
     secret = load_master_secret()
     exp = int(time.time()) + max(60, min(ttl, 24 * 3600))
     payload = {"role": role, "exp": exp}
     body = _json.dumps(payload, separators=(",", ":"), sort_keys=True)
-    sig = hmac.new(secret, body.encode(), hashlib.sha256).hexdigest()
-    return {"token": f"{body}.{sig}", "expiresAt": exp}
+    b64 = _b64.urlsafe_b64encode(body.encode()).decode().rstrip("=")
+    sig = hmac.new(secret, b64.encode(), hashlib.sha256).hexdigest()
+    return {"token": f"{b64}.{sig}", "expiresAt": exp}
 
 
 def load_master_secret() -> bytes:
@@ -104,30 +110,74 @@ def load_master_secret() -> bytes:
     return secret
 
 
+def _decode_json_body(body: str):
+    """Распаковывает payload токена: base64url (новый формат) или сырой JSON
+    (legacy). Возвращает dict либо None."""
+    import base64 as _b64
+    import json as _json
+    if body.startswith("{"):
+        try:
+            return _json.loads(body)
+        except ValueError:
+            return None
+    try:
+        pad = "=" * (-len(body) % 4)
+        raw = _b64.b64decode(body + pad)
+        obj = _json.loads(raw)
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        return None
+
+
+def _looks_like_b64_json(token: str) -> bool:
+    """base64url-JSON токен: 'eyJ….<hex>' (payload начинается с eyJ — это
+    канонический JSON '{"…"')."""
+    body, _, sig = token.rpartition(".")
+    return bool(body and sig and body.startswith("eyJ"))
+
+
+def _verify_json_token(token: str) -> bool:
+    """Проверка JSON-токенов (оба формата, оба секрета)."""
+    import json as _json
+    body, _, sig = token.rpartition(".")
+    if not body or not sig:
+        return False
+    payload = _decode_json_body(body)
+    if payload is None:
+        return False
+    try:
+        exp = int(payload.get("exp", 0))
+    except (ValueError, TypeError):
+        return False
+    if exp < time.time():
+        return False
+    # canonical body для legacy-формата: если сырой JSON распарсился — сверяем
+    # и по оригинальному body (иногда деплой вставлял неканоническую строку),
+    # и по канонической; для base64url подписан сам b64-текст.
+    candidates = {body}
+    if body.startswith("{"):
+        candidates.add(_json.dumps(payload, separators=(",", ":"), sort_keys=True))
+    for secret in (load_master_secret(), load_secret()):
+        for cand in candidates:
+            expected = hmac.new(secret, cand.encode(), hashlib.sha256).hexdigest()
+            if hmac.compare_digest(sig.lower(), expected):
+                return True
+    return False
+
+
 def verify(token: str) -> bool:
     """True, если токен подписан секретом и не просрочен.
 
-    Поддерживает оба формата: классический "<exp>.<hmac>" (журнал) и
-    расширенный JSON-токен quotes_server ('{"exp":...,...}.<hmac>').
+    Поддерживает форматы: классический "<exp>.<hmac>" (журнал), base64url
+    JSON-токен ("eyJleHAi….<hmac>") и legacy «сырой JSON» ('{"exp":...}.<hmac>').
+    Для JSON-токенов проверка выполняется ДВУМЯ секретами: master-ключом
+    (/etc/kairi/journal.key — им подписывает quotes_server/issue_json) и
+    journal.token_secret (им мог подписывать старый деплой). Любой успешный
+    HMAC + непросроченный exp = токен принят.
     """
     t = token.strip()
-    if t.startswith("{"):
-        # JSON-токен: подпись считается от канонической JSON-строки payload
-        body, _, sig = t.rpartition(".")
-        if not body or not sig:
-            return False
-        import json as _json
-        try:
-            payload = _json.loads(body)
-            exp = int(payload.get("exp", 0))
-        except (ValueError, TypeError):
-            return False
-        if exp < time.time():
-            return False
-        secret = load_secret()
-        canon = _json.dumps(payload, separators=(",", ":"), sort_keys=True)
-        expected = hmac.new(secret, canon.encode(), hashlib.sha256).hexdigest()
-        return hmac.compare_digest(sig.lower(), expected)
+    if t.startswith("{") or _looks_like_b64_json(t):
+        return _verify_json_token(t)
     try:
         exp_s, sig = t.split(".", 1)
         exp = int(exp_s)
