@@ -197,30 +197,65 @@ export default function CandlestickChart({
 
     // ── Гэпы Нисона (гл. 7): разрыв ДИАПАЗОНОВ предыдущей и текущей свечи
     // (low(i) > high(i-1) либо high(i) < low(i-1)) — только для акций
-    // (на крипте gaps === []). Overnight-открытия сюда не попадают: они не
-    // являются гэпами по канону, поэтому «полос на весь график» больше нет.
-    // Гэп — это ПУСТОЕ ПРОСТРАНСТВО между high предыдущей и low текущей
-    // свечи (или наоборот), т.е. конкретный ценовой диапазон bottom..top.
-    // Обозначаем разрыв ЦЕНОЙ линией ровно посередине зоны ((top+bottom)/2),
-    // а не маркером на свече: линия стоит там, где цены не было вообще.
-    // Подпись — размер гэпа и статус заполнения. Максимум 8 линий (лимит
-    // гэпов) — «каши из полос», как при старой overnight-детекции, нет.
-    // Цвет: зелёный — вверх, красный — вниз; незаполненный — яркий,
-    // заполненный (закрыт по Нисону) — тусклый.
-    if (gaps.length > 0) {
-      for (const g of gaps) {
-        const up = g.direction === 'up';
-        const base = up ? '52,211,153' : '251,113,133'; // зелёный вверх / красный вниз
-        const alpha = g.unfilled ? 0.9 : 0.4;           // заполненный — тусклее
-        candlestickSeries.createPriceLine({
-          price: (g.top + g.bottom) / 2,
-          color: `rgba(${base},${alpha})`,
-          lineWidth: 1,
-          lineStyle: 2, // пунктир
-          axisLabelVisible: true,
-          title: `${up ? 'ГЭП↑' : 'ГЭП↓'} ${g.pct.toFixed(1)}%${g.unfilled ? '' : ' ✓'}`,
-        });
-      }
+    // (на крипте gaps === []).
+    // Гэп обозначаем КОРОТКОЙ горизонтальной черточкой прямо ВНУТРИ пустого
+    // пространства разрыва (между high предыдущей и low текущей свечи),
+    // а НЕ ценовой линией через весь график: полосы захламляли график.
+    // Черточка тянется от бара i-1 до бара i (ровно на ширину разрыва) —
+    // видно ТОЛЬКО место гэпа. Зелёная — гэп вверх, красная — вниз;
+    // незаполненный — сплошная яркая + подпись «ГЭП X.X%», заполненный
+    // (закрыт по Нисону) — тусклая пунктирная без подписи. Не более 8
+    // последних гэпов (лимит детектора). Перерисовка — при панорамировании
+    // и зуме (subscribeVisibleLogicalRangeChange), очистка — при unmount.
+    const gapOverlays: HTMLDivElement[] = [];
+    {
+      const ts = chart.timeScale();
+      const renderGapOverlays = () => {
+        for (const el of gapOverlays) el.remove();
+        gapOverlays.length = 0;
+        if (gaps.length === 0) return;
+        const cont = chartContainerRef.current;
+        if (!cont) return;
+        for (const g of gaps) {
+          const xPrev = ts.timeToCoordinate((Math.floor(g.time / 1000) - 86400) as any);
+          const xCur = ts.timeToCoordinate(Math.floor(g.time / 1000) as any);
+          if (xPrev == null || xCur == null) continue; // гэп вне видимой области
+          const yTop = candlestickSeries.priceToCoordinate(g.top);
+          const yBot = candlestickSeries.priceToCoordinate(g.bottom);
+          if (yTop == null || yBot == null) continue;
+          const up = g.direction === 'up';
+          const rgb = up ? '52,211,153' : '251,113,133';
+          const midY = (yTop + yBot) / 2;
+          const left = Math.min(xPrev, xCur);
+          const w = Math.max(4, Math.abs(xCur - xPrev));
+          const el = document.createElement('div');
+          Object.assign(el.style, {
+            position: 'absolute', left: `${left}px`, width: `${w}px`, top: `${midY}px`,
+            height: '0', pointerEvents: 'none', zIndex: '20',
+            borderTop: `2px ${g.unfilled ? 'solid' : 'dashed'} rgba(${rgb},${g.unfilled ? 0.95 : 0.4})`,
+          } as Partial<CSSStyleDeclaration>);
+          if (g.unfilled) {
+            const tag = document.createElement('span');
+            Object.assign(tag.style, {
+              position: 'absolute', left: '50%', transform: 'translate(-50%, -140%)',
+              fontSize: '9px', lineHeight: '1', whiteSpace: 'nowrap',
+              color: `rgba(${rgb},0.95)`, background: 'rgba(15,23,42,0.85)',
+              padding: '1px 4px', borderRadius: '4px',
+            } as Partial<CSSStyleDeclaration>);
+            tag.textContent = `ГЭП ${g.pct.toFixed(1)}%`;
+            el.appendChild(tag);
+          }
+          cont.appendChild(el);
+          gapOverlays.push(el);
+        }
+      };
+      renderGapOverlays();
+      ts.subscribeVisibleLogicalRangeChange(renderGapOverlays);
+      (chartRef.current as any).__gapCleanup = () => {
+        ts.unsubscribeVisibleLogicalRangeChange(renderGapOverlays);
+        for (const el of gapOverlays) el.remove();
+        gapOverlays.length = 0;
+      };
     }
 
     // ── Сигналы: линии входа/стопа/цели + маркер направления на баре сигнала ──
@@ -408,6 +443,8 @@ export default function CandlestickChart({
     return () => {
       ro.disconnect();
       if (hideTimer) clearTimeout(hideTimer);
+      const gapCleanup = (chartRef.current as any)?.__gapCleanup;
+      if (typeof gapCleanup === 'function') gapCleanup();
       const cleanup = (chartRef.current as any)?.__cleanupMarkerHover;
       if (typeof cleanup === 'function') cleanup();
       if (chartRef.current) {

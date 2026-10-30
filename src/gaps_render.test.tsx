@@ -13,9 +13,11 @@ vi.mock('lightweight-charts', () => ({
       setData: () => {}, update: () => {},
       createPriceLine: (o: any) => { calls.priceLines.push(o); },
       attachPrimitive: () => {}, detachPrimitive: () => {},
+      priceToCoordinate: (p: number) => 400 - p, // инвертированная «цена→px» для тестов
     }),
     priceScale: () => ({ applyOptions: () => {} }),
-    timeScale: () => ({ applyOptions: () => {}, fitContent: () => {}, scrollToRealTime: () => {}, timeToIndex: () => 0, logicalToCoordinate: () => 0, getVisibleLogicalRange: () => null, subscribeVisibleLogicalRangeChange: () => {}, unsubscribeVisibleLogicalRangeChange: () => {} }),
+    priceToCoordinate: (p: number) => 400 - p,
+    timeScale: () => ({ applyOptions: () => {}, fitContent: () => {}, scrollToRealTime: () => {}, timeToIndex: () => 0, timeToCoordinate: (t: any) => (Number(t) >= 0 ? Number(t) : null), logicalToCoordinate: () => 0, getVisibleLogicalRange: () => null, subscribeVisibleLogicalRangeChange: () => {}, unsubscribeVisibleLogicalRangeChange: () => {} }),
     remove: () => {}, resize: () => {},
     subscribeClick: () => {}, unsubscribeClick: () => {},
     subscribeCrosshairMove: () => {}, unsubscribeCrosshairMove: () => {},
@@ -97,26 +99,51 @@ describe('гэпы: порог и рынок', () => {
 });
 
 describe('CandlestickChart принимает gaps', () => {
-  it('для каждого гэпа: ценовая линия посередине разрыва, без маркера на свече', async () => {
+  it('гэп рисуется КОРОТКОЙ черточкой внутри разрыва (не ценовой линией через весь график)', async () => {
     const gaps: GapDTO[] = [{
       time: 86400000, prevClose: 101, open: 102.5, top: 102.5, bottom: 101,
       direction: 'up', pct: 1.5, unfilled: true,
     }];
     const candles = [bar(0, 100, 101, 99, 100), bar(86400000, 103, 104, 102.5, 103)];
     calls.priceLines.length = 0; calls.markers.length = 0;
-    render(
+    const { container } = render(
       <CandlestickChart candles={candles} patterns={[]} signals={[]} support={[]} resistance={[]} gaps={gaps} />,
     );
     await new Promise((r) => setTimeout(r, 0));
-    // Маркеров-стрелок на баре больше нет (гэп указывается НА разрыве)
+    // Ценовых линий-«полос» на весь график для гэпов больше нет
+    expect(calls.priceLines.filter((l) => l.price === 101.75)).toHaveLength(0);
+    // Маркеров-стрелок на баре тоже нет
     expect(calls.markers.filter((m: any) => String(m.text ?? '').includes('ГЭП'))).toHaveLength(0);
-    // Одна ценовая линия ровно посередине зоны разрыва (101..102.5 → 101.75)
-    const gapLines = calls.priceLines.filter((l) => l.price === 101.75);
-    expect(gapLines).toHaveLength(1);
-    expect(String(gapLines[0].title)).toContain('ГЭП');
-    expect(String(gapLines[0].title)).toContain('1.5%');
-    // Границы зоны не рисуем отдельными линиями — только центр разрыва
-    expect(calls.priceLines.filter((l) => l.price === 101 || l.price === 102.5)).toHaveLength(0);
+    // Вместо них — DOM-оверлей: короткая линия посередине зоны разрыва
+    // ((101+102.5)/2 = 101.75 → в моке координата 400-101.75 = 298.25)
+    const els = Array.from(container.parentElement!.querySelectorAll('div')).filter(
+      (d) => d.style.borderTop && /rgba\((52|251)/.test(d.style.borderTop),
+    );
+    expect(els).toHaveLength(1);
+    const el = els[0] as HTMLElement;
+    expect(el.style.top).toBe('298.25px');       // уровень середины разрыва
+    expect(el.style.width).toBe('86400px');      // НЕ на всю ширину — только место гэпа
+    expect(el.textContent).toContain('ГЭП');
+    expect(el.textContent).toContain('1.5%');
+  });
+
+  it('заполненный гэп — тусклая пунктирная черточка без подписи', async () => {
+    const gaps: GapDTO[] = [{
+      time: 86400000, prevClose: 101, open: 102.5, top: 102.5, bottom: 101,
+      direction: 'down', pct: 1.5, unfilled: false,
+    }];
+    const candles = [bar(0, 100, 101, 99, 100), bar(86400000, 103, 104, 102.5, 103)];
+    calls.priceLines.length = 0; calls.markers.length = 0;
+    const { container } = render(
+      <CandlestickChart candles={candles} patterns={[]} signals={[]} support={[]} resistance={[]} gaps={gaps} />,
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    const els = Array.from(container.parentElement!.querySelectorAll('div')).filter(
+      (d) => d.style.borderTop && /rgba\((52|251)/.test(d.style.borderTop),
+    );
+    expect(els).toHaveLength(1);
+    expect(els[0].style.borderTop).toContain('dashed');
+    expect(els[0].textContent).toBe(''); // без подписи — не захламляем
   });
 
   it('пустой gaps (крипта) — ничего не рисуется, рендер ок', async () => {
