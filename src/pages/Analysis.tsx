@@ -250,6 +250,7 @@ export default function Analysis() {
           signals={report.signals}
           support={report.support}
           resistance={report.resistance}
+          gaps={report.gaps ?? []}
           height={chartHeight}
           live={liveCandle && Date.now() - liveCandle.ts < 30_000 ? liveCandle : null}
         />

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
-import type { CandleDTO, PatternDTO, ZoneDTO, SignalDTO } from '../api/types';
+import type { CandleDTO, PatternDTO, ZoneDTO, SignalDTO, GapDTO } from '../api/types';
 
 // Единые типы данных графика — из общего контракта src/api/types.ts
 type Candle = CandleDTO;
@@ -33,6 +33,8 @@ interface Props {
   signals?: SignalDTO[];
   support?: Zone[];
   resistance?: Zone[];
+  /** Гэпы Нисона (только акции): зоны-разрывы на графике */
+  gaps?: GapDTO[];
   height?: number;
   live?: LiveCandleProp | null;
 }
@@ -46,6 +48,7 @@ export default function CandlestickChart({
   signals = [],
   support = [],
   resistance = [],
+  gaps = [],
   height = 500,
   live = null,
 }: Props) {
@@ -191,6 +194,40 @@ export default function CandlestickChart({
     };
     addZoneLines(support.filter(z => z.strong), 'support');
     addZoneLines(resistance.filter(z => z.strong), 'resistance');
+
+    // ── Гэпы Нисона (гл. 7): зоны-разрывы между закрытием прошлой сессии и
+    // открытием текущей — только для акций (на крипте gaps === []).
+    // Верх/низ зоны — тонкие линии на ценовой шкале; незаполненный гэп —
+    // пунктир, заполненный — тусклый сплошной. Подпись «GAP ↑/↓ n%» рисует
+    // маркер-призрак в центре зоны: невидимая форма square size 0 даёт
+    // library возможность показать текст без лишней фигуры.
+    if (gaps.length > 0) {
+      const gapMarkers = gaps.map((g) => {
+        const up = g.direction === 'up';
+        const col = up
+          ? (g.unfilled ? 'rgba(52,211,153,0.85)' : 'rgba(52,211,153,0.4)')
+          : (g.unfilled ? 'rgba(251,113,133,0.85)' : 'rgba(251,113,133,0.4)');
+        candlestickSeries.createPriceLine({
+          price: g.top, color: col, lineWidth: 1,
+          lineStyle: g.unfilled ? 1 : 0, axisLabelVisible: false, title: '',
+        });
+        candlestickSeries.createPriceLine({
+          price: g.bottom, color: col, lineWidth: 1,
+          lineStyle: g.unfilled ? 1 : 0, axisLabelVisible: true,
+          title: `⚡${up ? '↑' : '↓'} ${g.pct.toFixed(1)}%${g.unfilled ? '' : ' ✓'}`,
+        });
+        return {
+          time: Math.floor(g.time / 1000) as any,
+          position: 'atPriceMiddle' as const,
+          price: (g.top + g.bottom) / 2,
+          shape: 'square' as const,
+          size: 0,
+          color: 'transparent',
+          text: `ГЭП ${up ? '↑' : '↓'}${g.pct.toFixed(1)}%${g.unfilled ? ' · не заполнен' : ' · закрыт'}`,
+        };
+      }).sort((a, b) => (a.time as number) - (b.time as number));
+      createSeriesMarkers(candlestickSeries, gapMarkers as any);
+    }
 
     // ── Сигналы: линии входа/стопа/цели + маркер направления на баре сигнала ──
     // Рисуем только живые сигналы (pending/confirmed): invalidated/expired — мусор истории.
@@ -384,7 +421,7 @@ export default function CandlestickChart({
         chartRef.current = null;
       }
     };
-  }, [candles, ema20, ema50, ema200, patterns, signals, support, resistance, height]);
+  }, [candles, ema20, ema50, ema200, patterns, signals, support, resistance, gaps, height]);
 
   // ── Тихое live-обновление последнего бара (WebSocket) ─────────────────────
   // Не пересоздаём график: обновляем только OHLCV текущего незакрытого бара

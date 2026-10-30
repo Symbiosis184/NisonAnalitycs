@@ -454,6 +454,12 @@ export class ApiClient {
       resistance: zones.resistance,
       regime,
       regime_description: regimeDescription,
+      // Гэпы Нисона (гл. 7): считаем по закрытым барам; на крипте [] внутри
+      // detectGaps (24/7 рынок). Порог 1% — микрогэпы отсекаются.
+      gaps: detectGaps(
+        closedCandles.map((c) => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })),
+        parseMarket(symbol).market,
+      ),
       wyckoff: {
         phase: marketPhase.phase,
         confidence: marketPhase.confidence,
