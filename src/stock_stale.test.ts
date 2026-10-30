@@ -1,5 +1,5 @@
 /**
- * TradFi-акции: serving-stale. Если Yahoo/прокси недоступен (429/5xx),
+ * TradFi-акции: serving-stale. Если источник (Twelvedata)/прокси недоступен (429/5xx),
  * fetchKlines для акций отдаёт последние успешные свечи вместо ошибки —
  * дашборд показывает карточки с прошлыми ценами, а не «Ошибка загрузки».
  */
@@ -28,7 +28,7 @@ describe('fetchKlines(:STOCK): serving-stale при недоступном ис�
         first = false;
         return { ok: true, status: 200, json: async () => ({ data: goodBars }) };
       }
-      return { ok: false, status: 429, json: async () => ({ detail: 'yahoo rate limited' }) };
+      return { ok: false, status: 429, json: async () => ({ detail: 'twelvedata rate limited' }) };
     }) as any;
     vi.stubGlobal('fetch', fetchMock);
 

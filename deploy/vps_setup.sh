@@ -155,6 +155,20 @@ if ! [ -f /tmp/kairi_api_broken ]; then
     /opt/kairi-api/venv/bin/python3 -m py_compile /opt/kairi-api/quotes_server.py \
       || { echo "    !! quotes_server.py не компилируется"; touch /tmp/kairi_api_broken; }
 fi
+# TradFi-ключ Twelvedata (американские акции). Берётся из env при запуске
+# скрипта; если задан — кладём в защищённый файл (600), сервис прочитает его
+# сам (KAIRI_TWELVEDATA_KEY_FILE по умолчанию /etc/kairi/twelvedata.key).
+if [ -n "${TWELVEDATA_API_KEY:-}" ]; then
+    (umask 077 && printf '%s\n' "$TWELVEDATA_API_KEY" > /etc/kairi/twelvedata.key)
+    chmod 600 /etc/kairi/twelvedata.key
+    echo "    OK: ключ Twelvedata сохранён в /etc/kairi/twelvedata.key"
+elif [ -s /etc/kairi/twelvedata.key ]; then
+    echo "    Ключ Twelvedata уже настроен (/etc/kairi/twelvedata.key)"
+else
+    echo "    ВНИМАНИЕ: TWELVEDATA_API_KEY не задан — акции работать не будут."
+    echo "    Добавьте позже: echo KEY > /etc/kairi/twelvedata.key && chmod 600 \
+          /etc/kairi/twelvedata.key && systemctl restart kairi-api"
+fi
 # Секрет подтверждения платежей (on-chain watcher подписывает им факт оплаты)
 if [ ! -s /etc/kairi/payment_secret ]; then
     (umask 077 && openssl rand -hex 32 > /etc/kairi/payment_secret)

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Kairi Analytics — обновление и перезапуск котировочного сервиса kairi-api
-# (FastAPI quotes-proxy: Bybit + Yahoo Finance / американские акции).
+# (FastAPI quotes-proxy: Bybit + Twelvedata / американские акции).
 #
 # Использование (на боевом сервере под root):
 #   curl -fsSL https://raw.githubusercontent.com/Symbiosis184/NisonAnalitycs/main/deploy/restart_kairi_api.sh | bash
@@ -12,7 +12,7 @@
 #   2) проверяет компиляцию python (py_compile) ДО перезапуска — сломанный код
 #      не уронит живой сервис;
 #   3) systemctl restart kairi-api + ждёт healthz (:8000/api/quotes/healthz);
-#   4) при успехе печатает версию Yahoo-эндпоинта; при отказе — откат на
+#   4) при успехе печатает версию TradFi-эндпоинта; при отказе — откат на
 #      предыдущую копию файлов и повторный рестарт.
 set -euo pipefail
 
@@ -62,12 +62,14 @@ for i in $(seq 1 20); do
 done
 if [ -n "$UP" ]; then
     echo "    OK: Commerce API работает (127.0.0.1:8000)"
-    # быстрая самопроверка TradFi-ветки (Yahoo): 200/401/429 => обработчик жив
+    # быстрая самопроверка TradFi-ветки (Twelvedata): 200/401/429/503 => обработчик жив
     code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 \
-        "http://127.0.0.1:8000/api/quotes/klines?symbol=AAPL:STOCK&interval=d&limit=5&exchange=yahoo" || echo "000")
+        "http://127.0.0.1:8000/api/quotes/klines?symbol=AAPL:STOCK&interval=d&limit=5&exchange=twelvedata" || echo "000")
     case "$code" in
-        200|401|429) echo "    OK: Yahoo-эндпоинт отвечает (HTTP $code; 401 = нужен X-Kairi-Key — норма для curl)" ;;
-        *) echo "    ВНИМАНИЕ: Yahoo-эндпоинт вернул HTTP $code — смотрите journalctl -u kairi-api -n 20" ;;
+        200|401|429) echo "    OK: TradFi-эндпоинт отвечает (HTTP $code; 401 = нужен X-Kairi-Key — норма для curl)" ;;
+        503) echo "    !! TradFi вернул 503: на сервере не задан ключ Twelvedata."
+           echo "       Исправьте: echo ВАШ_КЛЮЧ > /etc/kairi/twelvedata.key && chmod 600 /etc/kairi/twelvedata.key && systemctl restart kairi-api" ;;
+        *) echo "    ВНИМАНИЕ: TradFi-эндпоинт вернул HTTP $code — смотрите journalctl -u kairi-api -n 20" ;;
     esac
     echo "    Готово. Активная ревизия:"
     git -C /opt/nison-build log --oneline -1 2>/dev/null | sed 's/^/      /' || true

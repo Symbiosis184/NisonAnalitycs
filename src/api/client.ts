@@ -538,7 +538,7 @@ export class ApiClient {
 
   /**
    * Анализ произвольного инструмента с дашборда: проверяем существование
-   * тикера (Bybit спот USDT-пара для крипты; Yahoo Finance — для акций США),
+   * тикера (Bybit спот USDT-пара для крипты; Twelvedata — для акций США),
    * нормализуем символ (TAO -> TAOUSDT, AAPL + рынок stock -> AAPL:STOCK)
    * и возвращаем карточку в формате MarketOverviewItem.
    */
@@ -548,11 +548,11 @@ export class ApiClient {
     const symbol = market === 'stock' ? `${base}:STOCK` : (base.endsWith('USDT') ? base : `${base}USDT`);
 
     // Проверяем наличие инструмента (крипто — instruments-info Bybit; акции —
-    // живой ответ /quote (Yahoo) через прокси; кэш/троттлинг общие)
+    // живой ответ /quote (Twelvedata) через прокси; кэш/троттлинг общие)
     const info = await fetchInstrumentInfo(symbol);
     if (!info || !info.is_trading) {
       throw new Error(market === 'stock'
-        ? `Акция ${base} не найдена (Yahoo Finance). Проверьте тикер — доступны только котировки США.`
+        ? `Акция ${base} не найдена (Twelvedata). Проверьте тикер — доступны только котировки США.`
         : `Инструмент ${symbol} не найден среди спотовых USDT-пар Bybit`);
     }
 
@@ -571,7 +571,7 @@ export class ApiClient {
     const volumes = analysis.candles.map((c) => c.volume);
     const avgVolume = volumes.reduce((sum, v) => sum + v, 0) / volumes.length;
     // Для акций change_24h переопределяем изменением за последний закрытый день:
-    // Котировка Yahoo вне сессии может показывать 0%, а Bybit-семантика «24ч»
+    // Котировка источника вне сессии может показывать 0%, а Bybit-семантика «24ч»
     // к акциям неприменима (рынок работает 09:30–16:00 ET).
     const isStock = parseMarket(symbol).market === 'stock';
     let stockDayChange = analysis.change_24h;
@@ -611,7 +611,7 @@ export class ApiClient {
     };
   }
 
-  /** Дефолтный топ-8 крипто (Bybit спот) и топ-8 акций США (Yahoo Finance, бесплатно). */
+  /** Дефолтный топ-8 крипто (Bybit спот) и топ-8 акций США (Twelvedata, бесплатный тариф). */
   static readonly DEFAULT_CRYPTO_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT'];
   static readonly DEFAULT_STOCK_SYMBOLS = ['AAPL:STOCK', 'MSFT:STOCK', 'NVDA:STOCK', 'AMZN:STOCK', 'META:STOCK', 'TSLA:STOCK', 'GOOGL:STOCK', 'AMD:STOCK'];
 

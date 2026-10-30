@@ -78,12 +78,12 @@ async function proxyFetch(path: string, params: Record<string, string | number>,
 
 /**
  * То же, что proxyFetch, но ошибки сервера НЕ глотаются: бросаем Error с
- * detail из ответа. Нужно для источников без browser-fallback (Yahoo-акции):
+ * detail из ответа. Нужно для источников без browser-fallback (акции/Twelvedata):
  * раньше любая ошибка прокси превращалась в запутанное «прокси не отвечает».
  */
 async function proxyFetchStrict(path: string, params: Record<string, string | number>, force = false): Promise<any> {
   if (!hasBackend()) {
-    throw new Error('Источник данных по акциям недоступен: нет серверного прокси (Yahoo Finance работает только на боевом домене).');
+    throw new Error('Источник данных по акциям недоступен: нет серверного прокси (Twelvedata работает только на боевом домене).');
   }
   const qs = Object.entries(params).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&');
   const token = getApiToken();
@@ -94,7 +94,7 @@ async function proxyFetchStrict(path: string, params: Record<string, string | nu
       signal: (AbortSignal as any)?.timeout ? AbortSignal.timeout(10_000) : undefined,
     });
   } catch {
-    throw new Error('Источник данных по акциям недоступен: котировочный прокси (Yahoo Finance) не отвечает. Попробуйте позже.');
+    throw new Error('Источник данных по акциям недоступен: котировочный прокси (Twelvedata) не отвечает. Попробуйте позже.');
   }
   if (res.status === 401 || res.status === 403) {
     throw new Error('Сессия истекла — обновите страницу и войдите заново.');
@@ -102,10 +102,13 @@ async function proxyFetchStrict(path: string, params: Record<string, string | nu
   if (!res.ok) {
     const detail = await readErrorDetail(res);
     if (res.status === 404 && /unknown symbol/i.test(detail)) {
-      throw new Error('Акция не найдена на Yahoo Finance — проверьте тикер.');
+      throw new Error('Акция не найдена на Twelvedata — проверьте тикер.');
     }
-    if (res.status === 429 || /rate.?limit|too many/i.test(detail)) {
-      throw new Error('Yahoo Finance временно ограничил запросы (лимит частоты). Попробуйте через минуту.');
+    if (res.status === 429 || /rate.?limit|too many|quota/i.test(detail)) {
+      throw new Error('Twelvedata временно ограничил запросы (лимит частоты). Попробуйте через минуту.');
+    }
+    if (res.status === 503 && /api key/i.test(detail)) {
+      throw new Error('Источник данных по акциям не настроен на сервере (нет ключа Twelvedata). Обратитесь в поддержку.');
     }
     throw new Error(detail ? `Ошибка источника данных (${res.status}): ${detail}`
                            : `Источник данных по акциям недоступен (HTTP ${res.status}). Попробуйте позже.`);
@@ -154,35 +157,32 @@ async function cachedFetchJson(key: string, url: string, ttlMs: number): Promise
 const KLINES_TTL_MS = 30_000;   // свечи переиспользуем 30 секунд
 const TICKER_TTL_MS = 10_000;   // тикер — 10 секунд
 
-// --- TradFi: американские акции через Yahoo Finance (бесплатно, без ключа) ---
+// --- TradFi: американские акции через Twelvedata (бесплатный тариф, ключ на сервере) ---
 // Особенности источника учитаны здесь же:
-//  • история D/W/M — годы, внутридневные 1m–60m — ~60 дней (этого хватает
-//    для наших ТФ; более длинные внутридневные окна Yahoo не отдаёт);
-//  • ответа без авторизации нет нормального User-Agent — заголовок и троттлинг
-//    настраиваются на стороне серверного прокси;
-//  • прямые обращения из браузера к query1.finance.yahoo.com невозможны (CORS),
-//    поэтому котировки акций идут ТОЛЬКО через прокси /api/quotes/*
-//    (dev-фолбэк с ключом запрещён намеренно — ключей у Yahoo-источника нет).
+//  • история D/W/M — годы, внутридневные интервалы — месяцы (хватает для ТФ);
+//  • API-ключ живёт ТОЛЬКО на серверном прокси (env KAIRI_TWELVEDATA_API_KEY),
+//    в браузер он не попадает никогда;
+//  • прямые обращения из браузера к api.twelvedata.com невозможны (CORS +
+//    утечка ключа), поэтому котировки акций идут ТОЛЬКО через /api/quotes/*.
 const STOCK_INTERVAL_MAP: Record<string, string> = {
   '30': '30', '60': '60', '120': '120', '240': '240',
   'D': 'D', 'W': 'W', 'M': 'M',
 };
 
-// Ключи YAHOO_INTERVAL на сервере — только строчные формы ('d','w'), поэтому
-// в прокси отправляем нижний регистр: сервер делает iv=interval.lower(), а
-// клиентский TTL (kline_ttl) тоже матчит 'd'/'w', а не 'D'/'W'.
-const YAHOO_WIRE_FORM: Record<string, string> = { D: 'd', W: 'w', M: 'm' };
+// Ключи TD_INTERVAL на сервере содержат и строчные формы ('d','w','m'), а
+// клиентский TTL матчит нижний регистр — в прокси отправляем 'd'/'w'/'m'.
+const TD_WIRE_FORM: Record<string, string> = { D: 'd', W: 'w', M: 'm' };
 
-/** ТФ приложения -> интервал Yahoo ('30','60','d','w'); null — недоступен. */
-export function toYahooResolution(tf: unknown): string | null {
+/** ТФ приложения -> интервал прокси ('30','60','d','w'); null — недоступен. */
+export function toStockResolution(tf: unknown): string | null {
   const bybitForm = toBybitInterval(tf);
   if (!bybitForm) return null;
   const mapped = STOCK_INTERVAL_MAP[bybitForm] ?? null;
-  return mapped ? (YAHOO_WIRE_FORM[mapped] ?? mapped) : null;
+  return mapped ? (TD_WIRE_FORM[mapped] ?? mapped) : null;
 }
 
 // Глобальный троттлер исходящих запросов к прокси (min interval между стартами).
-const STOCK_MIN_INTERVAL_MS = 350; // ≈ 2.9 req/s — запас под мягкие лимиты Yahoo
+const STOCK_MIN_INTERVAL_MS = 350; // ≈ 2.9 req/s — комфортный запас под лимиты Twelvedata (800/мин)
 let lastStockReqAt = 0;
 let stockQueue: Promise<unknown> = Promise.resolve();
 
@@ -199,13 +199,13 @@ function throttledStockFetch<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Свечи акции через котировочный прокси (Yahoo Finance — на стороне сервера).
+ * Свечи акции через котировочный прокси (Twelvedata — на стороне сервера).
  * Общий путь с fetchKlines: глобальный троттлер + короткий клиентский кэш
- * (in-flight coalescing), чтобы не спровоцировать троттлинг Yahoo при
+ * (in-flight coalescing), чтобы не спровоцировать троттлинг источника при
  * каскаде ТФ и мульти-ТФ зонах (несколько параллельных запросов).
  */
 async function fetchStockKlines(base: string, resolution: string, limit: number, force: boolean): Promise<Kline[]> {
-  const cacheKey = `klines:yahoo:${base}:${resolution}:${limit}`;
+  const cacheKey = `klines:twelvedata:${base}:${resolution}:${limit}`;
   if (force) { cache.delete(cacheKey); inflight.delete(cacheKey); }
   const hit = cache.get(cacheKey);
   if (hit && hit.expires > Date.now()) return hit.value as Kline[];
@@ -216,16 +216,16 @@ async function fetchStockKlines(base: string, resolution: string, limit: number,
     try {
       const proxied = await throttledStockFetch(() =>
         proxyFetchStrict('/api/quotes/klines',
-          { symbol: `${base}:STOCK`, interval: resolution, limit, exchange: 'yahoo' }, force));
+          { symbol: `${base}:STOCK`, interval: resolution, limit, exchange: 'twelvedata' }, force));
       if (!Array.isArray(proxied)) {
-        // Yahoo работает только через серверный прокси — browser-fallback нет (CORS).
-        throw new Error('Источник данных по акциям недоступен: котировочный прокси (Yahoo Finance) вернул неожиданный ответ. Попробуйте позже.');
+        // Twelvedata работает только через серверный прокси — browser-fallback нет (CORS+ключ).
+        throw new Error('Источник данных по акциям недоступен: котировочный прокси (Twelvedata) вернул неожиданный ответ. Попробуйте позже.');
       }
       const klines = proxied as Kline[];
       cache.set(cacheKey, { value: klines, expires: Date.now() + KLINES_TTL_MS });
       return klines;
     } catch (err) {
-      // serving-stale на клиенте: источник (Yahoo) временно недоступен или
+      // serving-stale на клиенте: источник (Twelvedata) временно недоступен или
       // ограничил частоту запросов — отдаём последние успешные свечи, даже
       // если их TTL истёк. Дашборд показывает карточки с прошлыми ценами
       // вместо «Ошибка загрузки».
@@ -245,7 +245,7 @@ async function fetchStockKlines(base: string, resolution: string, limit: number,
 async function fetchStockQuote(base: string): Promise<Ticker24h> {
   try {
     const proxied = await throttledStockFetch(() =>
-      proxyFetch('/api/quotes/ticker', { symbol: `${base}:STOCK`, exchange: 'yahoo' }));
+      proxyFetch('/api/quotes/ticker', { symbol: `${base}:STOCK`, exchange: 'twelvedata' }));
     if (proxied && Number.isFinite(Number(proxied.lastPrice))) {
       const q = proxied as { lastPrice: number; priceChange?: number; priceChangePercent?: number };
       return {
@@ -321,10 +321,10 @@ export async function fetchKlines(rawSymbol: string, interval: string, rawLimit:
 
   const bybitInterval = mapped || interval;
 
-  // ── TradFi: американские акции (Yahoo Finance, бесплатно без ключа) ────────
+  // ── TradFi: американские акции (Twelvedata через серверный прокси) ─────────
   const { base: stockBase, market } = parseMarket(symbol);
   if (market === 'stock') {
-    const resolution = toYahooResolution(bybitInterval);
+    const resolution = toStockResolution(bybitInterval);
     if (!resolution) {
       throw new Error(`Таймфрейм ${String(interval).slice(0, 16)} недоступен для акций`);
     }
@@ -369,7 +369,7 @@ export interface InstrumentInfo {
 export async function fetchInstrumentInfo(rawSymbol: string): Promise<InstrumentInfo | null> {
   const symbol = assertValidSymbol(rawSymbol);
   // Акции: проверка существования тикера — по ответу /quote на сервере
-  // (Yahoo отдаёт error/пустой ответ для неизвестного тикера).
+  // (Twelvedata отдаёт error-тело для неизвестного тикера).
   const { base, market } = parseMarket(symbol);
   if (market === 'stock') {
     try {
@@ -395,7 +395,7 @@ export async function fetch24hTicker(rawSymbol: string): Promise<Ticker24h> {
   // Валидация symbol защищает от инъекции параметров в URL запроса к Bybit
   const symbol = assertValidSymbol(rawSymbol);
 
-  // TradFi: акции — только через серверный прокси (у Yahoo нет CORS-доступа из браузера)
+  // TradFi: акции — только через серверный прокси (CORS + секретный ключ источника)
   const { base: stockBase, market: stockMarket } = parseMarket(symbol);
   if (stockMarket === 'stock') return fetchStockQuote(stockBase);
 

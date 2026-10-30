@@ -34,6 +34,7 @@
   KAIRI_ALERT_SYMBOLS  (список сканирования, через запятую)
   KAIRI_ALERT_TF       (таймфрейм скана, по умолчанию 1h)
 """
+import calendar
 import hashlib
 import hmac
 import json
@@ -59,39 +60,52 @@ TOKEN_TTL_S = int(os.environ.get("KAIRI_TOKEN_TTL", "900"))
 ALLOWED_EXCHANGES = {
     "bybit": "https://api.bybit.com",
     "binance": "https://api.binance.com",
-    # TradFi: американские акции — Yahoo Finance chart API (бесплатно, без ключа).
-    "yahoo": "https://query1.finance.yahoo.com",
+    # TradFi: американские акции — Twelvedata (бесплатный тариф, API-ключ на сервере).
+    "twelvedata": "https://api.twelvedata.com",
 }
 # SSRF-защита: хост котировочных источников фиксируется списком из env.
 ALLOWED_HOSTS = {
     h.strip().lower()
     for h in os.environ.get(
         "KAIRI_QUOTES_ALLOWED_HOSTS",
-        "api.bybit.com,api.binance.com,query1.finance.yahoo.com,query2.finance.yahoo.com",
+        "api.bybit.com,api.binance.com,api.twelvedata.com",
     ).split(",")
     if h.strip()
 }
 
-# Yahoo Finance не требует ключа, но отдаёт 429 запросам без нормального
-# User-Agent и агрессивно троттлит спам — держим серверную паузу между
-# исходящими запросами (страховка поверх клиентского троттлера во фронтенде).
-YAHOO_MIN_INTERVAL_S = float(os.environ.get("KAIRI_YAHOO_MIN_INTERVAL", "0.5"))
-YAHOO_USER_AGENT = os.environ.get(
-    "KAIRI_YAHOO_USER_AGENT",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36",
-)
-_yahoo_lock = threading.Lock()
-_yahoo_last_at = [0.0]
+# Twelvedata требует API-ключ (бесплатный тариф: 800 запросов/мин, 8000/сутки).
+# Ключ задаётся ТОЛЬКО на сервере: env KAIRI_TWELVEDATA_API_KEY или файл
+# /etc/kairi/twelvedata.key (см. deploy/vps_setup.sh). В браузер он не попадает.
+TWELVEDATA_API_KEY_FILE = os.environ.get("KAIRI_TWELVEDATA_KEY_FILE", "/etc/kairi/twelvedata.key")
 
 
-def _yahoo_throttle() -> None:
-    """Блокирующая пауза до следующего разрешённого запроса к Yahoo Finance."""
-    with _yahoo_lock:
-        wait = YAHOO_MIN_INTERVAL_S - (time.time() - _yahoo_last_at[0])
+def _load_twelvedata_key() -> str:
+    key = os.environ.get("KAIRI_TWELVEDATA_API_KEY", "").strip()
+    if key:
+        return key
+    try:
+        with open(TWELVEDATA_API_KEY_FILE, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+TWELVEDATA_API_KEY = _load_twelvedata_key()
+
+# Серверная пауза между исходящими запросами к источнику акций (страховка
+# поверх клиентского троттлера во фронтенде; дефицит ключа тоже считается).
+TWELVEDATA_MIN_INTERVAL_S = float(os.environ.get("KAIRI_TWELVEDATA_MIN_INTERVAL", "0.25"))
+_td_lock = threading.Lock()
+_td_last_at = [0.0]
+
+
+def _twelvedata_throttle() -> None:
+    """Блокирующая пауза до следующего разрешённого запроса к Twelvedata."""
+    with _td_lock:
+        wait = TWELVEDATA_MIN_INTERVAL_S - (time.time() - _td_last_at[0])
         if wait > 0:
             time.sleep(wait)
-        _yahoo_last_at[0] = time.time()
+        _td_last_at[0] = time.time()
 
 
 SYMBOL_RE = re.compile(r"^[A-Z0-9]{3,25}$")
@@ -260,11 +274,17 @@ class QuoteCache:
         return KLINES_TTL["m"]
 
     # Короткий TTL для неудачных обращений к источнику: без него каждая
-    # перезагрузка страницы снова «долбит» Yahoo/Bybit заведомо падающим
-    # запросом (429-спирали, неизвестные тикеры). 20 секунд — достаточно,
-    # чтобы переключить пользователя на рабочий инструмент, но не держать
-    # ошибку в памяти надолго.
+    # перезагрузка страницы снова «долбит» источник заведомо падающим
+    # запросом (429-спирали, неизвестные тикеры). Для rate-limit ошибок
+    # (429) держим троттл дольше — 80 секунд, чтобы успел восстановиться
+    # лимит Twelvedata (~800 запросов/мин); прочие ошибки — 20 секунд.
     ERROR_TTL_S = 20
+    RATE_LIMIT_TTL_S = 80
+
+    @classmethod
+    def _err_ttl(cls, exc: BaseException) -> int:
+        status = getattr(exc, "status_code", None)
+        return cls.RATE_LIMIT_TTL_S if status == 429 else cls.ERROR_TTL_S
 
     # serving-stale (staple): если источник недоступен (429/5xx/timeout), а
     # у ключа есть данные не старше STALE_MAX_S — отдаём их вместо ошибки.
@@ -316,7 +336,7 @@ class QuoteCache:
                 # запоминаем ошибку на короткий TTL (не перекрываем свежие данные)
                 prev = self._data.get(key)
                 if prev is None or prev[0] <= time.time():
-                    self._data[key] = (time.time() + self.ERROR_TTL_S, exc)
+                    self._data[key] = (time.time() + self._err_ttl(exc), exc)
             # serving-stale: есть относительно свежие данные — отдаём их,
             # а ошибку оставляем в кэше как троттл для последующих запросов
             stale = self.get_stale(key)
@@ -350,21 +370,19 @@ BINANCE_INTERVAL = {
     "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m",
     "1h": "1h", "2h": "2h", "4h": "4h", "1d": "1d", "1w": "1w",
 }
-# TradFi (Yahoo Finance chart API): интервалы эндпоинта + шаг в секундах.
-# Внутридневные интервалы доступны для истории ~60 дней; D/W/M — годы истории.
-YAHOO_INTERVAL = {
-    "1m": ("1m", 60), "5m": ("5m", 300), "15m": ("15m", 900),
-    "30m": ("30m", 1800), "30": ("30m", 1800),
-    "1h": ("60m", 3600), "60": ("60m", 3600),
-    "2h": ("2h", 7200), "120": ("2h", 7200),
-    "4h": ("4h", 14400), "240": ("4h", 14400),
-    "1d": ("1d", 86400), "d": ("1d", 86400), "D": ("1d", 86400),
-    "1w": ("1wk", 604800), "w": ("1wk", 604800), "W": ("1wk", 604800),
-    "1mo": ("1mo", 2592000), "m": ("1mo", 2592000), "M": ("1mo", 2592000),
+# TradFi (Twelvedata time_series): интервал эндпоинта + шаг в секундах.
+# Бесплатный тариф отдаёт годы дневной/недельной/месячной истории и несколько
+# месяцев внутридневных данных — этого хватает для всех ТФ приложения.
+TD_INTERVAL = {
+    "1m": ("1min", 60), "5m": ("5min", 300), "15m": ("15min", 900),
+    "30m": ("30min", 1800), "30": ("30min", 1800),
+    "1h": ("1hour", 3600), "60": ("1hour", 3600),
+    "2h": ("2hour", 7200), "120": ("2hour", 7200),
+    "4h": ("4hour", 14400), "240": ("4hour", 14400),
+    "1d": ("1day", 86400), "d": ("1day", 86400), "D": ("1day", 86400),
+    "1w": ("1week", 604800), "w": ("1week", 604800), "W": ("1week", 604800),
+    "1mo": ("1month", 2592000), "m": ("1month", 2592000), "M": ("1month", 2592000),
 }
-# Максимальное окно range по тирам Yahoo: 1m — 7 дней (в пределах дня),
-# остальные внутридневные — до 60 дней; недельные/месячные фильтруются по to.
-YAHOO_MAX_RANGE_S = {"1m": 7 * 86400}
 
 
 def _normalize_bybit_klines(raw: dict) -> list[dict]:
@@ -384,60 +402,84 @@ def _normalize_binance_klines(raw: list) -> list[dict]:
     } for r in raw]
 
 
-def _normalize_yahoo_klines(raw: Any) -> list[dict]:
-    """Yahoo v8/finance/chart -> канон Kline[] (хронологический порядок).
+def _normalize_td_klines(raw: Any) -> list[dict]:
+    """Twelvedata time_series -> канон Kline[] (хронологический порядок).
 
-    Ответ: {chart:{result:[{timestamp:[секунды], indicators:{quote:[{open,
-    high,low,close,volume}]}}]}}. null-бары (нерабочие минуты/гэпы) отбрасываем.
+    Ответ: {values:[{datetime,open,high,low,close,volume},...]} — новые->старые.
+    Дневной формат 'YYYY-MM-DD'; внутридневные 'YYYY-MM-DD HH:mm:ss' — время
+    биржевое (exchange_timezone), переводим в epoch по локальному часовому
+    поясу сервера (на VPS это UTC; для NYSE-сессии это детерминированный сдвиг,
+    одинаковый для всех баров одного интервала).
     """
-    try:
-        result = raw["chart"]["result"][0]
-    except (KeyError, IndexError, TypeError):
+    if isinstance(raw, dict) and raw.get("status") == "error":
+        msg = str(raw.get("message", ""))
+        if "/api/rate" in msg or "rate limit" in msg.lower():
+            raise HTTPException(status_code=429, detail="twelvedata rate limited")
+        if "quota" in msg.lower():
+            raise HTTPException(status_code=429, detail="twelvedata daily quota exceeded")
+        raise HTTPException(status_code=404, detail="unknown symbol")
+    values = raw.get("values") if isinstance(raw, dict) else None
+    if not isinstance(values, list):
         raise HTTPException(status_code=404, detail="no data for symbol")
-    if not isinstance(result, dict):
-        raise HTTPException(status_code=404, detail="no data for symbol")
-    ts = result.get("timestamp") or []
-    try:
-        q = result["indicators"]["quote"][0]
-    except (KeyError, IndexError, TypeError):
-        raise HTTPException(status_code=404, detail="empty candle series")
     out = []
-    for i in range(len(ts)):
+    for v in reversed(values):  # к хронологии
         try:
-            o, h, l, c = q["open"][i], q["high"][i], q["low"][i], q["close"][i]
-            if None in (o, h, l, c):
-                continue  # пустые бары вне сессии
-            v = q.get("volume") or []
-            vol = float(v[i]) if i < len(v) and v[i] is not None else 0.0
+            dt = str(v["datetime"])
+            if len(dt) <= 10:  # 'YYYY-MM-DD' (1day/1week/1month)
+                ts = calendar.timegm(time.strptime(dt, "%Y-%m-%d"))
+            else:              # 'YYYY-MM-DD HH:mm[:ss]' (внутридневные)
+                fmt = "%Y-%m-%d %H:%M:%S" if len(dt) >= 19 else "%Y-%m-%d %H:%M"
+                ts = int(time.mktime(time.strptime(dt, fmt)))
             out.append({
-                "openTime": int(ts[i]) * 1000,
-                "open": float(o), "high": float(h),
-                "low": float(l), "close": float(c), "volume": vol,
+                "openTime": ts * 1000,
+                "open": float(v["open"]), "high": float(v["high"]),
+                "low": float(v["low"]), "close": float(v["close"]),
+                "volume": float(v.get("volume") or 0),
             })
-        except (KeyError, IndexError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError):
             continue
     if not out:
         raise HTTPException(status_code=404, detail="empty candle series")
     return out
 
 
-def _yahoo_get(path: str, params: dict) -> Any:
-    """GET к Yahoo Finance chart API (без ключа) с троттлингом и UA-заголовком."""
-    _yahoo_throttle()
-    url = f"{ALLOWED_EXCHANGES['yahoo']}{path}"
+def _td_get(path: str, params: dict) -> Any:
+    """GET к Twelvedata API с серверным ключом, троттлингом и разбором ошибок."""
+    if not TWELVEDATA_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="twelvedata api key is not configured (KAIRI_TWELVEDATA_API_KEY)")
+    _twelvedata_throttle()
+    url = f"{ALLOWED_EXCHANGES['twelvedata']}{path}"
     host = url.split("/")[2].lower()
     if host not in ALLOWED_HOSTS:
         raise HTTPException(status_code=400, detail="host not allowed")
+    q = dict(params)
+    q["apikey"] = TWELVEDATA_API_KEY
     try:
-        r = httpx.get(url, params=params, timeout=8.0,
-                      headers={"User-Agent": YAHOO_USER_AGENT,
-                               "Accept": "application/json,text/plain,*/*"})
+        r = httpx.get(url, params=q, timeout=8.0,
+                      headers={"Accept": "application/json"})
         if r.status_code == 429:
-            raise HTTPException(status_code=429, detail="yahoo rate limited")
+            raise HTTPException(status_code=429, detail="twelvedata rate limited")
+        if r.status_code in (401, 403):
+            raise HTTPException(status_code=502, detail="twelvedata key rejected")
+        if r.status_code == 404:
+            # Twelvedata отвечает 404 и на неизвестный тикер — различаем по телу
+            try:
+                eb = r.json()
+            except Exception:
+                eb = None
+            msg = str((eb or {}).get("message", "")) if isinstance(eb, dict) else ""
+            if "/api/rate" in msg or "rate limit" in msg.lower() or "quota" in msg.lower():
+                raise HTTPException(status_code=429, detail="twelvedata rate limited")
+            raise HTTPException(status_code=404, detail="unknown symbol")
         r.raise_for_status()
         body = r.json()
-        # Chart API может вернуть 200 с error-телом (неизвестный тикер)
-        if isinstance(body, dict) and body.get("chart", {}).get("error"):
+        # Twelvedata может вернуть 200 с error-телом (неизвестный тикер/лимит)
+        if isinstance(body, dict) and body.get("status") == "error":
+            msg = str(body.get("message", ""))
+            if "/api/rate" in msg or "rate limit" in msg.lower() or "quota" in msg.lower():
+                raise HTTPException(status_code=429, detail="twelvedata rate limited")
             raise HTTPException(status_code=404, detail="unknown symbol")
         return body
     except HTTPException:
@@ -486,11 +528,11 @@ def quotes_klines(
     is_stock = bool(STOCK_SYMBOL_RE.match(symbol))
     if not (SYMBOL_RE.match(symbol) or is_stock):
         raise HTTPException(status_code=400, detail="bad symbol")
-    iv = interval.lower()  # канон для кэша/проверок; YAHOO_INTERVAL содержит и 'D'/'W'/'M'
-    if exchange == "yahoo":
+    iv = interval.lower()  # канон для кэша/проверок; TD_INTERVAL содержит и 'D'/'W'/'M'
+    if exchange == "twelvedata":
         if not is_stock:
-            raise HTTPException(status_code=400, detail="yahoo requires TICKER:STOCK")
-        if iv not in YAHOO_INTERVAL:
+            raise HTTPException(status_code=400, detail="twelvedata requires TICKER:STOCK")
+        if iv not in TD_INTERVAL:
             raise HTTPException(status_code=400, detail="bad interval")
     elif iv not in BYBIT_INTERVAL:
         raise HTTPException(status_code=400, detail="bad interval")
@@ -500,25 +542,16 @@ def quotes_klines(
     key = f"k:{exchange}:{symbol}:{iv}:{limit}"
 
     def fetch():
-        if exchange == "yahoo":
+        if exchange == "twelvedata":
             base = symbol.split(":")[0]
-            yv, step_s = YAHOO_INTERVAL[iv]
-            # Окно считаем по шагу бара с запасом на нерабочие дни/часы:
-            # внутридневные — бары*шаг (с ограничением max range тира),
-            # D/W/M — календарные дни на бар.
-            now = int(time.time())
-            window = step_s * (limit + 8)
-            max_range = YAHOO_MAX_RANGE_S.get(yv)
-            if max_range:
-                window = min(window, max_range)
-            params = {"symbol": base, "interval": yv,
-                      "range": f"{max(1, window // 86400)}d" if window >= 86400 else "1d"}
-            if yv in ("1wk", "1mo"):
-                # недельные/месячные за range-окном не гарантированы — просим from/to
-                params = {"symbol": base, "interval": yv,
-                          "period1": str(now - window), "period2": str(now)}
-            data = _yahoo_get("/v8/finance/chart/" + urllib.parse.quote(base), params)
-            return _normalize_yahoo_klines(data)
+            tv, _step_s = TD_INTERVAL[iv]
+            # time_series отдаёт последние outputsize баров — окно не нужно;
+            # запас +10 на случай отброшенных битых строк, режем по limit ниже.
+            body = _td_get("/time_series", {
+                "symbol": base, "interval": tv,
+                "outputsize": str(min(5000, limit + 10)),
+                "orderbook": "false", "format": "JSON"})
+            return _normalize_td_klines(body)
         if exchange == "bybit":
             data = _http_get(f"{ALLOWED_EXCHANGES[exchange]}/v5/market/kline", {
                 "category": "spot", "symbol": symbol,
@@ -529,8 +562,8 @@ def quotes_klines(
         return _normalize_binance_klines(data)
 
     value, from_cache = cache.get_or_fetch(key, cache.kline_ttl(iv), fetch, force=_t is not None)
-    if exchange == "yahoo" and isinstance(value, list) and len(value) > limit:
-        value = value[-limit:]  # окно range даёт запас сверху — режем по limit
+    if exchange == "twelvedata" and isinstance(value, list) and len(value) > limit:
+        value = value[-limit:]  # outputsize даёт запас сверху — режем по limit
     return {"data": value, "cached": from_cache, "exchange": exchange}
 
 
@@ -550,38 +583,36 @@ def quotes_ticker(
     key = f"t:{exchange}:{symbol}"
 
     def fetch():
-        if exchange == "yahoo":
-            # Chart API meta: regularMarketPrice / previousClose / change%.
+        if exchange == "twelvedata":
+            # /quote: percent_change уже в процентах (-1.18655 => -1.18655%).
             base = symbol.split(":")[0]
-            body = _yahoo_get(f"/v8/finance/chart/{urllib.parse.quote(base)}",
-                              {"symbol": base, "interval": "1d", "range": "5d"})
-            try:
-                meta = body["chart"]["result"][0]["meta"]
-            except (KeyError, IndexError, TypeError):
+            body = _td_get("/quote", {"symbol": base})
+            if not isinstance(body, dict) or body.get("status") == "error" \
+                    or body.get("symbol") is None:
                 raise HTTPException(status_code=404, detail="unknown symbol")
             try:
-                last_f = float(meta.get("regularMarketPrice"))
-            except (TypeError, ValueError):
+                last_f = float(body["close"])
+            except (KeyError, TypeError, ValueError):
                 raise HTTPException(status_code=404, detail="unknown symbol")
             if last_f <= 0:
                 raise HTTPException(status_code=404, detail="unknown symbol")
-            prev = meta.get("chartPreviousClose") or meta.get("previousClose")
-            try:
-                prev_f = float(prev) if prev is not None else 0.0
-            except (TypeError, ValueError):
-                prev_f = 0.0
-            # regularMarketChangePercent у Yahoo приходит в процентах (1.477 => +1.477%)
-            pct_raw = meta.get("regularMarketChangePercent")
-            try:
-                pct = float(pct_raw) if pct_raw is not None else None
-            except (TypeError, ValueError):
-                pct = None
-            if pct is None:
-                pct = ((last_f - prev_f) / prev_f * 100) if prev_f > 0 else 0.0
-            change = last_f - prev_f if prev_f > 0 else 0.0
+
+            def _f(name):
+                try:
+                    return float(body[name])
+                except (KeyError, TypeError, ValueError):
+                    return None
+
+            pct = _f("percent_change")
+            change = _f("change")
+            prev = _f("previous_close")
+            if change is None and prev is not None:
+                change = last_f - prev
+            if pct is None and prev and prev > 0:
+                pct = (last_f - prev) / prev * 100
             return {"lastPrice": last_f,
-                    "priceChange": round(change, 8),
-                    "priceChangePercent": round(pct, 4)}
+                    "priceChange": round(change if change is not None else 0.0, 8),
+                    "priceChangePercent": round(pct if pct is not None else 0.0, 4)}
         if exchange == "bybit":
             rows = _http_get(f"{ALLOWED_EXCHANGES[exchange]}/v5/market/tickers",
                              {"category": "spot", "symbol": symbol}
