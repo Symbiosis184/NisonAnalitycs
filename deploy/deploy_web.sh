@@ -4,7 +4,11 @@
 #   curl -fsSL https://raw.githubusercontent.com/Symbiosis184/NisonAnalitycs/main/deploy/deploy_web.sh | bash
 set -euo pipefail
 
-WEB_DIR="${WEB_DIR:-/var/www/kairi}"
+# Автоопределение веб-директории: явный WEB_DIR > nginx root > известный путь.
+if [ -z "${WEB_DIR:-}" ]; then
+    NGINX_ROOT=$(grep -rhoP '^\s*root\s+\K[^;]+' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null | head -1 || true)
+    if [ -n "$NGINX_ROOT" ]; then WEB_DIR="$NGINX_ROOT"; else WEB_DIR="/var/www/nison-analytics"; fi
+fi
 REPO_DIR=/opt/nison-build
 
 echo "==> Обновление репозитория (нужен dist/ из main)"
@@ -20,6 +24,7 @@ fi
 
 echo "==> Копирование статики в $WEB_DIR"
 mkdir -p "$WEB_DIR"
+rm -rf "${WEB_DIR:?}/"*
 cp -a "$REPO_DIR/dist/." "$WEB_DIR/"
 chmod -R a+rX "$WEB_DIR"
 
