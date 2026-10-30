@@ -45,16 +45,38 @@ describe('гэпы: порог и рынок', () => {
     expect(MIN_GAP_PCT).toBe(1.0);
   });
 
-  it('гэп 0.5% игнорируется, гэп 2% детектируется', () => {
+  it('overnight-открытие без разрыва диапазонов — НЕ гэп (канон Нисона)', () => {
+    // prev: high=101; cur открывается на 102.6 (+1.8% от close), но low=100.5
+    // перекрывает high предыдущей → общего диапазона нет → гэпа нет.
     const candles = [
       bar(0, 100, 101, 99, 100),
-      bar(86400000, 100.5, 101, 100, 100.8), // +0.5% — микро
-      bar(172800000, 102.6, 103, 102, 102.8), // +1.8% от 100.8? нет: prevClose=100.8 -> +1.79% ✓
+      bar(86400000, 100.5, 101, 100, 100.8),
+      bar(172800000, 102.6, 103, 100.5, 102.8),
+    ];
+    expect(detectGaps(candles, 'stock')).toHaveLength(0);
+  });
+
+  it('настоящий гэп: low текущей выше high предыдущей (разрыв ≥ 1%)', () => {
+    const candles = [
+      bar(0, 100, 101, 99, 100),
+      bar(86400000, 103.5, 105, 102.5, 104), // low 102.5 > high 101 → разрыв 1.485%
     ];
     const gaps = detectGaps(candles, 'stock');
-    expect(gaps.length).toBe(1);
+    expect(gaps).toHaveLength(1);
     expect(gaps[0].direction).toBe('up');
-    expect(gaps[0].pct).toBeGreaterThan(1);
+    expect(gaps[0].bottom).toBeCloseTo(101);
+    expect(gaps[0].top).toBeCloseTo(102.5);
+    expect(gaps[0].pct).toBeGreaterThanOrEqual(MIN_GAP_PCT);
+  });
+
+  it('нисходящий гэп: high текущей ниже low предыдущей', () => {
+    const candles = [
+      bar(0, 100, 101, 99, 100),
+      bar(86400000, 96, 97.4, 95, 96.5), // high 97.4 < low 99 → разрыв 1.6%+
+    ];
+    const gaps = detectGaps(candles, 'stock');
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].direction).toBe('down');
   });
 
   it('на крипте всегда пусто', () => {
@@ -65,8 +87,8 @@ describe('гэпы: порог и рынок', () => {
   it('fill: гэп закрыт, если последующая свеча пересекла весь диапазон', () => {
     const candles = [
       bar(0, 100, 101, 99, 100),
-      bar(86400000, 103, 104, 102.5, 103),   // гэп вверх 3%: зона 100..103
-      bar(172800000, 102.8, 103.2, 99.8, 101), // прошла 100 и 103 → закрыт
+      bar(86400000, 103.5, 105, 102.5, 104), // гэп вверх: зона 101..102.5
+      bar(172800000, 102.8, 103.2, 99.8, 101), // прошла 101 и 102.5 → закрыт
     ];
     const gaps = detectGaps(candles, 'stock');
     expect(gaps).toHaveLength(1);
@@ -75,10 +97,10 @@ describe('гэпы: порог и рынок', () => {
 });
 
 describe('CandlestickChart принимает gaps', () => {
-  it('для каждого гэпа: 2 границы зоны + текстовый маркер', async () => {
+  it('для каждого гэпа: один маркер-стрелка, без price-line зон', async () => {
     const gaps: GapDTO[] = [{
-      time: 86400000, prevClose: 100, open: 103, top: 103, bottom: 100,
-      direction: 'up', pct: 3.0, unfilled: true,
+      time: 86400000, prevClose: 101, open: 102.5, top: 102.5, bottom: 101,
+      direction: 'up', pct: 1.5, unfilled: true,
     }];
     const candles = [bar(0, 100, 101, 99, 100), bar(86400000, 103, 104, 102.5, 103)];
     calls.priceLines.length = 0; calls.markers.length = 0;
@@ -86,13 +108,13 @@ describe('CandlestickChart принимает gaps', () => {
       <CandlestickChart candles={candles} patterns={[]} signals={[]} support={[]} resistance={[]} gaps={gaps} />,
     );
     await new Promise((r) => setTimeout(r, 0));
-    // Границы зоны гэпа присутствуют на графике
-    expect(calls.priceLines.some((l) => l.price === 103)).toBe(true);
-    expect(calls.priceLines.some((l) => l.price === 100)).toBe(true);
-    // Маркер-подпись в центре зоны
+    // Никаких горизонтальных полос-зон (это и была «каша» на графике)
+    expect(calls.priceLines.filter((l) => l.price === 101 || l.price === 102.5)).toHaveLength(0);
+    // Маркер-стрелка на баре гэпа с подписью размера
     expect(calls.markers.length).toBe(1);
     expect(String(calls.markers[0].text)).toContain('ГЭП');
-    expect(calls.markers[0].price).toBeCloseTo(101.5);
+    expect(calls.markers[0].shape).toBe('arrowUp');
+    expect(calls.markers[0].position).toBe('aboveBar');
   });
 
   it('пустой gaps (крипта) — ничего не рисуется, рендер ок', async () => {
