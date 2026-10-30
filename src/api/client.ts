@@ -2,6 +2,7 @@ import { fetchKlines, fetch24hTicker, fetchInstrumentInfo } from './bybit';
 import { Candle } from '../utils/candle';
 import { ema, rsi, macd } from '../utils/indicators';
 import { detectPatterns, patternStory } from '../utils/patterns';
+import { setMarket as setPatternMarket } from '../utils/pattern_engine';
 import { requiresNextCandleConfirmation } from '../utils/pattern_ids';
 import { signalGenerator } from '../utils/signal_generator';
 import { ZoneVoter, timeframeKey } from '../utils/zone_voter';
@@ -179,6 +180,9 @@ export function timeframeCascade(tf: string): string[] {
 
 export class ApiClient {
   async getAnalysis(symbol: string, timeframe: string = 'D', opts: { force?: boolean } = {}): Promise<AnalysisReport> {
+    // Гэповые модели Нисона (гл. 7) имеют смысл только на рынках с сессиями:
+    // включаем их лишь для акций; на крипте 24/7 гэпов нет — они отключены.
+    setPatternMarket(parseMarket(symbol).market === 'stock' ? 'stocks' : 'crypto');
     const klines = await fetchKlines(symbol, timeframe, 250, opts);
     const ticker = await fetch24hTicker(symbol).catch(() => null);
 
