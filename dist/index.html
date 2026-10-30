@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <!-- Yandex.Metrika counter -->
+    <script type="text/javascript">
+      (function(m,e,t,r,i,k,a){
+          m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+          m[i].l=1*new Date();
+          for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+          k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)
+      })(window, document,'script','https://mc.yandex.ru/metrika/tag.js?id=113772471', 'ym');
+
+      ym(113772471, 'init', {ssr:true, webvisor:true, clickmap:true, ecommerce:"dataLayer", referrer: document.referrer, url: location.href, accurateTrackBounce:true, trackLinks:true});
+    </script>
+    <!-- /Yandex.Metrika counter -->
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="theme-color" content="#0a0e17" />
+    <title>Kairi Analytics — анализ рынка по методу Нисона</title>
+    <!-- SEO: базовые мета-теги для индексации (подробные description/og — на страницах через react-helmet) -->
+    <meta name="description" content="Kairi Analytics — автоматический поиск свечных паттернов Стива Нисона, объёмный профиль, сигналы и честный бэктест стратегии на данных Bybit и Binance." />
+    <link rel="canonical" href="https://kairi.pro/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Kairi Analytics" />
+    <meta property="og:title" content="Kairi Analytics — анализ рынка по методу Нисона" />
+    <meta property="og:description" content="Автоматический поиск свечных паттернов Нисона, объёмный профиль, сигналы и бэктест стратегии." />
+    <meta property="og:url" content="https://kairi.pro/" />
+    <meta property="og:locale" content="ru_RU" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="robots" content="index, follow" />
+    <!-- SEO: верификация поисковых систем (вставить содержимое файла верификации из
+         Яндекс.Вебмастера / Google Search Console) и структурированные данные -->
+    <meta name="yandex-verification" content="" />
+    <meta name="google-site-verification" content="" />
+    <link rel="preconnect" href="https://api.bybit.com" />
+    <link rel="preconnect" href="https://mc.yandex.ru" />
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "WebSite",
+          "@id": "https://kairi.pro/#website",
+          "name": "Kairi Analytics",
+          "url": "https://kairi.pro/",
+          "inLanguage": "ru",
+          "description": "Автоматический анализ крипто рынка по методу Стива Нисона: свечные паттерны, объёмный профиль, сигналы и бэктест."
+        },
+        {
+          "@type": "Organization",
+          "@id": "https://kairi.pro/#organization",
+          "name": "Kairi Analytics",
+          "url": "https://kairi.pro/"
+        },
+        {
+          "@type": "WebPage",
+          "@id": "https://kairi.pro/#home",
+          "url": "https://kairi.pro/",
+          "name": "Kairi Analytics — анализ крипто рынка по методу Стива Нисона",
+          "isPartOf": { "@id": "https://kairi.pro/#website" },
+          "about": { "@id": "https://kairi.pro/#organization" }
+        }
+      ]
+    }
+    </script>
+    <!-- П.5: CSP в production отдают заголовки хостинга (netlify.toml / vercel.json /
+         public/_headers), в dev — плагин devSecurityHeaders() из vite.config.ts.
+         Font Awesome удалён: fa-* классы в коде не используются, иконки — lucide-react. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://mc.yandex.ru; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: https://mc.yandex.ru; connect-src 'self' https://api.bybit.com wss://stream.bybit.com wss://stream.binance.com:9443 https://mc.yandex.ru; object-src 'none'; base-uri 'self'; form-action 'none'" />
+    <style>
+      /* 内联样式确保主题色立即生效，避免闪烁 */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+      }
+      html.light,
+      html.light body {
+        background-color: #ffffff !important;
+        color: #000000;
+      }
+      html.dark,
+      html.dark body {
+        background-color: #1a1a1a !important;
+        color: #ffffff;
+      }
+    </style>
+    <script>
+      // 在 React 加载前立即设置主题，避免闪烁
+      (function () {
+        const isInIframe = window.self !== window.top;
+
+        function applyThemeToDOM(theme) {
+          document.documentElement.classList.remove("light", "dark");
+          document.documentElement.classList.add(theme);
+          document.documentElement.setAttribute("data-theme", theme);
+        }
+
+        if (isInIframe) {
+          // Разрешаем сообщения только от непосредственного родителя (event.source === window.parent)
+          // 监听父窗口主动推送的主题消息
+          window.addEventListener("message", function (event) {
+            // Безопасность: принимаем сообщения только от окна-родителя, а не от любого источника
+            if (event.source !== window.parent) return;
+            if (event.data && typeof event.data.theme === "string") {
+              const theme = event.data.theme;
+              if (theme === "light" || theme === "dark") {
+                applyThemeToDOM(theme);
+              }
+            }
+          });
+        } else {
+          // 非 iframe 环境，使用默认 light 主题
+          applyThemeToDOM("light");
+        }
+      })();
+    </script>
+
+    <script type="module" crossorigin src="/assets/index-D5lBq5t6.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-HkyoWOA8.css">
+  </head>
+  <body>
+    <!-- Yandex.Metrika noscript-метка (noscript в <head> запрещён парсером HTML/Vite) -->
+    <noscript><div><img src="https://mc.yandex.ru/watch/113772471" style="position:absolute; left:-9999px;" alt="" /></div></noscript>
+    <div id="root"></div>
+  </body>
+</html>
