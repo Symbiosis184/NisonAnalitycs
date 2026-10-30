@@ -199,25 +199,28 @@ export default function CandlestickChart({
     // (low(i) > high(i-1) либо high(i) < low(i-1)) — только для акций
     // (на крипте gaps === []). Overnight-открытия сюда не попадают: они не
     // являются гэпами по канону, поэтому «полос на весь график» больше нет.
-    // Обозначение: ОДИН маркер на баре гэпа (стрелка + размер), а не две
-    // price-line на каждую зону — раньше 15×2 линий превращали график в кашу.
+    // Гэп — это ПУСТОЕ ПРОСТРАНСТВО между high предыдущей и low текущей
+    // свечи (или наоборот), т.е. конкретный ценовой диапазон bottom..top.
+    // Обозначаем разрыв ЦЕНОЙ линией ровно посередине зоны ((top+bottom)/2),
+    // а не маркером на свече: линия стоит там, где цены не было вообще.
+    // Подпись — размер гэпа и статус заполнения. Максимум 8 линий (лимит
+    // гэпов) — «каши из полос», как при старой overnight-детекции, нет.
     // Цвет: зелёный — вверх, красный — вниз; незаполненный — яркий,
     // заполненный (закрыт по Нисону) — тусклый.
     if (gaps.length > 0) {
-      const gapMarkers = gaps.map((g) => {
+      for (const g of gaps) {
         const up = g.direction === 'up';
-        const col = up
-          ? (g.unfilled ? 'rgba(52,211,153,0.95)' : 'rgba(52,211,153,0.45)')
-          : (g.unfilled ? 'rgba(251,113,133,0.95)' : 'rgba(251,113,133,0.45)');
-        return {
-          time: Math.floor(g.time / 1000) as any,
-          position: up ? 'aboveBar' as const : 'belowBar' as const,
-          color: col,
-          shape: up ? 'arrowUp' as const : 'arrowDown' as const,
-          text: `ГЭП ${g.pct.toFixed(1)}%${g.unfilled ? '' : ' ✓'}`,
-        };
-      }).sort((a, b) => (a.time as number) - (b.time as number));
-      createSeriesMarkers(candlestickSeries, gapMarkers as any);
+        const base = up ? '52,211,153' : '251,113,133'; // зелёный вверх / красный вниз
+        const alpha = g.unfilled ? 0.9 : 0.4;           // заполненный — тусклее
+        candlestickSeries.createPriceLine({
+          price: (g.top + g.bottom) / 2,
+          color: `rgba(${base},${alpha})`,
+          lineWidth: 1,
+          lineStyle: 2, // пунктир
+          axisLabelVisible: true,
+          title: `${up ? 'ГЭП↑' : 'ГЭП↓'} ${g.pct.toFixed(1)}%${g.unfilled ? '' : ' ✓'}`,
+        });
+      }
     }
 
     // ── Сигналы: линии входа/стопа/цели + маркер направления на баре сигнала ──

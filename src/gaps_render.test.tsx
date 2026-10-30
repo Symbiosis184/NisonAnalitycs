@@ -97,7 +97,7 @@ describe('гэпы: порог и рынок', () => {
 });
 
 describe('CandlestickChart принимает gaps', () => {
-  it('для каждого гэпа: один маркер-стрелка, без price-line зон', async () => {
+  it('для каждого гэпа: ценовая линия посередине разрыва, без маркера на свече', async () => {
     const gaps: GapDTO[] = [{
       time: 86400000, prevClose: 101, open: 102.5, top: 102.5, bottom: 101,
       direction: 'up', pct: 1.5, unfilled: true,
@@ -108,13 +108,15 @@ describe('CandlestickChart принимает gaps', () => {
       <CandlestickChart candles={candles} patterns={[]} signals={[]} support={[]} resistance={[]} gaps={gaps} />,
     );
     await new Promise((r) => setTimeout(r, 0));
-    // Никаких горизонтальных полос-зон (это и была «каша» на графике)
+    // Маркеров-стрелок на баре больше нет (гэп указывается НА разрыве)
+    expect(calls.markers.filter((m: any) => String(m.text ?? '').includes('ГЭП'))).toHaveLength(0);
+    // Одна ценовая линия ровно посередине зоны разрыва (101..102.5 → 101.75)
+    const gapLines = calls.priceLines.filter((l) => l.price === 101.75);
+    expect(gapLines).toHaveLength(1);
+    expect(String(gapLines[0].title)).toContain('ГЭП');
+    expect(String(gapLines[0].title)).toContain('1.5%');
+    // Границы зоны не рисуем отдельными линиями — только центр разрыва
     expect(calls.priceLines.filter((l) => l.price === 101 || l.price === 102.5)).toHaveLength(0);
-    // Маркер-стрелка на баре гэпа с подписью размера
-    expect(calls.markers.length).toBe(1);
-    expect(String(calls.markers[0].text)).toContain('ГЭП');
-    expect(calls.markers[0].shape).toBe('arrowUp');
-    expect(calls.markers[0].position).toBe('aboveBar');
   });
 
   it('пустой gaps (крипта) — ничего не рисуется, рендер ок', async () => {
