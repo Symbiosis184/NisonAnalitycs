@@ -77,6 +77,7 @@ export interface BacktestStats {
   totalTrades: number;
   wins: number;      // закрыты в плюс по netR
   winRate: number;   // % сделок с netR > 0
+  winRateGross: number; // % сделок с grossR > 0 (до издержек — для сравнения с net)
   avgGrossR: number;
   avgNetR: number;   // expectancy, R/сделка
   profitFactor: number;
@@ -181,16 +182,17 @@ export function computeStats(trades: BacktestTrade[], costFrac: number): Backtes
   const n = trades.length;
   if (n === 0) {
     return {
-      totalTrades: 0, wins: 0, winRate: 0, avgGrossR: 0, avgNetR: 0,
+      totalTrades: 0, wins: 0, winRate: 0, winRateGross: 0, avgGrossR: 0, avgNetR: 0,
       profitFactor: 0, totalNetR: 0, maxDrawdownR: 0, costsDragR: 0,
     };
   }
 
-  let grossSum = 0, netSum = 0, wins = 0, grossProfit = 0, grossLoss = 0;
+  let grossSum = 0, netSum = 0, wins = 0, grossWins = 0, grossProfit = 0, grossLoss = 0;
   for (const t of trades) {
     grossSum += t.grossR;
     netSum += t.netR;
     if (t.netR > 0) wins++;
+    if (t.grossR > 0) grossWins++;
     if (t.grossR > 0) grossProfit += t.grossR; else grossLoss += -t.grossR;
   }
 
@@ -213,6 +215,7 @@ export function computeStats(trades: BacktestTrade[], costFrac: number): Backtes
     totalTrades: n,
     wins,
     winRate: (wins / n) * 100,
+    winRateGross: (grossWins / n) * 100,
     avgGrossR: trades.reduce((s, t) => s + t.grossR, 0) / n,
     avgNetR: netSum / n,
     profitFactor: netLossAbs > 0 ? netProfit / netLossAbs : netProfit > 0 ? Infinity : 0,
