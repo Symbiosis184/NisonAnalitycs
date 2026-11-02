@@ -5,7 +5,7 @@ import { detectPatterns, patternStory } from '../utils/patterns';
 import { setMarket as setPatternMarket } from '../utils/pattern_engine';
 import { detectGaps } from '../utils/gaps';
 import { requiresNextCandleConfirmation } from '../utils/pattern_ids';
-import { signalGenerator } from '../utils/signal_generator';
+import { signalGenerator, SignalGenerator } from '../utils/signal_generator';
 import { ZoneVoter, timeframeKey } from '../utils/zone_voter';
 import { detectTrendStart, getTrendContext, getTrendMacro, getTrendCascade, type TrendContext, type TrendCascadeResult } from '../utils/trend_detection';
 import { detectRegime } from '../utils/regime';
@@ -14,7 +14,7 @@ import { planPosition, toPlanDTO } from '../utils/position_sizing';
 import { loadRiskSettings } from '../utils/risk_settings';
 import { detectPhase } from '../utils/wyckoff';
 import { buildVolumeProfile, summarizeDelta } from '../utils/volume_profile';
-import { runBacktest, type BacktestTrade, type FormationBounds } from '../utils/backtest';
+import { runBacktest, type FormationBounds } from '../utils/backtest';
 import { tagTradesByRegime, detectDegradation, statsByRegime, edgeVerdict } from '../utils/edge_verification';
 import { aggregateConsensus } from '../utils/consensus';
 import { parseMarket } from './market';
@@ -46,167 +46,198 @@ export type {
 const toPatternDirection = (type: 'бычий' | 'медвежий' | 'нейтральный'): PatternDirection =>
   type === 'бычий' ? 'bullish' : type === 'медвежий' ? 'bearish' : 'neutral';
 
-/**
- * Верификация преимущества (edge) на истории инструмента (запрос пользователя, пункт 3):
- * one-at-a-time прогон генератора по закрытым свечам → эмпирический бэктест →
- * когорты по режимам рынка + мониторинг деградации за последние 90 дней.
- * Только данные до момента каждой сделки — без lookahead. Возвращает null, если
- * наблюдений слишком мало для честного вывода (UI покажет статус ожидания).
- */
-function computeEdgeReport(candles: Candle[], timeframe: string): EdgeReportDTO | null {
-  const MIN_EVENTS = 5; // минимум срабатываний для запуска тяжёлого прогона
-  try {
-    // 1) Собираем «свежие» срабатывания детектора (signal formed at candle i).
-    const events: Array<{ i: number; pattern: string; direction: 'long' | 'short'; bounds: FormationBounds }> = [];
-    signalGenerator.resetRun(); // новый прогон — чистый кэш «свежих событий»
-    for (let i = 60; i < candles.length; i++) {
-      const sigs = signalGenerator.findSignals(candles.slice(0, i + 1), timeframe);
-      for (const s of sigs) {
-        if (!(s as import("../utils/signal_generator").Signal & { isFreshEvent?: boolean }).isFreshEvent) continue;
-        events.push({
-          i,
-          pattern: s.pattern,
-          direction: s.direction,
-          bounds: { patternLow: s.meta.patternLow, patternHigh: s.meta.patternHigh },
-        });
-      }
-      if (events.length > 400) break; // страховка от quadratic-стоимости на длинных окнах
-    }
-    if (events.length < MIN_EVENTS) return null;
-
-    // 2) Один общий прогон: детектор возвращает границы того события, чья свеча — текущая.
-    const detect = (_hist: Candle[], idx: number): FormationBounds | null => {
-      const hit = events.find((e) => e.i === idx);
-      return hit ? hit.bounds : null;
-    };
-    const res = runBacktest(candles, { detect, direction: 'long', maxHoldingBars: 60 });
-    if (res.trades.length < MIN_EVENTS) return null;
-
-    // 3) Режим рынка на момент входа каждой сделки (только история ДО входа).
-    const tagged = tagTradesByRegime(candles, res.trades);
-    const cohorts = statsByRegime(tagged);
-    // entryTime в бэктесте наследует candle.time — в миллисекундах (bybit openTime), isMs=true
-    const degradation = detectDegradation(res.trades.map((t) => ({ entryTime: t.entryTime, netR: t.netR })), Date.now(), true);
-    const verdict = edgeVerdict(cohorts, degradation);
-
-    return {
-      verdict: verdict.verdict,
-      summary: verdict.summary,
-      best_cohort: verdict.bestCohort ? verdict.bestCohort.label : null,
-      cohorts: cohorts.map((c) => ({
-        cohort: c.cohort,
-        label: c.label,
-        trades: c.trades,
-        wins: c.wins,
-        win_rate: c.winRate,
-        ci_low: c.ciLow,
-        ci_high: c.ciHigh,
-        avg_net_r: c.avgNetR,
-        total_net_r: c.totalNetR,
-        exp_ci_low: c.expectancy.ciLow,
-        exp_ci_high: c.expectancy.ciHigh,
-        has_edge: c.hasEdge,
-      })),
-      degradation: {
-        window_days: degradation.windowDays,
-        recent_trades: degradation.recentTrades,
-        history_trades: degradation.historyTrades,
-        recent_expectancy: degradation.recentExpectancy,
-        history_expectancy: degradation.historyExpectancy,
-        delta: degradation.delta,
-        z_score: degradation.zScore,
-        p_value: degradation.pValue,
-        degraded: degradation.degraded,
-        insufficient_data: degradation.insufficientData,
-        note: degradation.note,
-      },
-      source: 'backtest',
-      sample_trades: res.trades.length,
-    };
-  } catch {
-    return null; // edge-статистика не должна ронять основной отчёт
-  }
+interface BtEvent {
+  i: number;
+  pattern: string;
+  direction: 'long' | 'short';
+  bounds: FormationBounds;
 }
 
 /**
- * Бэктест-сводка по подтверждённым сигналам истории (закрытие заглушки П.3:
- * поле AnalysisReport.backtest подключено к движку utils/backtest.ts).
+ * Единый one-at-a-time сбор срабатываний генератора по ЗАКРЫТЫМ свечам
+ * (без lookahead). Раньше edge-отчёт и бэктест-сводка считались двумя
+ * независимыми прогонами с разной выборкой событий (пункт №3 аудита: цифры
+ * расходились; пункт №2: удвоенная стоимость вычислений). Теперь события
+ * собираются ОДИН раз и оба отчёта строятся поверх одной выборки.
  *
- * Методология — ровно как на странице «Бэктест» (src/pages/Backtest.tsx):
- *  • one-at-a-time прогон генератора по закрытым свечам (без lookahead);
- *  • торгуем только подтверждённые сигналы (status === 'confirmed');
- *  • вход — close бара подтверждения (patternEndIdx + 1);
- *  • одна формация = одна сделка (дедуп по паттерн|направление|бар входа);
- *  • управление позицией — живой стратегии: стоп = граница формации,
+ * Выборка = ПОДТВЕРЖДЁННЫЕ сигналы (status === 'confirmed') — ровно методология
+ * страницы «Бэктест» (src/pages/Backtest.tsx):
+ *  • событие привязано к бару входа — close подтверждающего бара
+ *    (patternEndIdx + 1), а не к бару первого появления формации;
+ *  • границы несут управление живой стратегии: стоп = граница формации,
  *    цель = структурный уровень Нисона, порог adjustedRR >= 2;
- *  • выборки < 3 сделок не показываем (недостаточно наблюдений).
- * Ошибки прогона не роняют основной отчёт — возвращаем null.
+ *  • одна формация = одна сделка (дедуп по паттерн|направление|бар входа);
+ *  • неподтверждённые («черновые») срабатывания в выборку НЕ попадают —
+ *    раньше edge-когорты торговали их по bar первого появления с механикой
+ *    2R, из-за чего цифры edge и бэктеста систематически расходились.
+ *
+ * Стоимость прогона ограничена по ВРЕМЕНИ (последние ~2 года истории), а не
+ * обрывом по индексу массива: раньше `break` при >400 событий молча терял весь
+ * хвост истории на длинных окнах.
  */
-function computeBacktestSummaries(candles: Candle[], timeframe: string): BacktestSummaryDTO[] | null {
-  const MIN_TRADES = 3;
-  try {
-    interface BtEvent { i: number; pattern: string; direction: 'long' | 'short'; bounds: FormationBounds }
-    const events: BtEvent[] = [];
-    signalGenerator.resetRun(); // новый прогон — чистый кэш «свежих событий»
-    for (let i = 60; i < candles.length; i++) {
-      const sigs = signalGenerator.findSignals(candles.slice(0, i + 1), timeframe);
-      for (const s of sigs) {
-        if (!s.confirmed || s.status !== 'confirmed') continue;
-        const entryBar = Math.min(s.meta.patternEndIdx + 1, i);
-        events.push({
-          i: entryBar,
-          pattern: s.pattern,
-          direction: s.direction,
-          bounds: {
-            patternLow: s.meta.patternLow,
-            patternHigh: s.meta.patternHigh,
-            target: { targetPrice: s.target, minRR: 2 },
-          },
-        });
-      }
-      if (events.length > 400) break; // страховка от quadratic-стоимости на длинных окнах
-    }
-
-    // Дедупликация: одна формация = одна сделка (см. комментарий выше)
-    const uniqueEvents = new Map<string, BtEvent>();
-    for (const e of events) {
-      const key = `${e.pattern}|${e.direction}|${e.i}`;
-      if (!uniqueEvents.has(key)) uniqueEvents.set(key, e);
-    }
-    const deduped = [...uniqueEvents.values()];
-    if (deduped.length < MIN_TRADES) return null;
-
-    // Один прогон на уникальную пару (паттерн, направление)
-    const keys = new Set(deduped.map((e) => `${e.pattern}|${e.direction}`));
-    const out: BacktestSummaryDTO[] = [];
-    for (const k of keys) {
-      const [pattern, dirRaw] = k.split('|');
-      const direction = dirRaw as 'long' | 'short';
-      const detect = (_hist: Candle[], idx: number): FormationBounds | null => {
-        const hit = deduped.find((e) => e.i === idx && e.pattern === pattern && e.direction === direction);
-        return hit ? hit.bounds : null;
-      };
-      const res = runBacktest(candles, { detect, direction, maxHoldingBars: 60, signalManagement: true });
-      const trades: BacktestTrade[] = res.trades;
-      if (trades.length < MIN_TRADES) continue;
-      const st = res.stats;
-      out.push({
-        pattern,
-        direction,
-        total_trades: st.totalTrades,
-        win_rate_net: st.winRate,
-        win_rate_gross: st.winRateGross,
-        expectancy_r: st.avgNetR,
-        profit_factor: Number.isFinite(st.profitFactor) ? st.profitFactor : -1, // Infinity → -1 (маркер «без убытков»)
-        total_net_r: st.totalNetR,
-        max_drawdown_r: st.maxDrawdownR,
-        costs_drag_r: st.costsDragR,
+function collectBacktestEvents(generator: SignalGenerator, candles: Candle[], timeframe: string): BtEvent[] {
+  const events: BtEvent[] = [];
+  generator.resetRun(); // новый прогон — чистый кэш «свежих событий»
+  const cutoffTime = candles[candles.length - 1].time - 730 * 24 * 3600 * 1000; // ~2 года
+  for (let i = 60; i < candles.length; i++) {
+    if (candles[i].time < cutoffTime) continue; // дешёвый skip старых баров
+    const slice = candles.slice(0, i + 1);
+    const sigs = generator.findSignals(slice, timeframe);
+    for (const s of sigs) {
+      if (!(s as import("../utils/signal_generator").Signal & { isFreshEvent?: boolean }).isFreshEvent) continue;
+      if (!s.confirmed || s.status !== 'confirmed') continue; // только подтверждённые (методология «Бэктест»)
+      events.push({
+        i: Math.min(s.meta.patternEndIdx + 1, i),
+        pattern: s.pattern,
+        direction: s.direction,
+        bounds: {
+          patternLow: s.meta.patternLow,
+          patternHigh: s.meta.patternHigh,
+          target: { targetPrice: s.target, minRR: 2 },
+        },
       });
     }
-    if (out.length === 0) return null;
-    return out.sort((a, b) => b.expectancy_r - a.expectancy_r);
+  }
+  return events;
+}
+
+/** Индекс-карта событий по бару входа — O(1) вместо O(n)-поиска в detect (#6). */
+function buildEventsByBar(events: BtEvent[]): Map<number, BtEvent[]> {
+  const byBar = new Map<number, BtEvent[]>();
+  for (const e of events) {
+    const arr = byBar.get(e.i);
+    if (arr) arr.push(e);
+    else byBar.set(e.i, [e]);
+  }
+  return byBar;
+}
+
+/**
+ * Бэктест-сводка по паттернам (поле AnalysisReport.backtest) + верификация
+ * преимущества (поле edge) — из ОДНОГО сбора событий и одного набора прогонов
+ * движка utils/backtest.ts (пункты №2/№3 аудита). Возвращает null-компоненты,
+ * если наблюдений мало; ошибки прогона не роняют основной отчёт.
+ */
+function computeBacktestReports(generator: SignalGenerator, candles: Candle[], timeframe: string): {
+  edge: EdgeReportDTO | null;
+  backtest: BacktestSummaryDTO[] | null;
+} {
+  const MIN_EVENTS = 5;  // минимум срабатываний для edge-вердикта
+  const MIN_TRADES = 3;  // минимум сделок для показа сводки по паре
+  try {
+    const events = collectBacktestEvents(generator, candles, timeframe);
+    if (events.length < MIN_EVENTS) return { edge: null, backtest: null };
+
+    // ── Edge: один общий прогон (прежняя методология когорт), но поверх
+    // общего сбора событий. Подтверждённые события несут сигнальные границы
+    // (структурная цель) — runBacktest их честно использует (signalManagement).
+    let edge: EdgeReportDTO | null = null;
+    {
+      const byBar = buildEventsByBar(events);
+      const detect = (_hist: Candle[], idx: number): FormationBounds | null => {
+        const hit = byBar.get(idx);
+        return hit && hit.length ? hit[0].bounds : null;
+      };
+      const res = runBacktest(candles, { detect, direction: 'long', maxHoldingBars: 60, signalManagement: true });
+      if (res.trades.length >= MIN_EVENTS) {
+        // Режим рынка на момент входа каждой сделки (только история ДО входа).
+        const tagged = tagTradesByRegime(candles, res.trades);
+        const cohorts = statsByRegime(tagged);
+        // entryTime в бэктесте наследует candle.time — в миллисекундах (bybit openTime), isMs=true
+        const degradation = detectDegradation(res.trades.map((t) => ({ entryTime: t.entryTime, netR: t.netR })), Date.now(), true);
+        const verdict = edgeVerdict(cohorts, degradation);
+        edge = {
+          verdict: verdict.verdict,
+          summary: verdict.summary,
+          best_cohort: verdict.bestCohort ? verdict.bestCohort.label : null,
+          cohorts: cohorts.map((c) => ({
+            cohort: c.cohort,
+            label: c.label,
+            trades: c.trades,
+            wins: c.wins,
+            win_rate: c.winRate,
+            ci_low: c.ciLow,
+            ci_high: c.ciHigh,
+            avg_net_r: c.avgNetR,
+            total_net_r: c.totalNetR,
+            exp_ci_low: c.expectancy.ciLow,
+            exp_ci_high: c.expectancy.ciHigh,
+            has_edge: c.hasEdge,
+          })),
+          degradation: {
+            window_days: degradation.windowDays,
+            recent_trades: degradation.recentTrades,
+            history_trades: degradation.historyTrades,
+            recent_expectancy: degradation.recentExpectancy,
+            history_expectancy: degradation.historyExpectancy,
+            delta: degradation.delta,
+            z_score: degradation.zScore,
+            p_value: degradation.pValue,
+            degraded: degradation.degraded,
+            insufficient_data: degradation.insufficientData,
+            note: degradation.note,
+          },
+          source: 'backtest',
+          sample_trades: res.trades.length,
+        };
+      }
+    }
+
+    // ── Сводка по паттернам: ТОЛЬКО подтверждённые сигналы (методология
+    // страницы «Бэктест»: вход по close подтверждающего бара, управление
+    // живой стратегии, одна формация = одна сделка).
+    let backtest: BacktestSummaryDTO[] | null = null;
+    {
+      const confirmed = events.filter((e) => e.bounds.target);
+      const unique = new Map<string, BtEvent>();
+      for (const e of confirmed) {
+        const key = `${e.pattern}|${e.direction}|${e.i}`;
+        if (!unique.has(key)) unique.set(key, e);
+      }
+      const deduped = [...unique.values()];
+      if (deduped.length >= MIN_TRADES) {
+        // Группировка по паре (паттерн, направление) — O(n), без повторных find.
+        const groups = new Map<string, BtEvent[]>();
+        for (const e of deduped) {
+          const k = `${e.pattern}|${e.direction}`;
+          const arr = groups.get(k);
+          if (arr) arr.push(e);
+          else groups.set(k, [e]);
+        }
+        const out: BacktestSummaryDTO[] = [];
+        for (const [k, list] of groups) {
+          if (list.length < MIN_TRADES) continue; // слишком мало наблюдений — не показываем
+          const [pattern, dirRaw] = k.split('|');
+          const direction = dirRaw as 'long' | 'short';
+          const byBar = buildEventsByBar(list);
+          const detect = (_hist: Candle[], idx: number): FormationBounds | null => {
+            const hit = byBar.get(idx);
+            return hit && hit.length ? hit[0].bounds : null;
+          };
+          const res = runBacktest(candles, { detect, direction, maxHoldingBars: 60, signalManagement: true });
+          if (res.trades.length < MIN_TRADES) continue;
+          const st = res.stats;
+          out.push({
+            pattern,
+            direction,
+            total_trades: st.totalTrades,
+            win_rate_net: st.winRate,
+            win_rate_gross: st.winRateGross,
+            expectancy_r: st.avgNetR,
+            profit_factor: Number.isFinite(st.profitFactor) ? st.profitFactor : -1, // Infinity → -1 (маркер «без убытков»)
+            total_net_r: st.totalNetR,
+            max_drawdown_r: st.maxDrawdownR,
+            costs_drag_r: st.costsDragR,
+          });
+        }
+        if (out.length > 0) backtest = out.sort((a, b) => b.expectancy_r - a.expectancy_r);
+      }
+    }
+
+    return { edge, backtest };
   } catch {
-    return null; // бэктест-сводка не должна ронять основной отчёт
+    // статистика не должна ронять основной отчёт
+    return { edge: null, backtest: null };
   }
 }
 
@@ -354,17 +385,23 @@ export class ApiClient {
     const vprofile = buildVolumeProfile(closedCandles, 120);
     const deltaSummary = summarizeDelta(closedCandles, 60);
 
-    // Верификация преимущества (пункт 3 запроса): когорты по режимам + деградация 90д.
-    // Считается на закрытых барах без lookahead; при нехватке наблюдений — null.
-    const edgeReport = computeEdgeReport(closedCandles, timeframe);
-
-    // Бэктест-сводка по паттернам (заглушка П.3 закрыта): тот же движок
-    // utils/backtest.ts и та же методология, что на странице «Бэктест».
-    const backtestSummaries = computeBacktestSummaries(closedCandles, timeframe);
+    // Верификация преимущества (edge) + бэктест-сводка по паттернам — из ОДНОГО
+    // сбора событий и одного набора прогонов движка utils/backtest.ts (пункты
+    // №2/№3 аудита: раньше считались два независимых прогона с разной выборкой).
+    // На закрытых барах, без lookahead; при нехватке наблюдений — null-компоненты.
+    // Тяжёлый one-at-a-time прогон ведётся на ИЗОЛИРОВАННОМ генераторе (отдельный
+    // кэш «свежих событий»): параллельные getAnalysis больше не перемаривают его
+    // друг у друга (гонка синглтона, пункт №2).
+    const { edge: edgeReport, backtest: backtestSummaries } = computeBacktestReports(
+      new SignalGenerator(), closedCandles, timeframe,
+    );
 
     // Генерация торговых сигналов через SignalGenerator (только закрытые бары:
     // сигнал формируется фактом ЗАКРЫТИЯ бара — живой незакрытый бар не должен
     // порождать «черновики», которые исчезают к концу интервала).
+    // Живой анализ использует общий синглтон; перед ним сбрасываем состояние
+    // one-at-a-time прогонов, чтобы кэш «свежести» гарантированно чист.
+    signalGenerator.resetRun();
     // opts.context включает «путь цены» (S/R-зоны + HVN) и фазы Вайкоффа в фильтрацию RR.
     const marketPhase = detectPhase(closedCandles);
     const detectedSignals = signalGenerator.findSignals(closedCandles, timeframe, {
