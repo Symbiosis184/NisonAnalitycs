@@ -3,3 +3,7 @@ __pycache__/
 dist/
 node_modules/
 server/__pycache__/
+.env
+.env.local
+*.log
+.DS_Store

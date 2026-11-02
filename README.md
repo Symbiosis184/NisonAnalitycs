@@ -535,25 +535,17 @@ sudo certbot --nginx -d your-domain.com
 
 ### Вариант 2: Docker (рекомендуется)
 
-**Dockerfile:**
-```dockerfile
-FROM node:18-alpine as builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
+В корне репозитория лежит актуальный `Dockerfile` (многослойная сборка: `node:20-alpine` для сборки — соответствует CI, `nginx:alpine` для раздачи статики с конфигом `deploy/nginx-docker.conf`).
 
-FROM nginx:alpine
-COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
-```
-
-**Деплой:**
+**Сборка и запуск:**
 ```bash
 docker build -t nison-analytics .
+docker run -d -p 80:80 --name nison-analytics nison-analytics
+```
+
+Переменные окружения собираются на этапе сборки (Vite static env) через `--build-arg`, например:
+```bash
+docker build --build-arg VITE_STOCK_MIN_INTERVAL_MS=250 -t nison-analytics .
 docker run -d -p 80:80 --name nison-analytics nison-analytics
 ```
 
@@ -570,7 +562,7 @@ docker run -d -p 80:80 --name nison-analytics nison-analytics
 
 ## 📄 Лицензия и правовые документы
 
-Проект переведён на **проприетарную лицензию**. Все права защищены (© 2026 владелец kairi.pro). Копирование, модификация и распространение кода без письменного разрешения правообладателя запрещены.
+Проект переведён на **проприетарную лицензию** (полный текст — в файле [`LICENSE`](LICENSE)). Все права защищены (© 2026 владелец kairi.pro). Копирование, модификация и распространение кода без письменного разрешения правообладателя запрещены.
 
 - Публичная оферта: https://kairi.pro/legal/terms.html
 - Политика конфиденциальности: https://kairi.pro/legal/privacy.html
