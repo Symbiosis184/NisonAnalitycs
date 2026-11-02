@@ -1,9 +1,1 @@
-__pycache__/
-*.pyc
 dist/
-node_modules/
-server/__pycache__/
-.env
-.env.local
-*.log
-.DS_Store
