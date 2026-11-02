@@ -615,6 +615,12 @@ def quotes_klines(
             raise HTTPException(status_code=400, detail="twelvedata requires TICKER:STOCK")
         if iv not in TD_INTERVAL:
             raise HTTPException(status_code=400, detail="bad interval")
+        # Wire-формы интервалов Twelvedata (проверено живым запросом): 1min,
+        # 5min, 15min, 30min, 1h, 2h, 4h, 8h, 1day, 1week, 1month. Формы вида
+        # '60'/'240'/'d' — внутренний канон приложения, эндпоинт их НЕ знает:
+        # раньше их отправляли как есть -> 400 "invalid interval" на всех ТФ
+        # акций, кроме дневного (для D канон совпадал с wire-формой).
+        iv = str(TD_INTERVAL[iv][0])
     elif iv not in BYBIT_INTERVAL:
         raise HTTPException(status_code=400, detail="bad interval")
     if exchange not in ALLOWED_EXCHANGES:
@@ -625,7 +631,7 @@ def quotes_klines(
     def fetch():
         if exchange == "twelvedata":
             base = symbol.split(":")[0]
-            tv, _step_s = TD_INTERVAL[iv]
+            tv = iv  # уже wire-форма Twelvedata ('1h', '30min', '1day', ...)
             # time_series отдаёт последние outputsize баров — окно не нужно;
             # запас +10 на случай отброшенных битых строк, режем по limit ниже.
             body = _td_get("/time_series", {
@@ -642,7 +648,8 @@ def quotes_klines(
             "symbol": symbol, "interval": BINANCE_INTERVAL[iv], "limit": limit})
         return _normalize_binance_klines(data)
 
-    value, from_cache = cache.get_or_fetch(key, cache.kline_ttl(iv), fetch, force=_t is not None)
+    value, from_cache = cache.get_or_fetch(
+        key, cache.kline_ttl(interval.lower()), fetch, force=_t is not None)
     if exchange == "twelvedata" and isinstance(value, list) and len(value) > limit:
         value = value[-limit:]  # outputsize даёт запас сверху — режем по limit
     return {"data": value, "cached": from_cache, "exchange": exchange}

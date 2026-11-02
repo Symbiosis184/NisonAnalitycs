@@ -164,21 +164,23 @@ const TICKER_TTL_MS = 10_000;   // тикер — 10 секунд
 //    в браузер он не попадает никогда;
 //  • прямые обращения из браузера к api.twelvedata.com невозможны (CORS +
 //    утечка ключа), поэтому котировки акций идут ТОЛЬКО через /api/quotes/*.
+// Поддерживаются ВСЕ торговые ТФ приложения (30m/1H/2H/4H/D/W) и базовые
+// минутные (1m/5m/15m). Раньше здесь были только 30/60/120/240/D/W/M, и любой
+// ТФ вне списка падал с «Таймфрейм недоступен для акций»: на дашборде все
+// карточки акций работали только на D. Значения — канон серверного прокси
+// (TD_INTERVAL в server/quotes_server.py), где они переводятся в wire-формы
+// Twelvedata ('30min','1h','1day',...).
 const STOCK_INTERVAL_MAP: Record<string, string> = {
-  '30': '30', '60': '60', '120': '120', '240': '240',
-  'D': 'D', 'W': 'W', 'M': 'M',
+  '1': '1', '3': '5', '5': '5', '15': '15',
+  '30': '30', '60': '60', '120': '120', '240': '240', '480': '480',
+  'D': 'd', 'W': 'w', 'M': 'm',
 };
 
-// Ключи TD_INTERVAL на сервере содержат и строчные формы ('d','w','m'), а
-// клиентский TTL матчит нижний регистр — в прокси отправляем 'd'/'w'/'m'.
-const TD_WIRE_FORM: Record<string, string> = { D: 'd', W: 'w', M: 'm' };
-
-/** ТФ приложения -> интервал прокси ('30','60','d','w'); null — недоступен. */
+/** ТФ приложения -> интервал прокси ('30','60','120','240','d','w'); null — недоступен. */
 export function toStockResolution(tf: unknown): string | null {
   const bybitForm = toBybitInterval(tf);
   if (!bybitForm) return null;
-  const mapped = STOCK_INTERVAL_MAP[bybitForm] ?? null;
-  return mapped ? (TD_WIRE_FORM[mapped] ?? mapped) : null;
+  return STOCK_INTERVAL_MAP[bybitForm] ?? null;
 }
 
 // Глобальный троттлер исходящих запросов к прокси (min interval между стартами).
