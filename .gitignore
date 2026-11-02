@@ -1,5 +1,1 @@
-__pycache__/
-*.pyc
 dist/
-node_modules/
-server/__pycache__/
