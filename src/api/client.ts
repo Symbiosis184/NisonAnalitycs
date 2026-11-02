@@ -1,4 +1,4 @@
-import { fetchKlines, fetch24hTicker, fetchInstrumentInfo } from './bybit';
+import { fetchKlines, fetch24hTicker, fetchInstrumentInfo, fetchMarketOverviewBatch } from './bybit';
 import { Candle } from '../utils/candle';
 import { ema, rsi, macd } from '../utils/indicators';
 import { detectPatterns, patternStory } from '../utils/patterns';
@@ -629,8 +629,15 @@ export class ApiClient {
   async getMarketOverview(market: 'crypto' | 'stock' = 'crypto'): Promise<MarketOverviewItem[]> {
     const symbols = market === 'stock' ? ApiClient.DEFAULT_STOCK_SYMBOLS : ApiClient.DEFAULT_CRYPTO_SYMBOLS;
     
-    const results = await Promise.all(
-      symbols.map(async (symbol): Promise<MarketOverviewItem | null> => {
+    // ВАЖНО (фикс «Ошибка загрузки» на акциях): тикеры обрабатываются
+    // ПОСЛЕДОВАТЕЛЬНО, а не Promise.all. Каждый getAnalysis делает ~5 запросов
+    // свечей (текущий ТФ + каскад W/D/4H) + тикер; при параллельном старте
+    // 8 тикеров это волна из ~40 обращений к котировочному прокси каждые 60 с
+    // автообновления — Twelvedata отвечает 429, и без истории кэша падали
+    // СРАЗУ ВСЕ карточки. Последовательный пакет + троттлер в bybit.ts
+    // укладывают нагрузку в лимиты источника.
+    const results = await fetchMarketOverviewBatch<MarketOverviewItem>(
+      symbols.map((symbol) => async (): Promise<MarketOverviewItem> => {
         try {
           const analysis = await this.getAnalysis(symbol, 'D');
           
@@ -695,12 +702,12 @@ export class ApiClient {
           };
         } catch (err) {
           console.error(`Ошибка получения данных для ${symbol}:`, err);
-          return null;
+          throw err; // пакет пропустит этот тикер и продолжит с остальными
         }
       })
     );
     
-    return results.filter((r): r is MarketOverviewItem => r !== null);
+    return results;
   }
 
   /** Аудит №10: пересчёт плана позиции под конкретный капитал/риск (для UI-калькулятора). */

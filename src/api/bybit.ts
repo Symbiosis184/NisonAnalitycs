@@ -186,6 +186,13 @@ const STOCK_MIN_INTERVAL_MS = 350; // ≈ 2.9 req/s — комфортный з�
 let lastStockReqAt = 0;
 let stockQueue: Promise<unknown> = Promise.resolve();
 
+/**
+ * Очередь с паузой МЕЖДУ запросами. Важно: `lastStockReqAt` обновляется
+ * ПОСЛЕ ожидания, а не до — иначе N задач, вставших в очередь за одну
+ * тик-секунду, все просчитывали одинаковый короткий wait и стартовали
+ * синхронно одним пакетом (троттлер превращался в фикцию именно при
+ * параллельном вызове из getMarketOverview — волна ~40 запросов на 429).
+ */
 function throttledStockFetch<T>(fn: () => Promise<T>): Promise<T> {
   const run = stockQueue.then(async () => {
     const wait = STOCK_MIN_INTERVAL_MS - (Date.now() - lastStockReqAt);
@@ -204,8 +211,15 @@ function throttledStockFetch<T>(fn: () => Promise<T>): Promise<T> {
  * (in-flight coalescing), чтобы не спровоцировать троттлинг источника при
  * каскаде ТФ и мульти-ТФ зонах (несколько параллельных запросов).
  */
+// Одинаковый дневной запрос переиспользуется всеми тикерами: AAPL:STOCK D,
+// AAPL:STOCK d, AAPL:STOCK 1d и т.п. — это одна и та же выборка ('d').
+// Без нормализации ключа кэш не совпадал, и дашборд акций генерировал в
+// разы больше обращений к прокси -> 429 от Twelvedata -> «Ошибка загрузки».
+const stockCacheKey = (base: string, resolution: string, limit: number) =>
+  `klines:twelvedata:${base}:${String(resolution).toLowerCase()}:${limit}`;
+
 async function fetchStockKlines(base: string, resolution: string, limit: number, force: boolean): Promise<Kline[]> {
-  const cacheKey = `klines:twelvedata:${base}:${resolution}:${limit}`;
+  const cacheKey = stockCacheKey(base, resolution, limit);
   if (force) { cache.delete(cacheKey); inflight.delete(cacheKey); }
   const hit = cache.get(cacheKey);
   if (hit && hit.expires > Date.now()) return hit.value as Kline[];
@@ -239,6 +253,37 @@ async function fetchStockKlines(base: string, resolution: string, limit: number,
   })();
   inflight.set(cacheKey, p);
   return p;
+}
+
+/**
+ * Пакетная загрузка обзора рынка (дефолтные тикеры Dashboard'а).
+ *
+ * Проблема, которую это решает: getMarketOverview запускал полный getAnalysis
+ * для каждого из 8 тикеров ПАРАЛЛЕЛЬНО. Каждый getAnalysis делает ~5 запросов
+ * свечей (текущий ТФ + каскад W/D/4H) + тикер; для акций всё это проходит
+ * через троттлер (~350 мс между стартами), но параллельные очереди разных
+ * тикеров перемешиваются: волна из ~40 обращений к прокси каждые 60 с
+ * автообновления упиралась в лимиты Twelvedata (429), а без кэша-истории при
+ * первом открытии все 8 карточек падали одновременно -> «Ошибка загрузки».
+ *
+ * Решение: пакет обрабатывается ПОСЛЕДОВАТЕЛЬНО по тикерам (в пределах одного
+ * анализа ступени каскада остаются параллельными — они коалесцируются кэшем),
+ * плюс общий троттлер для всех обращений к прокси. Результат частичный лучше
+ * пустого: если часть тикеров не загрузилась, возвращаем загрузившиеся.
+ */
+export async function fetchMarketOverviewBatch<T>(
+  jobs: Array<() => Promise<T>>,
+  onItemError?: (index: number, err: unknown) => void,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let i = 0; i < jobs.length; i++) {
+    try {
+      out.push(await jobs[i]());
+    } catch (err) {
+      onItemError?.(i, err);
+    }
+  }
+  return out;
 }
 
 /** Текущая цена акции: котировка прокси -> фолбэк по последним дневным свечам. */
