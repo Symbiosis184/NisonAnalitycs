@@ -26,14 +26,22 @@ const report: any = {
 // в обзоре рынка тикеры грузятся ПОСЛЕДОВАТЕЛЬНО (фикс 429 у провайдера), и на
 // реальных 250 мс между запросами загрузка 8 тикеров не укладывалась бы в таймауты теста.
 vi.stubEnv('VITE_STOCK_MIN_INTERVAL_MS', '0');
-vi.mock('./api/bybit', () => ({
-  fetchKlines: vi.fn(async (_symbol: string, _tf: string, opts?: any) => {
-    const n = opts?.limit ?? 100;
-    return candles.slice(-n);
-  }),
-  fetch24hTicker: vi.fn(async () => ({ priceChangePercent: 1.5, lastPrice: 150 })),
-  fetchInstrumentInfo: vi.fn(async () => null),
-}));
+// ВАЖНО: client.ts импортирует из bybit и fetchMarketOverviewBatch — его тоже
+// нужно объявить в моке, иначе Vitest кидает «No export is defined on the mock»
+// и Dashboard показывает «Ошибка загрузки». Реализация в тесте повторяет
+// семантику прода: последовательный обход задач, пропуск упавших тикеров.
+vi.mock('./api/bybit', async () => {
+  const { fetchMarketOverviewBatch } = await vi.importActual<typeof import('./api/bybit')>('./api/bybit');
+  return {
+    fetchMarketOverviewBatch,
+    fetchKlines: vi.fn(async (_symbol: string, _tf: string, opts?: any) => {
+      const n = opts?.limit ?? 100;
+      return candles.slice(-n);
+    }),
+    fetch24hTicker: vi.fn(async () => ({ priceChangePercent: 1.5, lastPrice: 150 })),
+    fetchInstrumentInfo: vi.fn(async () => null),
+  };
+});
 vi.mock('./hooks/useBinanceWebSocket', () => ({ useBinanceWebSocket: () => ({}) }));
 
 import Dashboard from './pages/Dashboard';
