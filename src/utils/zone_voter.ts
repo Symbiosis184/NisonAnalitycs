@@ -7,7 +7,7 @@
 // 5. Кластеризация близких уровней
 
 import { Candle } from './candle';
-import { ema } from './indicators';
+import { sma } from './indicators';
 import { findSwings, addLevelToMap, dedupeZones, ZoneClusterData } from './levels';
 
 /** Wilder ATR (последнее значение) по закрытым свечам; 0 при нехватке данных. */
@@ -336,7 +336,8 @@ export class ZoneVoter {
 
   /**
    * 3. Скользящие средние как динамические уровни
-   * По Нисону (глава 13): MA50, MA65, MA200 - важные уровни
+   * По Нисону (глава 13): MA50, MA65, MA200 - важные уровни.
+   * SMA, а не EMA: канон гл. 13 формулируется через простые скользящие.
    */
   private static addMALevels(
     price: number,
@@ -350,8 +351,11 @@ export class ZoneVoter {
 
     for (const period of periods) {
       if (candles.length >= period) {
-        const ma = ema(closes, period);
+        const ma = sma(closes, period);
+        // sma() возвращает NaN на первых period-1 элементах (недостаточно
+        // истории); при candles.length >= period последнее значение всегда валидно.
         const maVal = ma[ma.length - 1];
+        if (Number.isNaN(maVal)) continue;
         const lastTime = candles[candles.length - 1].time;
 
         if (maVal <= price) {

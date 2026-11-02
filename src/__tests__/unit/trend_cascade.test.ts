@@ -2,8 +2,7 @@
 // направление задаёт СТАРШИЙ ТФ с выраженной структурой, младший даёт вход.
 import { describe, it, expect } from 'vitest';
 import { Candle } from '../../utils/candle';
-import { getTrendCascade, detectTrendStart } from '../../utils/trend_detection';
-import { ema } from '../../utils/indicators';
+import { getTrendCascade, detectTrendStart, nisonSma } from '../../utils/trend_detection';
 
 function mkCandles(closes: number[]): Candle[] {
   return closes.map(
@@ -141,8 +140,9 @@ describe('detectTrendStart: крест MA10/MA65 (канон Нисона, гл.
     const candles = mkCandles(closes);
 
     // Sanity: факт пересечения действительно произошёл в последних 8 барах.
-    const ma10 = ema(closes, 10);
-    const ma65 = ema(closes, Math.min(65, closes.length - 1));
+    // Проверка на тех же скользящих, что использует детектор (SMA по канону, гл. 13).
+    const ma10 = nisonSma(closes, 10);
+    const ma65 = nisonSma(closes, Math.min(65, closes.length - 1));
     let crossIdx = -1;
     for (let i = 1; i < ma10.length; i++) {
       if (ma10[i - 1] <= ma65[i - 1] && ma10[i] > ma65[i]) crossIdx = i;

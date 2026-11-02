@@ -3,7 +3,7 @@ import { Candle } from './candle';
 import { PatternDetector, VolumeAnalyzer } from './pattern_engine';
 
 import { getTrendContext, getTrendMacro } from './trend_detection';
-import { ema, atr } from './indicators';
+import { atr } from './indicators';
 import { patternStory } from './patterns';
 import { isReversalPatternName, requiresNextCandleConfirmation } from './pattern_ids';
 import { nearestStructuralTarget } from './nison_targets';

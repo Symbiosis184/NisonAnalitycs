@@ -1,5 +1,5 @@
 import { Candle } from './candle';
-import { ema } from './indicators';
+import { sma } from './indicators';
 import { ZoneVoter, timeframeKey, type TimeframeKey } from './zone_voter';
 import { findSwings } from './levels';
 import { getSwingTrend } from './trend_detection';
@@ -267,8 +267,10 @@ export class PatternDetector {
     if (!this.atLocalLow(candle, prevCandles)) return { found: false, name: '' };
     
     const closes = prevCandles.map(c => c.close);
-    const m20Arr = ema(closes, 20);
-    const m20 = m20Arr.length > 0 ? m20Arr[m20Arr.length - 1] : null;
+    const m20Arr = sma(closes, 20);
+    // sma() даёт NaN при истории короче периода — трактуем как «MA20 недоступна».
+    const m20 = m20Arr.length > 0 && !Number.isNaN(m20Arr[m20Arr.length - 1])
+      ? m20Arr[m20Arr.length - 1] : null;
     
     // ГЛАВНОЕ ПОДТВЕРЖДЕНИЕ ПО КАНОНУ (гл. 4): молот — это ОТКАЗ У ЗОНЫ ПОДДЕРЖКИ.
     // Тень сама по себе не сигнал; без опоры это просто длинная нижняя тень.
@@ -299,8 +301,10 @@ export class PatternDetector {
     if (!this.atLocalLow(candle, prevCandles)) return { found: false, name: '' };
     
     const closes = prevCandles.map(c => c.close);
-    const m20Arr = ema(closes, 20);
-    const m20 = m20Arr.length > 0 ? m20Arr[m20Arr.length - 1] : null;
+    const m20Arr = sma(closes, 20);
+    // sma() даёт NaN при истории короче периода — трактуем как «MA20 недоступна».
+    const m20 = m20Arr.length > 0 && !Number.isNaN(m20Arr[m20Arr.length - 1])
+      ? m20Arr[m20Arr.length - 1] : null;
     
     // FIX канона: уровень тестируется тенью — low свечи как wick-касание.
     const nearSupport = ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01, PATTERN_TF_KEY, candle.low) ||
@@ -316,8 +320,10 @@ export class PatternDetector {
     if (candle.body > candle.totalRange * 0.45) return { found: false, name: '' };
     
     const closes = prevCandles.map(c => c.close);
-    const m20Arr = ema(closes, 20);
-    const m20 = m20Arr.length > 0 ? m20Arr[m20Arr.length - 1] : null;
+    const m20Arr = sma(closes, 20);
+    // sma() даёт NaN при истории короче периода — трактуем как «MA20 недоступна».
+    const m20 = m20Arr.length > 0 && !Number.isNaN(m20Arr[m20Arr.length - 1])
+      ? m20Arr[m20Arr.length - 1] : null;
     
     // FIX канона: уровень тестируется тенью — low свечи как wick-касание.
     const nearSupport = ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01, PATTERN_TF_KEY, candle.low) ||
@@ -1331,10 +1337,13 @@ export class PatternDetector {
     const mid = (last.high + last.low) / 2;
     
     const closes = pre.map(c => c.close);
-    const m20 = ema(closes, 20);
-    const m65 = ema(closes, 65);
-    const m20Val = m20.length > 0 ? m20[m20.length - 1] : null;
-    const m65Val = m65.length > 0 ? m65[m65.length - 1] : null;
+    const m20 = sma(closes, 20);
+    const m65 = sma(closes, 65);
+    // sma() даёт NaN при истории короче периода — трактуем как «MA недоступна».
+    const m20Raw = m20.length > 0 ? m20[m20.length - 1] : null;
+    const m65Raw = m65.length > 0 ? m65[m65.length - 1] : null;
+    const m20Val = m20Raw !== null && !Number.isNaN(m20Raw) ? m20Raw : null;
+    const m65Val = m65Raw !== null && !Number.isNaN(m65Raw) ? m65Raw : null;
     
     const supHold = (m20Val !== null && last.low <= m20Val * 1.005 && last.close > m20Val) ||
                     (m65Val !== null && last.low <= m65Val * 1.005 && last.close > m65Val) ||

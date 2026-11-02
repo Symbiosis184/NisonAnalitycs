@@ -82,13 +82,15 @@ export function getTrendContext(candles: Candle[]): TrendContext {
   if (isFlatMarket(candles)) return 'БОКОВИК';
 
   const closes = candles.map(c => c.close);
-  const e10 = ema(closes, 10);
-  const e20 = ema(closes, 20);
-  const e50 = ema(closes, Math.min(50, closes.length - 1));
+  // SMA, а не EMA: канон гл. 13 формулируется через простые скользящие
+  // (nisonSma даёт валидные значения даже при короткой истории).
+  const m10 = nisonSma(closes, 10);
+  const m20 = nisonSma(closes, 20);
+  const m50 = nisonSma(closes, Math.min(50, closes.length - 1));
   const last = candles[candles.length - 1];
-  const v10 = e10[e10.length - 1];
-  const v20 = e20[e20.length - 1];
-  const v50 = e50[e50.length - 1];
+  const v10 = m10[m10.length - 1];
+  const v20 = m20[m20.length - 1];
+  const v50 = m50[m50.length - 1];
 
   let ma: TrendContext = 'БОКОВИК';
   if (last.close > v10 && v10 > v20 && v20 > v50) ma = 'ВОСХОДЯЩИЙ';
