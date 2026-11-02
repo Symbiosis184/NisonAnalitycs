@@ -250,7 +250,7 @@ export interface AnalysisReport {
   trend_analysis: TrendAnalysisDTO;
   /** Бета: журнал сигналов и эмпирический бэктест находятся в бета-статусе */
   beta?: { journal: 'beta'; backtest: 'beta' };
-  /** Бэктест-сводка по найденным сигналам (заглушка до подключения движка — П.3) */
+  /** Бэктест-сводка по подтверждённым сигналам истории (движок utils/backtest.ts, методология как на странице «Бэктест») */
   backtest?: BacktestSummaryDTO[];
   /** Верификация преимущества (utils/edge_verification): деградация + когорты режимов */
   edge?: EdgeReportDTO;

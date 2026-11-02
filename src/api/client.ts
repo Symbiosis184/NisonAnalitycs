@@ -14,7 +14,7 @@ import { planPosition, toPlanDTO } from '../utils/position_sizing';
 import { loadRiskSettings } from '../utils/risk_settings';
 import { detectPhase } from '../utils/wyckoff';
 import { buildVolumeProfile, summarizeDelta } from '../utils/volume_profile';
-import { runBacktest, type FormationBounds } from '../utils/backtest';
+import { runBacktest, type BacktestTrade, type FormationBounds } from '../utils/backtest';
 import { tagTradesByRegime, detectDegradation, statsByRegime, edgeVerdict } from '../utils/edge_verification';
 import { aggregateConsensus } from '../utils/consensus';
 import { parseMarket } from './market';
@@ -24,6 +24,7 @@ import type {
   CandleDTO,
   ConsensusDTO,
   EdgeReportDTO,
+  BacktestSummaryDTO,
   MarketOverviewItem,
   PatternDTO,
   PatternDirection,
@@ -124,6 +125,88 @@ function computeEdgeReport(candles: Candle[], timeframe: string): EdgeReportDTO 
     };
   } catch {
     return null; // edge-статистика не должна ронять основной отчёт
+  }
+}
+
+/**
+ * Бэктест-сводка по подтверждённым сигналам истории (закрытие заглушки П.3:
+ * поле AnalysisReport.backtest подключено к движку utils/backtest.ts).
+ *
+ * Методология — ровно как на странице «Бэктест» (src/pages/Backtest.tsx):
+ *  • one-at-a-time прогон генератора по закрытым свечам (без lookahead);
+ *  • торгуем только подтверждённые сигналы (status === 'confirmed');
+ *  • вход — close бара подтверждения (patternEndIdx + 1);
+ *  • одна формация = одна сделка (дедуп по паттерн|направление|бар входа);
+ *  • управление позицией — живой стратегии: стоп = граница формации,
+ *    цель = структурный уровень Нисона, порог adjustedRR >= 2;
+ *  • выборки < 3 сделок не показываем (недостаточно наблюдений).
+ * Ошибки прогона не роняют основной отчёт — возвращаем null.
+ */
+function computeBacktestSummaries(candles: Candle[], timeframe: string): BacktestSummaryDTO[] | null {
+  const MIN_TRADES = 3;
+  try {
+    interface BtEvent { i: number; pattern: string; direction: 'long' | 'short'; bounds: FormationBounds }
+    const events: BtEvent[] = [];
+    signalGenerator.resetRun(); // новый прогон — чистый кэш «свежих событий»
+    for (let i = 60; i < candles.length; i++) {
+      const sigs = signalGenerator.findSignals(candles.slice(0, i + 1), timeframe);
+      for (const s of sigs) {
+        if (!s.confirmed || s.status !== 'confirmed') continue;
+        const entryBar = Math.min(s.meta.patternEndIdx + 1, i);
+        events.push({
+          i: entryBar,
+          pattern: s.pattern,
+          direction: s.direction,
+          bounds: {
+            patternLow: s.meta.patternLow,
+            patternHigh: s.meta.patternHigh,
+            target: { targetPrice: s.target, minRR: 2 },
+          },
+        });
+      }
+      if (events.length > 400) break; // страховка от quadratic-стоимости на длинных окнах
+    }
+
+    // Дедупликация: одна формация = одна сделка (см. комментарий выше)
+    const uniqueEvents = new Map<string, BtEvent>();
+    for (const e of events) {
+      const key = `${e.pattern}|${e.direction}|${e.i}`;
+      if (!uniqueEvents.has(key)) uniqueEvents.set(key, e);
+    }
+    const deduped = [...uniqueEvents.values()];
+    if (deduped.length < MIN_TRADES) return null;
+
+    // Один прогон на уникальную пару (паттерн, направление)
+    const keys = new Set(deduped.map((e) => `${e.pattern}|${e.direction}`));
+    const out: BacktestSummaryDTO[] = [];
+    for (const k of keys) {
+      const [pattern, dirRaw] = k.split('|');
+      const direction = dirRaw as 'long' | 'short';
+      const detect = (_hist: Candle[], idx: number): FormationBounds | null => {
+        const hit = deduped.find((e) => e.i === idx && e.pattern === pattern && e.direction === direction);
+        return hit ? hit.bounds : null;
+      };
+      const res = runBacktest(candles, { detect, direction, maxHoldingBars: 60, signalManagement: true });
+      const trades: BacktestTrade[] = res.trades;
+      if (trades.length < MIN_TRADES) continue;
+      const st = res.stats;
+      out.push({
+        pattern,
+        direction,
+        total_trades: st.totalTrades,
+        win_rate_net: st.winRate,
+        win_rate_gross: st.winRateGross,
+        expectancy_r: st.avgNetR,
+        profit_factor: Number.isFinite(st.profitFactor) ? st.profitFactor : -1, // Infinity → -1 (маркер «без убытков»)
+        total_net_r: st.totalNetR,
+        max_drawdown_r: st.maxDrawdownR,
+        costs_drag_r: st.costsDragR,
+      });
+    }
+    if (out.length === 0) return null;
+    return out.sort((a, b) => b.expectancy_r - a.expectancy_r);
+  } catch {
+    return null; // бэктест-сводка не должна ронять основной отчёт
   }
 }
 
@@ -274,6 +357,10 @@ export class ApiClient {
     // Верификация преимущества (пункт 3 запроса): когорты по режимам + деградация 90д.
     // Считается на закрытых барах без lookahead; при нехватке наблюдений — null.
     const edgeReport = computeEdgeReport(closedCandles, timeframe);
+
+    // Бэктест-сводка по паттернам (заглушка П.3 закрыта): тот же движок
+    // utils/backtest.ts и та же методология, что на странице «Бэктест».
+    const backtestSummaries = computeBacktestSummaries(closedCandles, timeframe);
 
     // Генерация торговых сигналов через SignalGenerator (только закрытые бары:
     // сигнал формируется фактом ЗАКРЫТИЯ бара — живой незакрытый бар не должен
@@ -505,6 +592,7 @@ export class ApiClient {
       // Журнал сигналов и эмпирический бэктест — бета (статистика накапливается)
       beta: { journal: 'beta', backtest: 'beta' },
       ...(edgeReport ? { edge: edgeReport } : {}),
+      ...(backtestSummaries ? { backtest: backtestSummaries } : {}),
       generated: Date.now(),
     };
   }

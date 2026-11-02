@@ -182,7 +182,11 @@ export function toStockResolution(tf: unknown): string | null {
 }
 
 // Глобальный троттлер исходящих запросов к прокси (min interval между стартами).
-const STOCK_MIN_INTERVAL_MS = 350; // ≈ 2.9 req/s — комфортный запас под лимиты Twelvedata (800/мин)
+// 250 мс ≈ 4 req/s — с запасом под лимит Twelvedata (8 req/s на бесплатном
+// тарифе, 800/мин) и быстрее для последовательной загрузки обзора рынка.
+const STOCK_MIN_INTERVAL_MS = Number(
+  (typeof import.meta !== 'undefined' ? (import.meta as any).env?.VITE_STOCK_MIN_INTERVAL_MS : undefined) ?? 250,
+);
 let lastStockReqAt = 0;
 let stockQueue: Promise<unknown> = Promise.resolve();
 

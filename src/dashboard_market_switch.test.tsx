@@ -22,6 +22,10 @@ const report: any = {
 };
 
 // Мок транспорта данных: client.ts строит отчёты из этих ответов; WS-хук — заглушка.
+// Троттлер акций ускоряем до 0 мс (VITE_STOCK_MIN_INTERVAL_MS читается src/api/bybit.ts):
+// в обзоре рынка тикеры грузятся ПОСЛЕДОВАТЕЛЬНО (фикс 429 у провайдера), и на
+// реальных 250 мс между запросами загрузка 8 тикеров не укладывалась бы в таймауты теста.
+vi.stubEnv('VITE_STOCK_MIN_INTERVAL_MS', '0');
 vi.mock('./api/bybit', () => ({
   fetchKlines: vi.fn(async (_symbol: string, _tf: string, opts?: any) => {
     const n = opts?.limit ?? 100;
