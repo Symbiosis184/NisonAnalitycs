@@ -63,4 +63,26 @@ describe('aggregateConsensus (канон Нисона: согласие > кол
       expect(r.confidence).toBeLessThanOrEqual(95);
     }
   });
+
+  it('NaN/garbage в quality не отравляет результат (не превращает всё в NaN)', () => {
+    const r = aggregateConsensus([
+      sig('long', 0.9),
+      sig('long', NaN),
+      { direction: 'long', quality: undefined as unknown as number },
+    ] as ConsensusInput[]);
+    expect(Number.isFinite(r.score)).toBe(true);
+    expect(Number.isFinite(r.confidence)).toBe(true);
+    expect(r.direction).toBe('buy');
+    // бракованные сигналы проигнорированы — результат как от одного чистого
+    expect(r).toEqual(aggregateConsensus([sig('long', 0.9)]));
+  });
+
+  it('качество вне [0,1] клампится (завышенное quality не даёт >5/5)', () => {
+    const r = aggregateConsensus([sig('long', 50), sig('long', 1.5)]);
+    expect(r.score).toBeLessThanOrEqual(5);
+    expect(r.confidence).toBeLessThanOrEqual(95);
+    const neg = aggregateConsensus([sig('long', -3)]);
+    expect(neg.score).toBeGreaterThanOrEqual(0);
+    expect(Number.isFinite(neg.score)).toBe(true);
+  });
 });

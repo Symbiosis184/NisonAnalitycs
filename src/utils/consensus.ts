@@ -13,16 +13,25 @@ export interface ConsensusResult {
   direction: 'buy' | 'sell' | 'neutral';
 }
 
+/** Приведение качества к безопасному диапазону [0, 1] (защита от NaN/misfire). */
+const safeQuality = (q: number): number => (Number.isFinite(q) ? Math.min(1, Math.max(0, q)) : 0);
+
 /** Взвешенный вес сигнала: базовый + буст за сильное подтверждение объёмом. */
 const weight = (s: ConsensusInput): number => {
-  const volBoost = s.quality >= 0.75 ? 1.25 : s.quality >= 0.6 ? 1.0 : 0.8;
-  return (0.5 + s.quality) * volBoost;
+  const q = safeQuality(s.quality);
+  const volBoost = q >= 0.75 ? 1.25 : q >= 0.6 ? 1.0 : 0.8;
+  return (0.5 + q) * volBoost;
 };
 
 export function aggregateConsensus(signals: ConsensusInput[]): ConsensusResult {
+  // Пропускаем сигналы с нечисловым качеством/направлением — иначе один
+  // бракованный элемент превращает весь score/confidence в NaN.
+  const valid = signals.filter(
+    (s) => Number.isFinite(s.quality) && (s.direction === 'long' || s.direction === 'short'),
+  );
   let bullW = 0;
   let bearW = 0;
-  for (const s of signals) {
+  for (const s of valid) {
     if (s.direction === 'long') bullW += weight(s); else bearW += weight(s);
   }
   const totalW = bullW + bearW;
@@ -34,8 +43,8 @@ export function aggregateConsensus(signals: ConsensusInput[]): ConsensusResult {
   }
 
   const agreeCount = Math.max(
-    signals.filter((s) => s.direction === 'long').length,
-    signals.filter((s) => s.direction === 'short').length,
+    valid.filter((s) => s.direction === 'long').length,
+    valid.filter((s) => s.direction === 'short').length,
   );
 
   // Базовый балл за силу согласия (max 4) + небольшой бонус за «широту
