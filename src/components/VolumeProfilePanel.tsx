@@ -111,7 +111,7 @@ export function VolumeProfileChart({ profile, price, signal }: VPProps) {
   const dirColor = signal ? (signal.direction === 'long' ? COLORS.long : COLORS.short) : COLORS.text;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full select-none" role="img" aria-label="Профиль объёма">
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full select-none" role="img" aria-label={t('Профиль объёма')}>
       {/* Value Area — затенённая зона ~70% объёма */}
       <rect x={padL} y={yOf(profile.vah)} width={plotW} height={Math.max(0, yOf(profile.val) - yOf(profile.vah))} fill={COLORS.va} />
 
@@ -126,7 +126,7 @@ export function VolumeProfileChart({ profile, price, signal }: VPProps) {
           fill={binColor(b)}
           rx={1}
         >
-          <title>{`${formatPrice(b.low)}–${formatPrice(b.high)} · ${(b.share * 100).toFixed(1)}% объёма`}</title>
+          <title>{`${formatPrice(b.low)}–${formatPrice(b.high)} · ${(b.share * 100).toFixed(1)}% ${t('объёма')}`}</title>
         </rect>
       ))}
 
@@ -142,7 +142,7 @@ export function VolumeProfileChart({ profile, price, signal }: VPProps) {
 
       {/* Текущая цена */}
       <line x1={padL} y1={yOf(price)} x2={W - padR} y2={yOf(price)} stroke="#e2e8f0" strokeWidth={1} />
-      <text x={W - padR} y={yOf(price) + 11} textAnchor="end" fontSize={10} fill="#e2e8f0">Цена ${formatPrice(price)}</text>
+      <text x={W - padR} y={yOf(price) + 11} textAnchor="end" fontSize={10} fill="#e2e8f0">{t('Цена')} ${formatPrice(price)}</text>
 
       {/* Оверлей пути цены активного сигнала */}
       {signal && (
@@ -157,18 +157,18 @@ export function VolumeProfileChart({ profile, price, signal }: VPProps) {
             opacity={0.07}
           />
           <line x1={padL} y1={yOf(signal.entry_price)} x2={W - padR} y2={yOf(signal.entry_price)} stroke={dirColor} strokeWidth={1.5} />
-          <text x={padL + 4} y={yOf(signal.entry_price) - 3} fontSize={10} fill={dirColor}>Вход ${formatPrice(signal.entry_price)}</text>
+          <text x={padL + 4} y={yOf(signal.entry_price) - 3} fontSize={10} fill={dirColor}>{t('Вход')} ${formatPrice(signal.entry_price)}</text>
           <line x1={padL} y1={yOf(signal.target)} x2={W - padR} y2={yOf(signal.target)} stroke={dirColor} strokeWidth={1.5} strokeDasharray="4 3" />
-          <text x={padL + 4} y={yOf(signal.target) - 3} fontSize={10} fill={dirColor}>Цель ${formatPrice(signal.target)}</text>
+          <text x={padL + 4} y={yOf(signal.target) - 3} fontSize={10} fill={dirColor}>{t('Цель')} ${formatPrice(signal.target)}</text>
           <line x1={padL} y1={yOf(signal.stop_loss)} x2={W - padR} y2={yOf(signal.stop_loss)} stroke="#fb7185" strokeWidth={1} strokeDasharray="2 4" />
-          <text x={W - padR} y={yOf(signal.stop_loss) - 3} textAnchor="end" fontSize={9} fill="#f87171">Стоп ${formatPrice(signal.stop_loss)}</text>
+          <text x={W - padR} y={yOf(signal.stop_loss) - 3} textAnchor="end" fontSize={9} fill="#f87171">{t('Стоп')} ${formatPrice(signal.stop_loss)}</text>
 
           {/* Препятствия на транзите (S/R-зоны и HVN-кластеры) */}
           {(path?.obstacles ?? []).map((o, i) => (
             <g key={i}>
               <line x1={padL} y1={yOf(o.level)} x2={W - padR} y2={yOf(o.level)} stroke={o.kind === 'hvn' ? COLORS.hvn : '#fb7185'} strokeWidth={1} strokeDasharray="1 3" />
               <circle cx={padL + plotW * 0.5} cy={yOf(o.level)} r={3} fill={o.kind === 'hvn' ? COLORS.hvn : '#fb7185'}>
-                <title>{`${o.kind === 'hvn' ? 'HVN-узел' : 'S/R-зона'} ${formatPrice(o.level)} · сила ${(o.strength * 100).toFixed(0)}% · ${o.detail}`}</title>
+                <title>{`${o.kind === 'hvn' ? t('HVN-узел') : t('S/R-зона')} ${formatPrice(o.level)} · ${t('сила')} ${(o.strength * 100).toFixed(0)}% · ${t(o.detail)}`}</title>
               </circle>
             </g>
           ))}
@@ -178,15 +178,15 @@ export function VolumeProfileChart({ profile, price, signal }: VPProps) {
       {/* Легенда */}
       <g fontSize={9} fill={COLORS.text}>
         <rect x={padL} y={H - 12} width={8} height={8} fill="rgba(245, 158, 11, 0.75)" />
-        <text x={padL + 11} y={H - 5}>HVN (трение)</text>
+        <text x={padL + 11} y={H - 5}>{t('HVN (трение)')}</text>
         <rect x={padL + 82} y={H - 12} width={8} height={8} fill="rgba(56, 189, 248, 0.7)" />
-        <text x={padL + 93} y={H - 5}>LVN (дыра — быстрый проход)</text>
+        <text x={padL + 93} y={H - 5}>{t('LVN (дыра — быстрый проход)')}</text>
         <line x1={padL + 230} y1={H - 8} x2={padL + 246} y2={H - 8} stroke={COLORS.poc} strokeDasharray="5 3" />
         <text x={padL + 250} y={H - 5}>POC · Value Area 70%</text>
         {signal && (
           <>
             <line x1={padL + 380} y1={H - 8} x2={padL + 396} y2={H - 8} stroke={dirColor} strokeWidth={2} />
-            <text x={padL + 400} y={H - 5}>Путь цены: {signal.pattern}</text>
+            <text x={padL + 400} y={H - 5}>{t('Путь цены:')} {t(signal.pattern)}</text>
           </>
         )}
       </g>
@@ -254,21 +254,21 @@ export function DeltaNotes({ summary, priceChangePct }: { summary: DeltaSummary;
       <p className="text-gray-300 font-medium">{t(`Как читать этот график`)}</p>
       <ul className="list-disc list-inside space-y-1">
         <li>
-          <span className="text-green-400 font-medium">{t(`Зелёный столбец`)}</span> — за свечу агрессия покупателей превысила агрессию продавцов (покупали по рынку / «били в аск»).{' '}
-          <span className="text-red-400 font-medium">{t(`Красный`)}</span> — наоборот, продавали в рынок. Высота столбца = величина перевеса.
+          <span className="text-green-400 font-medium">{t(`Зелёный столбец`)}</span> {t('— за свечу агрессия покупателей превысила агрессию продавцов (покупали по рынку / «били в аск»).')}{' '}
+          <span className="text-red-400 font-medium">{t(`Красный`)}</span> {t('— наоборот, продавали в рынок. Высота столбца = величина перевеса.')}
         </li>
         <li>
-          <span className="text-green-500 font-medium">{t(`Насыщенные зелёные /`)} <span className="text-red-500">{t(`насыщенные красные`)}</span></span> — дисбаланс агрессии (перевес одной стороны ≥3:1 внутри бара). За окном найдено:{' '}
-          <b className="text-white">{strongBuy}</b> {t(`бычьих и`)} <b className="text-white">{strongSell}</b> медвежьих сильных дисбалансов. Их скопление у уровня поддержки — типичное «всасывание» предложения по Нисону; у сопротивления — активность распределения.
+          <span className="text-green-500 font-medium">{t(`Насыщенные зелёные /`)} <span className="text-red-500">{t(`насыщенные красные`)}</span></span> {t('— дисбаланс агрессии (перевес одной стороны ≥3:1 внутри бара). За окном найдено:')}{' '}
+          <b className="text-white">{strongBuy}</b> {t(`бычьих и`)} <b className="text-white">{strongSell}</b> {t('медвежьих сильных дисбалансов. Их скопление у уровня поддержки — типичное «всасывание» предложения по Нисону; у сопротивления — активность распределения.')}
         </li>
         <li>
-          <span className="text-amber-400 font-medium">{t(`Жёлтая линия`)}</span> — накопленная дельта (сумма всех Δ слева направо). Растёт = рынок чистят покупатели; падает = продавцы; плоская при движении цены = работу делает пассивная сторона (тонкая ликвидность).
+          <span className="text-amber-400 font-medium">{t(`Жёлтая линия`)}</span> — накопленная дельта (сумма всех Δ слева направо). {t('Растёт = рынок чистят покупатели; падает = продавцы; плоская при движении цены = работу делает пассивная сторона (тонкая ликвидность).')}
         </li>
         <li>
-          <b className="text-gray-300">CLV (Close Location Value)</b> {t(`— где внутри диапазона свечи закрылась цена:`)} <span className="text-green-400">+1</span> — у самого максимума (покупатели дожали бар), <span className="text-red-400">−1</span> {t(`— у минимума,`)} <span className="text-gray-300">0</span> {t(`— в середине. Средний CLV окна:`)} <span className={summary.avg_clv >= 0 ? 'text-green-400' : 'text-red-400'}><b>{summary.avg_clv.toFixed(2)}</b></span> — {summary.avg_clv >= 0.2 ? 'закрытия жмутся к вершинам свечей, buyers держат финал каждого бара' : summary.avg_clv <= -0.2 ? 'закрытия у оснований свечей — продавцы закрывают бары на минимумах, давление реальное' : 'закрытия в середине диапазонов — ни одна сторона не продавила итог бара (борьба/флэт)'}.
+          <b className="text-gray-300">CLV (Close Location Value)</b> {t(`— где внутри диапазона свечи закрылась цена:`)} <span className="text-green-400">+1</span> — у самого максимума (покупатели дожали бар), <span className="text-red-400">−1</span> {t(`— у минимума,`)} <span className="text-gray-300">0</span> {t(`— в середине. Средний CLV окна:`)} <span className={summary.avg_clv >= 0 ? 'text-green-400' : 'text-red-400'}><b>{summary.avg_clv.toFixed(2)}</b></span> — {summary.avg_clv >= 0.2 ? t('закрытия жмутся к вершинам свечей, buyers держат финал каждого бара') : summary.avg_clv <= -0.2 ? t('закрытия у оснований свечей — продавцы закрывают бары на минимумах, давление реальное') : t('закрытия в середине диапазонов — ни одна сторона не продавила итог бара (борьба/флэт)')}.
         </li>
         <li>
-          <b className="text-gray-300">Последние {lastN.length} баров:</b> ΣΔ {recentSum >= 0 ? <span className="text-green-400">+{Math.round(recentSum).toLocaleString('ru-RU')}</span> : <span className="text-red-400">{Math.round(recentSum).toLocaleString('ru-RU')}</span>} — {recentSum >= 0 ? 'на свежем участке спрос перевешивает' : 'на свежем участке перевешивает предложение'} (важнее всей линии: показывает, кто контролирует рынок прямо сейчас).
+          <b className="text-gray-300">{t('Последние')} {lastN.length} {t('баров')}:</b> ΣΔ {recentSum >= 0 ? <span className="text-green-400">+{Math.round(recentSum).toLocaleString('ru-RU')}</span> : <span className="text-red-400">{Math.round(recentSum).toLocaleString('ru-RU')}</span>} — {recentSum >= 0 ? t('на свежем участке спрос перевешивает') : t('на свежем участке перевешивает предложение')} {t('(важнее всей линии: показывает, кто контролирует рынок прямо сейчас).')}
         </li>
       </ul>
       {div && (
@@ -277,7 +277,8 @@ export function DeltaNotes({ summary, priceChangePct }: { summary: DeltaSummary;
         </p>
       )}
       <p className="text-gray-400 italic">
-        <Icon name="warning" className="mr-1" />Proxy-оценка по OHLCV: тикового стакана/ленты Bybit здесь нет, поэтому дельта вычисляется из формы свечи (тело + позиция закрытия + объём). Она надёжна для оценки перекоса агрессии и дивергенций, но абсолютные числа не равны биржевой дельте из footprint-терминалов. Правило Нисона сохраняется: любой сигнал подтверждается только на следующей свече.
+        <Icon name="warning" className="mr-1" />{t('Proxy-оценка по OHLCV: тикового стакана/ленты Bybit здесь нет, поэтому дельта вычисляется из формы свечи (тело + позиция закрытия + объём). Она надёжна для оценки перекоса агрессии и дивергенций, но абсолютные числа не равны биржевой дельте из footprint-терминалов. Правило Нисона сохраняется: любой сигнал подтверждается только на следующей свече.')}
+      {/* key: delta proxy disclaimer */}
       </p>
     </div>
   );
@@ -311,7 +312,7 @@ export function DeltaChart({ summary }: DeltaProps) {
 
   return (
     <div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full select-none" role="img" aria-label="Дельта агрессии">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full select-none" role="img" aria-label={t('Дельта агрессии')}>
         <line x1={padL} y1={zeroY} x2={padL + plotW} y2={zeroY} stroke={COLORS.grid} />
         {/* Столбцы proxy-дельты по свечам */}
         {points.map((p, i) => {
@@ -321,7 +322,7 @@ export function DeltaChart({ summary }: DeltaProps) {
           const col = p.imbalance === 'buy' ? '#16a34a' : p.imbalance === 'sell' ? '#dc2626' : p.delta >= 0 ? 'rgba(34,197,94,0.55)' : 'rgba(239,68,68,0.55)';
           return (
             <rect key={i} x={x} y={y} width={barW} height={Math.max(1, h)} fill={col} rx={1}>
-              <title>{`Δ ${p.delta.toFixed(0)} · CLV ${p.clv.toFixed(2)}${p.imbalance ? ` · дисбаланс: ${p.imbalance}` : ''}`}</title>
+              <title>{`Δ ${p.delta.toFixed(0)} · CLV ${p.clv.toFixed(2)}${p.imbalance ? ` · ${t('дисбаланс')}: ${p.imbalance}` : ''}`}</title>
             </rect>
           );
         })}
@@ -331,18 +332,18 @@ export function DeltaChart({ summary }: DeltaProps) {
         <text x={W - padR + 4} y={padT + 20} fontSize={9} fill={COLORS.text}>{(summary.cumulative_delta / 1000).toFixed(1)}k</text>
       </svg>
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-400">
-        <span title="Сумма proxy-дельт за окно (агрессия покупателей минус продавцов)">
-          Накопленная дельта:{' '}
+        <span title={t('Сумма proxy-дельт за окно (агрессия покупателей минус продавцов)')}>
+          {t('Накопленная дельта:')}{' '}
           <span className={summary.cumulative_delta >= 0 ? 'text-green-400' : 'text-red-400'}>
             {summary.cumulative_delta >= 0 ? '+' : ''}{Math.round(summary.cumulative_delta).toLocaleString('ru-RU')}
           </span>
         </span>
         <span>{t(`Доля бычьих свечей:`)} <span className="text-white font-mono">{buySharePct}%</span></span>
-        <span title="Средний Close Location Value: закрытия у вершин (+) или оснований (−) диапазона">
+        <span title={t('Средний Close Location Value: закрытия у вершин (+) или оснований (−) диапазона')}>
           {t(`Средний CLV:`)} <span className={summary.avg_clv >= 0 ? 'text-green-400' : 'text-red-400'}>{summary.avg_clv.toFixed(2)}</span>
         </span>
-        <span>{t(`Тренд дельты:`)} <span className="text-amber-400">{TREND_LABEL_RU[summary.delta_trend] ?? summary.delta_trend}</span></span>
-        <span className="text-gray-600">* proxy-оценка по OHLCV (без тикового footprint)</span>
+        <span>{t(`Тренд дельты:`)} <span className="text-amber-400">{t(TREND_LABEL_RU[summary.delta_trend] ?? summary.delta_trend)}</span></span>
+        <span className="text-gray-600">* {t('proxy-оценка по OHLCV (без тикового footprint)')}</span>
       </div>
     </div>
   );

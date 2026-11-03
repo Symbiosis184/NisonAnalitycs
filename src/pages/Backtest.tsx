@@ -27,8 +27,9 @@ interface StrategyRow {
 
 const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT'];
 // Значения проходят whitelist валидацию (validation.ALLOWED_TIMEFRAMES)
-const TIMEFRAMES: Array<[string, string]> = [
-  ['30m', '30м'], ['1H', '1ч'], ['4H', '4ч'], ['1D', '1Д'], ['1W', '1Нд'],
+// Метки ТФ: [value, ru, en]
+const TIMEFRAMES: Array<[string, string, string]> = [
+  ['30m', '30м', '30m'], ['1H', '1ч', '1h'], ['4H', '4ч', '4h'], ['1D', '1Д', '1D'], ['1W', '1Нд', '1W'],
 ];
 
 function toCandles(ks: Kline[]): Candle[] {
@@ -63,7 +64,7 @@ export default function BacktestPage() {
     setError(null);
     fetchKlines(symbol, timeframe, 1000)
       .then((ks) => { if (!cancelled) setCandles(toCandles(ks)); })
-      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : 'Не удалось загрузить данные Bybit'); })
+      .catch((e) => { if (!cancelled) setError(TR(e instanceof Error ? e.message : 'Не удалось загрузить данные Bybit', lang)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [symbol, timeframe]);

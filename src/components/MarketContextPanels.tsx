@@ -13,6 +13,7 @@ import type { AnalysisReport, EdgeCohortDTO, SignalDTO } from '../api/types';
 import { formatPrice } from '../utils/format';
 import { Collapsible } from '../components/Collapsible';
 import { useI18n } from '../i18n';
+import { translateString as TR } from '../i18n/dictionaries';
 
 type Phase = NonNullable<AnalysisReport['wyckoff']>['phase'];
 
@@ -81,7 +82,10 @@ export function WyckoffPhasePanel({ wyckoff }: WProps) {
   const shown = selected ?? wyckoff.phase;
   const details = PHASE_DETAILS[shown];
   const detailsMeta = PHASE_META[shown];
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  // Подробные описания фаз хранятся по-русски — переводим динамически (EN-блок в dictionaries.ts)
+  const dEn = <T extends { title: string; what: string; who: string; volume: string; action: string }>(d: T): T =>
+    lang === 'en' ? { ...d, title: TR(d.title, 'en'), what: TR(d.what, 'en'), who: TR(d.who, 'en'), volume: TR(d.volume, 'en'), action: TR(d.action, 'en') } : d;
 
   return (
     <div className="panel p-4 ">
@@ -162,23 +166,23 @@ export function WyckoffPhasePanel({ wyckoff }: WProps) {
         {expanded && (
           <div className="mt-2 space-y-2 text-[11px] leading-relaxed">
             <div className="font-semibold" style={{ color: detailsMeta.color }}>
-              {t(details.title)}
+              {t(dEn(details).title)}
             </div>
             <div>
               <span className="text-gray-400 font-medium">{t('Что происходит: ')}</span>
-              <span className="text-gray-300">{t(details.what)}</span>
+              <span className="text-gray-300">{t(dEn(details).what)}</span>
             </div>
             <div>
               <span className="text-gray-400 font-medium">{t('Кто действует: ')}</span>
-              <span className="text-gray-300">{t(details.who)}</span>
+              <span className="text-gray-300">{t(dEn(details).who)}</span>
             </div>
             <div>
               <span className="text-gray-400 font-medium">{t('Объём (усилие vs результат): ')}</span>
-              <span className="text-gray-300">{t(details.volume)}</span>
+              <span className="text-gray-300">{t(dEn(details).volume)}</span>
             </div>
             <div className="rounded-lg bg-gray-800/40 border border-gray-700/40 px-2.5 py-2">
               <span className="text-gray-400 font-medium">{t('Как использовать в анализе: ')}</span>
-              <span className="text-gray-300">{t(details.action)}</span>
+              <span className="text-gray-300">{t(dEn(details).action)}</span>
             </div>
           </div>
         )}
