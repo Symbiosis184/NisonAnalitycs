@@ -123,11 +123,11 @@ export default function PricingPage() {
                 {sub?.active ? (
                   <span className="inline-flex items-center gap-1.5 text-emerald-400">
                     <CheckCircle2 className="w-4 h-4" />
-                    {t(sub.planTitle)} — {t('действует до')} {fmtDate(sub.expiresAt, locale)}
+                    {t(sub.planTitle ?? '')} — {t('действует до')} {fmtDate(sub.expiresAt, locale)}
                   </span>
                 ) : sub?.pending ? (
                   <span className="text-amber-400">
-                    {t('Заявка')} «{t(sub.pendingTitle)}» {t('ожидает подтверждения платежа…')}
+                    {t('Заявка')} «{t(sub.pendingTitle ?? '')}» {t('ожидает подтверждения платежа…')}
                   </span>
                 ) : trialDays > 0 ? (
                   <span className="text-gray-400">{t('Подписка не активна')}</span>

@@ -14,6 +14,7 @@ import { Icon, type IconName } from '../components/ui/Icon';
 import Seo from '../components/ui/Seo';
 import { backtestMeta } from '../utils/seo';
 import { useI18n } from '../i18n';
+import { translateString as TR } from '../i18n/dictionaries';
 
 interface StrategyRow {
   key: string;
@@ -159,11 +160,8 @@ export default function BacktestPage() {
         </span>
       </div>
       <p className="text-sm text-slate-400 max-w-3xl">
-        {t('Проверка')} <b className="text-slate-200">{t('текущей стратегии целиком')}</b>: {t('подтверждённый сигнал Нисона → вход по close
-        свечи подтверждения, стоп = граница формации, тейк = ближайшая структурная цель (как в живом анализе), максимум
-        удержания 60 свечей. Результат каждой сделки уменьшен на издержки цикла')} ({fmt((cycleCostFraction(costs)) * 100)}%).
-        {t('Вход без lookahead: управление позицией со следующей свечи. Вердикты внизу страницы переводят статистику в
-        практический вывод — можно ли торговать паттерн на этом инструменте.')}
+        {t('Проверка')} <b className="text-slate-200">{t('текущей стратегии целиком')}</b>: {t('подтверждённый сигнал Нисона → вход по close свечи подтверждения, стоп = граница формации, тейк = ближайшая структурная цель (как в живом анализе), максимум удержания 60 свечей. Результат каждой сделки уменьшен на издержки цикла')} ({fmt((cycleCostFraction(costs)) * 100)}%).
+        {t('Вход без lookahead: управление позицией со следующей свечи. Вердикты внизу страницы переводят статистику в практический вывод — можно ли торговать паттерн на этом инструменте.')}
       </p>
 
       {/* Панель управления */}
@@ -326,6 +324,7 @@ function Stat({ label, value, good }: { label: string; value: string; good?: boo
 }
 
 function EquityMini({ title, curve }: { title: string; curve: number[] }) {
+  const { lang } = useI18n();
   const w = 320, h = 90, pad = 4;
   const min = Math.min(0, ...curve), max = Math.max(0, ...curve);
   const span = max - min || 1;
@@ -334,7 +333,7 @@ function EquityMini({ title, curve }: { title: string; curve: number[] }) {
   const last = curve[curve.length - 1] ?? 0;
   return (
     <div className="bg-slate-900/60 border border-slate-800 rounded-lg p-3">
-      <div className="text-xs text-slate-400 mb-1">{t(title)} · {t('накопленный net R')}: <span className={last >= 0 ? 'text-emerald-400' : 'text-red-400'}>{last >= 0 ? '+' : ''}{fmt(last)}</span></div>
+      <div className="text-xs text-slate-400 mb-1">{TR(title, lang)} · {TR('накопленный net R', lang)}: <span className={last >= 0 ? 'text-emerald-400' : 'text-red-400'}>{last >= 0 ? '+' : ''}{fmt(last)}</span></div>
       <svg viewBox={`0 0 ${w} ${h}`} className="w-full">
         <line x1={pad} y1={zeroY} x2={w - pad} y2={zeroY} stroke="#475569" strokeDasharray="3 3" strokeWidth="1" />
         <polyline points={pts} fill="none" stroke={last >= 0 ? '#34d399' : '#f87171'} strokeWidth="2" />
