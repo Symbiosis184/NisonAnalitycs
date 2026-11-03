@@ -246,7 +246,7 @@ function SignalCard({ signal, riskSettings }: {
       {signal.story && (
         <div className="mt-3 p-3 rounded bg-gray-800/30 text-xs text-gray-400 flex items-start gap-1.5">
           <Icon name="story" className="text-gray-500 mt-0.5" />
-          <span>{signal.story}</span>
+          <span>{t(signal.story)}</span>
         </div>
       )}
 
