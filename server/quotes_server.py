@@ -445,18 +445,32 @@ BINANCE_INTERVAL = {
 # 1min, 5min, 15min, 30min, 45min, 1h, 2h, 4h, 8h, 1day, 1week, 1month.
 # '1hour' и т.п. — НЕ поддерживаются (400 Bad Request).
 TD_INTERVAL = {
-    "1m": ("1min", 60), "1": ("1min", 60),
-    "5m": ("5min", 300), "5": ("5min", 300),
-    "15m": ("15min", 900), "15": ("15min", 900),
-    "30m": ("30min", 1800), "30": ("30min", 1800),
-    "1h": ("1h", 3600), "60": ("1h", 3600),
-    "2h": ("2h", 7200), "120": ("2h", 7200),
-    "4h": ("4h", 14400), "240": ("4h", 14400),
     "8h": ("8h", 28800), "480": ("8h", 28800),
     "1d": ("1day", 86400), "d": ("1day", 86400), "D": ("1day", 86400),
     "1w": ("1week", 604800), "w": ("1week", 604800), "W": ("1week", 604800),
     "1mo": ("1month", 2592000), "m": ("1month", 2592000), "M": ("1month", 2592000),
 }
+
+
+def _td_wire(iv: str) -> tuple[str, int]:
+    """Канон приложения -> wire-форма Twelvedata (с проверкой поддерживаемости).
+
+    Twelvedata НЕ отдаёт 1min (и 3/45-минутки устарели на новых тарифах):
+    форма берётся из TD_INTERVAL; если интервала нет в словаре — он точно не
+    поддерживается, и мы фолбэчимся на ближайший больший поддерживаемый
+    (1m->5m, 45m->1h) вместо гарантированного 400 «invalid interval» от
+    источника. Недоступность ТФ пользователю не показываем: данные чуть
+    крупнее запрошенного ТФ лучше ошибки загрузки.
+    """
+    step_s = max(60, int(iv) * 60) if iv.isdigit() else 0
+    entry = TD_INTERVAL.get(iv)
+    if entry is None:
+        for cand in ("5min", "15min", "30min", "1h", "2h", "4h", "8h"):
+            cstep = next(s for (w, s) in TD_INTERVAL.values() if w == cand)
+            if step_s <= cstep:
+                return cand, cstep
+        return "1day", 86400
+    return entry
 
 
 def _normalize_bybit_klines(raw: dict) -> list[dict]:
@@ -613,14 +627,15 @@ def quotes_klines(
     if exchange == "twelvedata":
         if not is_stock:
             raise HTTPException(status_code=400, detail="twelvedata requires TICKER:STOCK")
-        if iv not in TD_INTERVAL:
-            raise HTTPException(status_code=400, detail="bad interval")
-        # Wire-формы интервалов Twelvedata (проверено живым запросом): 1min,
-        # 5min, 15min, 30min, 1h, 2h, 4h, 8h, 1day, 1week, 1month. Формы вида
+        # Wire-формы интервалов Twelvedata (проверено живым запросом): 5min,
+        # 15min, 30min, 1h, 2h, 4h, 8h, 1day, 1week, 1month. Формы вида
         # '60'/'240'/'d' — внутренний канон приложения, эндпоинт их НЕ знает:
         # раньше их отправляли как есть -> 400 "invalid interval" на всех ТФ
         # акций, кроме дневного (для D канон совпадал с wire-формой).
-        iv = str(TD_INTERVAL[iv][0])
+        # Неподдерживаемые у источника формы ('1'/'3'/'1m' — 1min у Twelvedata
+        # недоступен) фолбэчатся на ближайший больший ТФ (_td_wire), а не
+        # падают ошибкой: часть истории лучше «ошибки загрузки» карточки.
+        iv = str(_td_wire(iv)[0])
     elif iv not in BYBIT_INTERVAL:
         raise HTTPException(status_code=400, detail="bad interval")
     if exchange not in ALLOWED_EXCHANGES:
