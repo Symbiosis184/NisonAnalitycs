@@ -13,6 +13,7 @@ import { AlertTriangle } from 'lucide-react';
 import { Icon, type IconName } from '../components/ui/Icon';
 import Seo from '../components/ui/Seo';
 import { backtestMeta } from '../utils/seo';
+import { useI18n } from '../i18n';
 
 interface StrategyRow {
   key: string;
@@ -46,6 +47,7 @@ function fmt(n: number, d = 2): string {
 }
 
 export default function BacktestPage() {
+  const { t } = useI18n();
   const [symbol, setSymbol] = useState('BTCUSDT');
   const [timeframe, setTimeframe] = useState('1D');
   const [candles, setCandles] = useState<Candle[]>([]);
@@ -148,78 +150,78 @@ export default function BacktestPage() {
     <div className="p-4 space-y-4">
       <Seo meta={backtestMeta()} />
       <div className="flex items-center gap-2 flex-wrap">
-        <h1 className="text-xl font-bold text-slate-100 flex items-center gap-2"><Icon name="flask" className="text-slate-400" /> Бэктест паттернов Нисона</h1>
+        <h1 className="text-xl font-bold text-slate-100 flex items-center gap-2"><Icon name="flask" className="text-slate-400" /> {t('Бэктест паттернов Нисона')}</h1>
         <span
           className="px-2 py-0.5 rounded-md text-[11px] font-semibold uppercase tracking-wide bg-amber-500/10 text-amber-400 border border-amber-500/30"
-          title="Бэктест в бета-версии: методика и выборка дорабатываются, результаты — ориентировочные"
+          title={t('Бэктест в бета-версии: методика и выборка дорабатываются, результаты — ориентировочные')}
         >
           beta
         </span>
       </div>
       <p className="text-sm text-slate-400 max-w-3xl">
-        Проверка <b className="text-slate-200">текущей стратегии целиком</b>: подтверждённый сигнал Нисона → вход по close
+        {t('Проверка')} <b className="text-slate-200">{t('текущей стратегии целиком')}</b>: {t('подтверждённый сигнал Нисона → вход по close
         свечи подтверждения, стоп = граница формации, тейк = ближайшая структурная цель (как в живом анализе), максимум
-        удержания 60 свечей. Результат каждой сделки уменьшен на издержки цикла ({fmt((cycleCostFraction(costs)) * 100)}%).
-        Вход без lookahead: управление позицией со следующей свечи. Вердикты внизу страницы переводят статистику в
-        практический вывод — можно ли торговать паттерн на этом инструменте.
+        удержания 60 свечей. Результат каждой сделки уменьшен на издержки цикла')} ({fmt((cycleCostFraction(costs)) * 100)}%).
+        {t('Вход без lookahead: управление позицией со следующей свечи. Вердикты внизу страницы переводят статистику в
+        практический вывод — можно ли торговать паттерн на этом инструменте.')}
       </p>
 
       {/* Панель управления */}
       <div className="flex flex-wrap sm:flex-nowrap items-end gap-3 bg-slate-900/60 border border-slate-800 rounded-lg p-3 overflow-x-auto">
-        <label className="text-xs text-slate-400">Инструмент
+        <label className="text-xs text-slate-400">{t('Инструмент')}
           <select value={symbol} onChange={(e) => setSymbol(e.target.value)}
             className="block mt-1 bg-slate-800 text-slate-100 text-sm rounded px-2 py-1 border border-slate-700">
             {SYMBOLS.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </label>
-        <label className="text-xs text-slate-400">Таймфрейм
+        <label className="text-xs text-slate-400">{t('Таймфрейм')}
           <select value={timeframe} onChange={(e) => setTimeframe(e.target.value)}
             className="block mt-1 bg-slate-800 text-slate-100 text-sm rounded px-2 py-1 border border-slate-700">
             {TIMEFRAMES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
         </label>
-        <label className="text-xs text-slate-400">Комиссия, %/сторона
+        <label className="text-xs text-slate-400">{t('Комиссия, %/сторона')}
           <input type="number" step="0.01" min="0" value={feePct} onChange={(e) => setFeePct(Math.max(0, Number(e.target.value)))}
             className="block mt-1 w-24 bg-slate-800 text-slate-100 text-sm rounded px-2 py-1 border border-slate-700" />
         </label>
-        <label className="text-xs text-slate-400">Проскальзывание, б.п.
+        <label className="text-xs text-slate-400">{t('Проскальзывание, б.п.')}&nbsp;
           <input type="number" step="1" min="0" value={slippageBps} onChange={(e) => setSlippageBps(Math.max(0, Number(e.target.value)))}
             className="block mt-1 w-24 bg-slate-800 text-slate-100 text-sm rounded px-2 py-1 border border-slate-700" />
         </label>
-        <span className="text-xs text-slate-500">{candles.length ? `Свечей в истории: ${candles.length}` : ''}</span>
+        <span className="text-xs text-slate-500">{candles.length ? `${t('Свечей в истории')}: ${candles.length}` : ''}</span>
       </div>
 
-      {loading && <div className="text-slate-300 animate-pulse">Загрузка свечей с Bybit…</div>}
-      {error && <div className="text-red-400 text-sm bg-red-950/40 border border-red-900 rounded p-3">{error}. Проверьте соединение и повторите выбор.</div>}
+      {loading && <div className="text-slate-300 animate-pulse">{t('Загрузка свечей с Bybit…')}</div>}
+      {error && <div className="text-red-400 text-sm bg-red-950/40 border border-red-900 rounded p-3">{t(error)}. {t('Проверьте соединение и повторите выбор.')}</div>}
 
       {!loading && !error && candles.length >= 80 && (
         <>
           {/* Сводка */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Stat label="Проверено стратегий" value={String(results.length)} />
-            <Stat label="Всего сделок" value={String(results.reduce((s, r) => s + r.res.stats.totalTrades, 0))} />
-            <Stat label="Лучшая expectancy" value={overall.length ? `${fmt(Math.max(...overall.map(o => o.avgNetR)))} R` : '—'} good={overall.some(o => o.avgNetR > 0)} />
-            <Stat label="Худшая expectancy" value={overall.length ? `${fmt(Math.min(...overall.map(o => o.avgNetR)))} R` : '—'} good={false} />
+            <Stat label={t('Проверено стратегий')} value={String(results.length)} />
+            <Stat label={t('Всего сделок')} value={String(results.reduce((s, r) => s + r.res.stats.totalTrades, 0))} />
+            <Stat label={t('Лучшая expectancy')} value={overall.length ? `${fmt(Math.max(...overall.map(o => o.avgNetR)))} R` : '—'} good={overall.some(o => o.avgNetR > 0)} />
+            <Stat label={t('Худшая expectancy')} value={overall.length ? `${fmt(Math.min(...overall.map(o => o.avgNetR)))} R` : '—'} good={false} />
           </div>
 
           {/* v1.2beta: режим рынка */}
           {candles.length >= 80 && (() => {
             const rg = detectRegime(candles);
             const labels: Record<string, { icon: IconName; text: string }> = {
-              'trend-up': { icon: 'trend-up', text: 'Тренд вверх' },
-              'trend-down': { icon: 'trend-down', text: 'Тренд вниз' },
-              'range': { icon: 'range', text: 'Боковик' },
-              'volatile-breakout': { icon: 'flash', text: 'Волатильный пробой' },
+              'trend-up': { icon: 'trend-up', text: t('Тренд вверх') },
+              'trend-down': { icon: 'trend-down', text: t('Тренд вниз') },
+              'range': { icon: 'range', text: t('Боковик') },
+              'volatile-breakout': { icon: 'flash', text: t('Волатильный пробой') },
             };
             return (
               <div className="bg-slate-900/60 border border-slate-800 rounded-lg p-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
-                <span className="text-slate-400">Режим рынка:</span>
+                <span className="text-slate-400">{t('Режим рынка')}:</span>
                 <span className={`font-semibold inline-flex items-center gap-1.5 ${rg.regime === 'range' || rg.regime === 'volatile-breakout' ? 'text-amber-400' : 'text-emerald-400'}`}>
                   <Icon name={labels[rg.regime].icon} />{labels[rg.regime].text}
                 </span>
-                <span className="text-slate-500">сила тренда {fmt(rg.trendStrength * 100, 0)}%</span>
-                <span className="text-slate-500">волатильность ×{fmt(rg.volatilityRatio)}</span>
-                <span className="text-slate-500" title="Множитель доверия к сигналам в текущем режиме">коэфф. сигналов ×{fmt(rg.multiplier)}</span>
+                <span className="text-slate-500">{t('сила тренда')} {fmt(rg.trendStrength * 100, 0)}%</span>
+                <span className="text-slate-500">{t('волатильность')} ×{fmt(rg.volatilityRatio)}</span>
+                <span className="text-slate-500" title={t('Множитель доверия к сигналам в текущем режиме')}>{t('коэфф. сигналов')} ×{fmt(rg.multiplier)}</span>
               </div>
             );
           })()}
@@ -229,7 +231,7 @@ export default function BacktestPage() {
           <table className="w-full min-w-[720px] text-sm border border-slate-800 rounded overflow-hidden">
             <thead className="bg-slate-900 text-slate-400 text-left">
               <tr>
-                <th className="p-2">Паттерн</th><th className="p-2">Сделок</th>
+                <th className="p-2">{t('Паттерн')}</th><th className="p-2">{t('Сделок')}</th>
                 <th className="p-2 cursor-help" title={'Доля прибыльных сделок после вычета издержек цикла (0.30% на сделку).\n' + '[95% CI] — интервал Уилсона: диапазон, в котором с вероятностью 95% лежит истинный win rate.\n' + 'Пример: 48% [35–61] означает, что реальный WR может быть как 35%, так и 61% — при малом числе сделок не делайте выводов по одному лишь проценту.'}>WR (net) [95% CI]</th>
                 <th className="p-2 cursor-help" title={'Средний результат одной сделки в единицах риска R (стоп = граница формации, тейк = 2R), уже за вычетом издержек.\n' + 'Например, +0.15 R = в среднем каждая сделка приносит 15% от величины вашего стопа.\n' + '[CI] — 95%-й доверительный интервал среднего; p — вероятность получить такое среднее, если реального преимущества нет (edge = 0).\n' + 'Ключевой критерий Нисона: expectancy должна быть устойчиво положительной.'}>Exp. R [CI] · p</th>
                 <th className="p-2 cursor-help" title={'Walk-forward проверка на будущих данных: стратегия обучается на окне 300 свечей и тестируется на следующих 100, окно сдвигается.\n' + 'OOS expectancy — средний результат только на данных вне обучения.\n' + 'Если OOS близок к историческому результату — преимущество настоящее; если резко хуже — статистика переобучена (бейдж ⚠︎overfit?).'}>WF OOS</th>
@@ -248,7 +250,7 @@ export default function BacktestPage() {
                 const oos = wf.oosExpectancy;
                 return (
                 <tr key={key} className="border-t border-slate-800 hover:bg-slate-900/50">
-                  <td className="p-2 text-slate-200">{key}</td>
+                  <td className="p-2 text-slate-200">{t(key)}</td>
                   <td className="p-2">{res.stats.totalTrades}</td>
                   <td className="p-2 font-mono">{fmt(wr.p * 100, 1)}% <span className="text-slate-500">[{fmt(wr.ciLow * 100, 0)}–{fmt(wr.ciHigh * 100, 0)}]</span></td>
                   <td className={`p-2 font-mono ${exp.meanR >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
@@ -270,7 +272,7 @@ export default function BacktestPage() {
                 );
               })}
               {results.length === 0 && (
-                <tr><td colSpan={9} className="p-3 text-slate-500">Недостаточно наблюдений (минимум 3 сигнала на паттерн) для статистики.</td></tr>
+                <tr><td colSpan={9} className="p-3 text-slate-500">{t('Недостаточно наблюдений (минимум 3 сигнала на паттерн) для статистики.')}</td></tr>
               )}
             </tbody>
           </table>
@@ -289,14 +291,14 @@ export default function BacktestPage() {
             return (
               <div className="space-y-3">
                 <div className={`rounded-lg border p-4 ${styles[ov.level]}`}>
-                  <div className="text-sm font-bold uppercase tracking-wide flex items-center gap-2"><Icon name={icons[ov.level]} /> Итог: {ov.title}</div>
-                  <p className="text-sm mt-1 opacity-90">{ov.text}</p>
+                  <div className="text-sm font-bold uppercase tracking-wide flex items-center gap-2"><Icon name={icons[ov.level]} /> {t('Итог')}: {t(ov.title)}</div>
+                  <p className="text-sm mt-1 opacity-90">{t(ov.text)}</p>
                 </div>
                 <div className="grid md:grid-cols-2 gap-2">
                   {results.map(({ key, verdict }) => (
                     <div key={key} className={`rounded-lg border p-3 text-xs ${styles[verdict.level]}`}>
-                      <div className="font-semibold mb-0.5">{key} — {verdict.title}</div>
-                      <div className="opacity-80 leading-snug">{verdict.text}</div>
+                      <div className="font-semibold mb-0.5">{t(key)} — {t(verdict.title)}</div>
+                      <div className="opacity-80 leading-snug">{t(verdict.text)}</div>
                     </div>
                   ))}
                 </div>
@@ -332,7 +334,7 @@ function EquityMini({ title, curve }: { title: string; curve: number[] }) {
   const last = curve[curve.length - 1] ?? 0;
   return (
     <div className="bg-slate-900/60 border border-slate-800 rounded-lg p-3">
-      <div className="text-xs text-slate-400 mb-1">{title} · накопленный net R: <span className={last >= 0 ? 'text-emerald-400' : 'text-red-400'}>{last >= 0 ? '+' : ''}{fmt(last)}</span></div>
+      <div className="text-xs text-slate-400 mb-1">{t(title)} · {t('накопленный net R')}: <span className={last >= 0 ? 'text-emerald-400' : 'text-red-400'}>{last >= 0 ? '+' : ''}{fmt(last)}</span></div>
       <svg viewBox={`0 0 ${w} ${h}`} className="w-full">
         <line x1={pad} y1={zeroY} x2={w - pad} y2={zeroY} stroke="#475569" strokeDasharray="3 3" strokeWidth="1" />
         <polyline points={pts} fill="none" stroke={last >= 0 ? '#34d399' : '#f87171'} strokeWidth="2" />

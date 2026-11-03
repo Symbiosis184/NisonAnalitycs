@@ -142,6 +142,7 @@ export const UI_STRINGS: Record<string, string> = {
   'Журнал': 'Journal',
   'Бэктест': 'Backtest',
   'Тарифы': 'Pricing',
+  'Бэктест паттернов Нисона': 'Nison Pattern Backtest',
   'Поддержать': 'Support',
   'Поддержать проект': 'Support the project',
   'Поддержать развитие проекта (TON)': 'Support the project development (TON)',
@@ -313,6 +314,152 @@ export const UI_STRINGS: Record<string, string> = {
   'Произошла непредвиденная ошибка в интерфейсе. Попробуйте обновить страницу — если проблема повторяется, подробности видны в консоли браузера (F12).':
     'An unexpected interface error occurred. Try refreshing the page — if it repeats, details are visible in the browser console (F12).',
   'Обновить страницу': 'Reload page',
+
+  // ── SignalsSection (сценарии/риск-панель) ──
+  'подтверждено': 'confirmed',
+  'ждёт': 'pending',
+  'из': 'of',
+  'Риск': 'Risk',
+  'риск': 'risk',
+  'Капитал': 'Capital',
+  'Риск на сделку': 'Risk per trade',
+  'Применить': 'Apply',
+  'Планы позиций пересчитаются для всех сигналов.': 'Position plans will be recalculated for all signals.',
+  'Качество': 'Quality',
+  'Вход': 'Entry',
+  'Стоп': 'Stop',
+  'Цель': 'Target',
+  'Тренд старшего ТФ': 'Higher-TF trend',
+  '✓ согласован': '\u2713 aligned',
+  '\u26a0 против': '\u26a0 against',
+  'Подтверждение': 'Confirmation',
+  '\u23f3 ждём след. свечу': '\u23f3 awaiting next candle',
+  '\u2713 внутри модели': '\u2713 inside the pattern',
+  'План позиции': 'Position plan',
+  'Объём (позиция)': 'Size',
+  'Номинал': 'Notional',
+  'Убыток по стопу': 'Loss at stop',
+  'Издержки цикла': 'Cycle costs',
+  '\u26a0 Объём ограничен потолком номинала \u2014 фактический риск меньше заявленного.':
+    '\u26a0 Size capped by the notional limit \u2014 actual risk is lower than requested.',
+  '\u2713 Сигнал автоматически сохранён в журнал': '\u2713 Signal saved to the journal automatically',
+  'ожидает подтверждения': 'awaiting confirmation',
+  'подтверждён': 'confirmed',
+  'отменён (стоп пробит)': 'invalidated (stop hit)',
+  'истёк (нет подтверждения)': 'expired (no confirmation)',
+  'Нисон гл. 3\u20136: модель требует закрытия СЛЕДУЮЩЕЙ свечи в направлении сигнала \u2014 вход только после подтверждения':
+    'Nison ch. 3\u20136: the pattern requires the NEXT candle to close in the signal direction \u2014 enter only after confirmation',
+  'Нисон гл. 5\u20136: завершённая формация \u2014 её последняя свеча и есть подтверждение, отдельная следующая свеча не требуется':
+    'Nison ch. 5\u20136: a completed formation \u2014 its last candle is itself the confirmation; no separate next candle is needed',
+
+  // ── VolumeContextSection ──
+  'Показать путь цены': 'Show price path',
+
+  // ── Backtest ──
+  'Бэктест в бета-версии: методика и выборка дорабатываются, результаты — ориентировочные':
+    'Backtest is in beta: methodology and sample are still being refined, results are indicative',
+  'Проверка': 'Testing',
+  'текущей стратегии целиком': 'the current strategy as a whole',
+  'подтверждённый сигнал Нисона \u2192 вход по close\n        свечи подтверждения, стоп = граница формации, тейк = ближайшая структурная цель (как в живом анализе), максимум\n        удержания 60 свечей. Результат каждой сделки уменьшен на издержки цикла':
+    'a confirmed Nison signal \u2192 entry at the close of the confirmation candle, stop = formation boundary, take-profit = nearest structural target (same as live analysis), maximum holding of 60 candles. Each trade result is reduced by cycle costs',
+  'Вход без lookahead: управление позицией со следующей свечи. Вердикты внизу страницы переводят статистику в\n        практический вывод — можно ли торговать паттерн на этом инструменте.':
+    'No-lookahead entry: position managed from the next candle. The verdicts below turn statistics into a practical conclusion \u2014 whether this pattern can be traded on this instrument.',
+  'Инструмент': 'Instrument',
+  'Таймфрейм': 'Timeframe',
+  'Комиссия, %/сторона': 'Fee, %/side',
+  'Проскальзывание, б.п.': 'Slippage, bps',
+  'Свечей в истории': 'Candles in history',
+  'Загрузка свечей с Bybit…': 'Loading candles from Bybit\u2026',
+  'Не удалось загрузить данные Bybit': 'Failed to load Bybit data',
+  'Проверьте соединение и повторите выбор.': 'Check your connection and try again.',
+  'Проверено стратегий': 'Strategies tested',
+  'Всего сделок': 'Total trades',
+  'Лучшая expectancy': 'Best expectancy',
+  'Худшая expectancy': 'Worst expectancy',
+  'Тренд вверх': 'Uptrend',
+  'Тренд вниз': 'Downtrend',
+  'Волатильный пробой': 'Volatile breakout',
+  'сила тренда': 'trend strength',
+  'волатильность': 'volatility',
+  'Множитель доверия к сигналам в текущем режиме': 'Signal confidence multiplier in the current regime',
+  'коэфф. сигналов': 'signal coeff.',
+  'Паттерн': 'Pattern',
+  'Сделок': 'Trades',
+  'Итог': 'Summary',
+  'накопленный net R': 'cumulative net R',
+  'Недостаточно наблюдений (минимум 3 сигнала на паттерн) для статистики.':
+    'Not enough observations (minimum 3 signals per pattern) for statistics.',
+  'МАЛО ДАННЫХ': 'LOW DATA',
+  'EDGE ПОДТВЕРЖДЁН': 'EDGE CONFIRMED',
+  'EDGE НЕ ПОДТВЕРЖДЁН': 'EDGE NOT CONFIRMED',
+  'УБЫТОЧЕН': 'UNPROFITABLE',
+  'НЕТ РЕБРА': 'NO EDGE',
+  'НЕТ ВЫВОДОВ': 'NO CONCLUSIONS',
+  'РЕБРО НЕ НАЙДЕНО': 'NO EDGE FOUND',
+  'СТРАТЕГИЯ РАБОТАЕТ': 'STRATEGY WORKS',
+  'РЕБРО ЕСТЬ, НО УЗКОЕ': 'EDGE EXISTS BUT IS NARROW',
+  'Всего {n} сделок — статистика случайна, никаких выводов делать нельзя. Накопите больше сигналов этого паттерна.':
+    'Only {n} trades \u2014 the statistics are random, no conclusions can be drawn. Accumulate more signals of this pattern.',
+  'Средний результат +{x} R/сделку достоверно выше нуля и подтверждён на будущих данных (OOS {y} R). Паттерн можно торговать с полным риском.':
+    'Average result +{x} R/trade is reliably above zero and confirmed on future data (OOS {y} R). The pattern can be traded with full risk.',
+  'История выглядит прибыльной (+{x} R), но {overfit ? \u0027на свежих данных результат заметно хуже (возможна подгонка)\u0027 : \u0027для проверки на будущих данных не хватает сделок\u0027}. Торговать осторожно, уменьшенным объёмом.':
+    'History looks profitable (+{x} R), but {reason}. Trade cautiously with a reduced size.',
+  'на свежих данных результат заметно хуже (возможна подгонка)': 'on fresh data the result is notably worse (possible overfitting)',
+  'для проверки на будущих данных не хватает сделок': 'there are not enough trades to validate on future data',
+  'Средний результат {x} R достоверно ниже нуля — на этом инструменте паттерн системно теряет. Сигналы игнорировать.':
+    'Average result {x} R is reliably below zero \u2014 on this instrument the pattern systemically loses. Ignore its signals.',
+  'Результат (+{x} R) неотличим от нуля — сделки закрываются «в шум». Паттерн сам по себе преимущества не даёт, используйте только как контекст.':
+    'Result (+{x} R) is indistinguishable from zero \u2014 trades close \u201cinto noise\u201d. The pattern alone gives no edge; use it as context only.',
+  'Сделок слишком мало ({n}) — текущая выборка не позволяет оценить стратегию.':
+    'Too few trades ({n}) \u2014 the current sample does not allow evaluating the strategy.',
+  'Ни одна из {n} стратегий не показала положительного результата вне шума ({m} сделок). На этом инструменте/таймфрейме паттерны Нисона сейчас не дают преимущества.':
+    'None of the {n} strategies showed a positive result beyond noise ({m} trades). On this instrument/timeframe Nison patterns currently give no edge.',
+  '{a} из {n} паттернов показывают достоверное ребро на {m} сделках. Текущая конфигурация подтверждена историей.':
+    '{a} of {n} patterns show a reliable edge over {m} trades. The current configuration is confirmed by history.',
+  'Достоверное преимущество только у {a} из {n} паттернов ({m} сделок). Торговать следует лишь отобранные стратегии, остальные — наблюдения.':
+    'A reliable edge exists only for {a} of {n} patterns ({m} trades). Trade only the selected strategies; treat the rest as observations.',
+
+  // ── Pricing ──
+  'Загрузка тарифов…': 'Loading plans\u2026',
+  'Доступ к аналитике и журналу сигналов по подписке. Оплата в USDT (on-chain),\n        активация после подтверждения платежа.':
+    'Access to analytics and the signal journal via subscription. Payment in USDT (on-chain), activation after payment confirmation.',
+  'Первый доступ': 'First access',
+  'дней бесплатно': 'days free',
+  'Backend недоступен (локальная разработка) — покупка отключена.':
+    'Backend unavailable (local development) \u2014 purchases are disabled.',
+  'Ваш аккаунт': 'Your account',
+  'действует до': 'active until',
+  'Заявка': 'Order',
+  'ожидает подтверждения платежа…': 'awaiting payment confirmation\u2026',
+  'Подписка не активна': 'Subscription is not active',
+  'Обновить статус': 'Refresh status',
+  'Регистрация': 'Register',
+  'Email (необязательно, для восстановления доступа)': 'Email (optional, for account recovery)',
+  'Создать аккаунт': 'Create account',
+  'Не удалось загрузить тарифы': 'Failed to load plans',
+  'Ошибка регистрации': 'Registration error',
+  'Аккаунт создан. ID:': 'Account created. ID:',
+  'Заявка создана': 'Order created',
+  'Переведите': 'Send',
+  'USDT на адрес оплаты': 'USDT to the payment address',
+  '— подписка активируется после подтверждения платежа (обычно до 1 часа).':
+    '\u2014 the subscription activates after payment confirmation (usually within 1 hour).',
+  'Не удалось оформить заявку': 'Failed to create the order',
+  'Скопировано': 'Copied',
+  'Скопировать адрес': 'Copy address',
+  'Все паттерны Нисона и рыночный контекст': 'All Nison patterns and market context',
+  'Журнал сигналов и бэктест': 'Signal journal and backtest',
+  'Синхронизация между устройствами': 'Sync across devices',
+  'Текущий план': 'Current plan',
+  'Создание заявки…': 'Creating order\u2026',
+  'Выбрать': 'Select',
+  'Оплачивая подписку, вы соглашаетесь с': 'By paying for the subscription you agree to the',
+  'публичной офертой': 'Terms of Service',
+  'и': 'and',
+  'политикой конфиденциальности': 'Privacy Policy',
+  'Free': 'Free',
+  'Pro': 'Pro',
+  'Premium': 'Premium',
 
   // ── misc ──
   'Тренд на': 'Trend on',

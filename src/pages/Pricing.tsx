@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, Copy, CreditCard, Loader2, Sparkles } from 'lucide-react';
+import { useI18n } from '../i18n';
 import {
   fetchPlans, fetchSubscription, getUserId, registerAccount, requestSubscription,
   hasBackend, type PlanInfo, type SubState,
 } from '../utils/account';
 
-function fmtDate(ts?: number): string {
+function fmtDate(ts?: number, locale = 'ru-RU'): string {
   if (!ts) return '';
-  return new Date(ts * 1000).toLocaleDateString('ru-RU');
+  return new Date(ts * 1000).toLocaleDateString(locale);
 }
 
 export default function PricingPage() {
+  const { t, locale } = useI18n();
   const [plans, setPlans] = useState<PlanInfo[]>([]);
   const [payTo, setPayTo] = useState('');
   const [trialDays, setTrialDays] = useState(0);
@@ -89,7 +91,7 @@ export default function PricingPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24 text-gray-400 gap-3">
-        <Loader2 className="w-5 h-5 animate-spin text-amber-400" /> Загрузка тарифов…
+        <Loader2 className="w-5 h-5 animate-spin text-amber-400" /> {t('Загрузка тарифов…')}
       </div>
     );
   }
@@ -97,17 +99,16 @@ export default function PricingPage() {
   return (
     <div className="max-w-3xl mx-auto">
       <h2 className="text-2xl font-bold text-white mb-1 flex items-center gap-2">
-        <CreditCard className="w-6 h-6 text-amber-400" /> Тарифы
+        <CreditCard className="w-6 h-6 text-amber-400" /> {t('Тарифы')}
       </h2>
       <p className="text-sm text-gray-400 mb-6">
-        Доступ к аналитике и журналу сигналов по подписке. Оплата в USDT (on-chain),
-        активация после подтверждения платежа.
-        {trialDays > 0 && !userId && ` Первый доступ — ${trialDays} дней бесплатно.`}
+        {t('Доступ к аналитике и журналу сигналов по подписке. Оплата в USDT (on-chain),\n        активация после подтверждения платежа.')}
+        {trialDays > 0 && !userId && ` ${t('Первый доступ')} — ${trialDays} ${t('дней бесплатно')}.`}
       </p>
 
       {!hasBackend() && (
         <div className="mb-6 rounded-xl border border-gray-700 bg-surface-raised/60 p-4 text-sm text-gray-400">
-          Backend недоступен (локальная разработка) — покупка отключена.
+          {t('Backend недоступен (локальная разработка) — покупка отключена.')}
         </div>
       )}
 
@@ -116,22 +117,22 @@ export default function PricingPage() {
         {userId ? (
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
             <div className="flex-1 min-w-0">
-              <p className="text-xs uppercase tracking-wider text-gray-500 mb-1">Ваш аккаунт</p>
+              <p className="text-xs uppercase tracking-wider text-gray-500 mb-1">{t('Ваш аккаунт')}</p>
               <p className="text-sm text-gray-300 font-mono truncate">{userId}</p>
               <p className="text-sm mt-2">
                 {sub?.active ? (
                   <span className="inline-flex items-center gap-1.5 text-emerald-400">
                     <CheckCircle2 className="w-4 h-4" />
-                    {sub.planTitle} — действует до {fmtDate(sub.expiresAt)}
+                    {t(sub.planTitle)} — {t('действует до')} {fmtDate(sub.expiresAt, locale)}
                   </span>
                 ) : sub?.pending ? (
                   <span className="text-amber-400">
-                    Заявка «{sub.pendingTitle}» ожидает подтверждения платежа…
+                    {t('Заявка')} «{t(sub.pendingTitle)}» {t('ожидает подтверждения платежа…')}
                   </span>
                 ) : trialDays > 0 ? (
-                  <span className="text-gray-400">Подписка не активна</span>
+                  <span className="text-gray-400">{t('Подписка не активна')}</span>
                 ) : (
-                  <span className="text-gray-400">Подписка не активна</span>
+                  <span className="text-gray-400">{t('Подписка не активна')}</span>
                 )}
               </p>
             </div>
@@ -139,20 +140,20 @@ export default function PricingPage() {
               onClick={() => refreshStatus(userId)}
               className="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors self-start"
             >
-              Обновить статус
+              {t('Обновить статус')}
             </button>
           </div>
         ) : (
           <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
             <div className="flex-1">
               <label className="block text-xs uppercase tracking-wider text-gray-500 mb-2">
-                Регистрация{trialDays > 0 ? ` — ${trialDays} дней бесплатно` : ''}
+                {t('Регистрация')}{trialDays > 0 ? ` — ${trialDays} ${t('дней бесплатно')}` : ''}
               </label>
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="Email (необязательно, для восстановления доступа)"
+                placeholder={t('Email (необязательно, для восстановления доступа)')}
                 className="w-full rounded-lg bg-surface-deep border border-gray-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-amber-500/60"
               />
             </div>
@@ -160,7 +161,7 @@ export default function PricingPage() {
               onClick={onRegister}
               className="px-4 py-2 rounded-lg bg-gradient-to-br from-amber-400 to-orange-600 text-black text-sm font-semibold hover:shadow-lg hover:shadow-amber-500/20 transition-shadow whitespace-nowrap"
             >
-              Создать аккаунт
+              {t('Создать аккаунт')}
             </button>
           </div>
         )}
@@ -168,7 +169,7 @@ export default function PricingPage() {
 
       {error && (
         <div className="mb-6 rounded-xl border border-red-900/60 bg-red-950/40 p-3 text-sm text-red-300">
-          {error}
+          {t(error)}
         </div>
       )}
       {orderMsg && (
@@ -176,13 +177,13 @@ export default function PricingPage() {
           <div className="flex items-start gap-3">
             <Sparkles className="w-4 h-4 mt-0.5 flex-shrink-0 text-amber-400" />
             <div className="min-w-0 flex-1">
-              <p>{orderMsg}</p>
+              <p>{t(orderMsg)}</p>
               {(payTo || orderMsg.includes(':')) && payTo && (
                 <button
                   onClick={copyPay}
                   className="mt-2 inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border border-amber-700/60 text-amber-300 hover:bg-amber-500/10 transition-colors"
                 >
-                  <Copy className="w-3 h-3" /> {copied ? 'Скопировано' : 'Скопировать адрес'}
+                  <Copy className="w-3 h-3" /> {copied ? t('Скопировано') : t('Скопировать адрес')}
                 </button>
               )}
             </div>
@@ -203,21 +204,21 @@ export default function PricingPage() {
                   : 'border-gray-800 bg-surface-raised/60'
               }`}
             >
-              <h3 className="text-sm font-semibold text-white mb-1">{p.title}</h3>
+              <h3 className="text-sm font-semibold text-white mb-1">{t(p.title)}</h3>
               <p className="text-3xl font-bold text-amber-400 mb-4">
                 {p.price_usdt}<span className="text-sm font-medium text-gray-400 ml-1">USDT</span>
               </p>
               <ul className="text-xs text-gray-400 space-y-2 mb-6 flex-1">
-                <li className="flex gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" /> Все паттерны Нисона и рыночный контекст</li>
-                <li className="flex gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" /> Журнал сигналов и бэктест</li>
-                <li className="flex gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" /> Синхронизация между устройствами</li>
+                <li className="flex gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" /> {t('Все паттерны Нисона и рыночный контекст')}</li>
+                <li className="flex gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" /> {t('Журнал сигналов и бэктест')}</li>
+                <li className="flex gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" /> {t('Синхронизация между устройствами')}</li>
               </ul>
               <button
                 onClick={() => onBuy(p.id)}
                 disabled={!hasBackend() || busyPlan === p.id || current}
                 className="w-full py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20"
               >
-                {current ? 'Текущий план' : busyPlan === p.id ? 'Создание заявки…' : 'Выбрать'}
+                {current ? t('Текущий план') : busyPlan === p.id ? t('Создание заявки…') : t('Выбрать')}
               </button>
             </div>
           );
@@ -225,11 +226,11 @@ export default function PricingPage() {
       </div>
 
       <p className="mt-8 text-[11px] text-gray-600 leading-relaxed">
-        Оплачивая подписку, вы соглашаетесь с{' '}
-        <a href="/legal/terms.html" className="underline hover:text-gray-400">публичной офертой</a>
-        {' '}и{' '}
-        <a href="/legal/privacy.html" className="underline hover:text-gray-400">политикой конфиденциальности</a>.
-        Сервис носит информационный характер и не является индивидуальной инвестиционной рекомендацией.
+        {t('Оплачивая подписку, вы соглашаетесь с')}{' '}
+        <a href="/legal/terms.html" className="underline hover:text-gray-400">{t('публичной офертой')}</a>
+        {' '}{t('и')}{' '}
+        <a href="/legal/privacy.html" className="underline hover:text-gray-400">{t('политикой конфиденциальности')}</a>.
+        {t('Сервис носит информационный характер и не является индивидуальной инвестиционной рекомендацией.')}
       </p>
     </div>
   );
