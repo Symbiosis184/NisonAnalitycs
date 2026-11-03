@@ -21,8 +21,11 @@ import {
 import { syncJournal, deleteRemoteSignal, replaceJournal, JournalAuthError } from '../utils/journalSync';
 import { formatPrice } from '../utils/format';
 import { fetch24hTicker, fetchKlines } from '../api/bybit';
+import { useI18n } from '../i18n';
 
 export default function SignalJournal() {
+  const { t, lang } = useI18n();
+  const locale = lang === 'ru' ? 'ru-RU' : 'en-GB';
   const [signals, setSignals] = useState<SignalEntry[]>([]);
   const [stats, setStats] = useState<SignalStats | null>(null);
   const [filter, setFilter] = useState<'all' | 'active' | 'closed'>('all');
@@ -48,10 +51,10 @@ export default function SignalJournal() {
         // чтобы не забивать консоль каждые 60 секунд.
         if (!authNotified.current) {
           authNotified.current = true;
-          console.warn('Журнал: серверная синхронизация отключена (требуется ключ доступа), работаем локально');
+          console.warn(t('Журнал: серверная синхронизация отключена (требуется ключ доступа), работаем локально'));
         }
       } else {
-        console.warn('Журнал: серверная синхронизация недоступна (работаем локально):', err);
+        console.warn(t('Журнал: серверная синхронизация недоступна (работаем локально):'), err);
       }
       setServerConnected(false);
     }
@@ -86,18 +89,18 @@ export default function SignalJournal() {
   // Восстановление журнала из последнего авто-снапшота (защита от потери данных)
   const handleRestore = () => {
     if (snapshots.length === 0) {
-      alert('Резервных снапшотов пока нет.');
+      alert(t('Резервных снапшотов пока нет.'));
       return;
     }
     const latest = snapshots[0];
-    const when = new Date(latest.savedAt).toLocaleString('ru-RU');
-    if (!confirm(`Восстановить журнал из снапшота от ${when} (${latest.entries} записей)?\nТекущее состояние также будет сохранено в снапшоты.`)) return;
+    const when = new Date(latest.savedAt).toLocaleString(locale);
+    if (!confirm(t(`Восстановить журнал из снапшота от ${when} (${latest.entries} записей)?\nТекущее состояние также будет сохранено в снапшоты.`))) return;
     const restored = restoreFromSnapshot();
     if (restored) {
       loadSignals();
-      alert(`Журнал восстановлен: ${restored.length} записей.`);
+      alert(t(`Журнал восстановлен: ${restored.length} записей.`));
     } else {
-      alert('Не удалось восстановить журнал из снапшота.');
+      alert(t('Не удалось восстановить журнал из снапшота.'));
     }
   };
 
@@ -113,7 +116,7 @@ export default function SignalJournal() {
       try {
         await settlePendingSignals((symbol, timeframe) => fetchKlines(symbol, timeframe, 200));
       } catch (err) {
-        console.error('Журнал: ошибка сверки сигналов по свечам:', err);
+        console.error(t('Журнал: ошибка сверки сигналов по свечам:'), err);
       }
     }
 
@@ -156,11 +159,11 @@ export default function SignalJournal() {
   };
 
   const handleDelete = (id: string) => {
-    if (confirm('Удалить сигнал?')) {
+    if (confirm(t('Удалить сигнал?'))) {
       deleteSignal(id);
       // Удаляем и из серверного хранилища (ошибки не блокируют локальное удаление)
       deleteRemoteSignal(id).catch(err =>
-        console.warn('Журнал: не удалось удалить сигнал с сервера:', err));
+        console.warn(t('Журнал: не удалось удалить сигнал с сервера:'), err));
       // Принудительно обновляем состояние после удаления
       setSignals(getAllSignals());
       setStats(getSignalStats());
@@ -187,14 +190,14 @@ export default function SignalJournal() {
         try {
           const { imported, rejected } = importJournal(content);
           if (rejected > 0) {
-            alert(`Импортировано сигналов: ${imported}. Отклонено некорректных записей: ${rejected}.`);
+            alert(t(`Импортировано сигналов: ${imported}. Отклонено некорректных записей: ${rejected}.`));
           }
           // Публикуем импортированный журнал на сервер (источник истины — файл)
           replaceJournal(getAllSignals()).catch(err =>
-            console.warn('Журнал: импорт не отправлен на сервер:', err));
+            console.warn(t('Журнал: импорт не отправлен на сервер:'), err));
           loadSignals();
         } catch (err) {
-          alert(err instanceof Error ? err.message : 'Не удалось импортировать журнал');
+          alert(err instanceof Error ? err.message : t('Не удалось импортировать журнал'));
         }
       };
       reader.readAsText(file);
@@ -212,13 +215,13 @@ export default function SignalJournal() {
   const getStatusBadge = (status: SignalEntry['status']) => {
     switch (status) {
       case 'pending':
-        return <Badge tone="active">⏳ Активен</Badge>;
+        return <Badge tone="active">{t('⏳ Активен')}</Badge>;
       case 'hit_target':
-        return <Badge tone="win">✓ Цель достигнута</Badge>;
+        return <Badge tone="win">{t('✓ Цель достигнута')}</Badge>;
       case 'hit_stop':
-        return <Badge tone="loss">✗ Стоп сработал</Badge>;
+        return <Badge tone="loss">{t('✗ Стоп сработал')}</Badge>;
       case 'expired':
-        return <Badge tone="expired">⏰ Истёк</Badge>;
+        return <Badge tone="expired">{t('⏰ Истёк')}</Badge>;
     }
   };
 
@@ -228,10 +231,10 @@ export default function SignalJournal() {
       {/* Бета-статус журнала: накопление статистики сигналов только началось,
           win rate / R:R на малой выборке не являются надёжной оценкой ребра. */}
       <div className="flex items-center gap-2 flex-wrap">
-        <h2 className="text-lg font-bold text-white">Журнал сигналов</h2>
+        <h2 className="text-lg font-bold text-white">{t('Журнал сигналов')}</h2>
         <span
           className="px-2 py-0.5 rounded-md text-[11px] font-semibold uppercase tracking-wide bg-amber-500/10 text-amber-400 border border-amber-500/30"
-          title="Журнал в бета-версии: накопленная статистика формируется, интерпретировать метрики с осторожностью"
+          title={t('Журнал в бета-версии: накопленная статистика формируется, интерпретировать метрики с осторожностью')}
         >
           beta
         </span>
@@ -245,35 +248,35 @@ export default function SignalJournal() {
                 : 'text-gray-400 border-gray-700 bg-gray-400/10'
           }`}
           title={serverConnected
-            ? `Синхронизировано с сервером${lastSyncAt ? ' в ' + new Date(lastSyncAt).toLocaleTimeString('ru-RU') : ''}`
+            ? t(`Синхронизировано с сервером${lastSyncAt ? ' at ' + new Date(lastSyncAt).toLocaleTimeString(locale) : ''}`)
             : serverConnected === false
-              ? 'Серверное хранилище недоступно — журнал хранится только в этом браузере'
-              : 'Проверяем доступность серверного хранилища...'}
+              ? t('Серверное хранилище недоступно — журнал хранится только в этом браузере')
+              : t('Проверяем доступность серверного хранилища...')}
         >
           {serverConnected === undefined
-            ? '⏳ синхронизация…'
+            ? t('⏳ синхронизация…')
             : serverConnected
-              ? '☁ синхронизировано'
-              : '☁ локально'}
+              ? t('☁ синхронизировано')
+              : t('☁ локально')}
         </span>
       </div>
       {/* Статистика */}
       {stats && (
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 sm:gap-4">
           <div className="panel p-3 sm:p-4">
-            <div className="text-xs text-gray-400 mb-1">Всего сигналов</div>
+            <div className="text-xs text-gray-400 mb-1">{t('Всего сигналов')}</div>
             <div className="text-lg sm:text-2xl font-bold text-white">{stats.totalSignals}</div>
           </div>
           <div className="panel p-4">
-            <div className="text-xs text-gray-400 mb-1">Активных</div>
+            <div className="text-xs text-gray-400 mb-1">{t('Активных')}</div>
             <div className="text-lg sm:text-2xl font-bold text-yellow-400">{stats.activeSignals}</div>
           </div>
           <div className="panel p-4">
-            <div className="text-xs text-gray-400 mb-1">Цель достигнута</div>
+            <div className="text-xs text-gray-400 mb-1">{t('Цель достигнута')}</div>
             <div className="text-lg sm:text-2xl font-bold text-green-400">{stats.hitTarget}</div>
           </div>
           <div className="panel p-4">
-            <div className="text-xs text-gray-400 mb-1">Стоп сработал</div>
+            <div className="text-xs text-gray-400 mb-1">{t('Стоп сработал')}</div>
             <div className="text-lg sm:text-2xl font-bold text-red-400">{stats.hitStop}</div>
           </div>
           <div className="panel p-4">
@@ -281,17 +284,17 @@ export default function SignalJournal() {
             <div className="text-lg sm:text-2xl font-bold text-white">{stats.winRate.toFixed(1)}%</div>
           </div>
           <div className="panel p-4">
-            <div className="text-xs text-gray-400 mb-1">Средний P&L</div>
+            <div className="text-xs text-gray-400 mb-1">{t('Средний P&L')}</div>
             <div className={`text-lg sm:text-2xl font-bold ${stats.avgPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               {stats.avgPnl >= 0 ? '+' : ''}{stats.avgPnl.toFixed(2)}%
             </div>
           </div>
           <div className="panel p-4">
-            <div className="text-xs text-gray-400 mb-1">Средний R:R</div>
+            <div className="text-xs text-gray-400 mb-1">{t('Средний R:R')}</div>
             <div className="text-lg sm:text-2xl font-bold text-white">1:{stats.avgRiskReward.toFixed(2)}</div>
           </div>
           <div className="panel p-4">
-            <div className="text-xs text-gray-400 mb-1">Истёкших</div>
+            <div className="text-xs text-gray-400 mb-1">{t('Истёкших')}</div>
             <div className="text-lg sm:text-2xl font-bold text-gray-400">{stats.expired}</div>
           </div>
         </div>
@@ -308,7 +311,7 @@ export default function SignalJournal() {
                 : 'bg-gray-800/50 text-gray-400 hover:text-white'
             }`}
           >
-            Все
+            {t('Все')}
           </button>
           <button
             onClick={() => setFilter('active')}
@@ -318,7 +321,7 @@ export default function SignalJournal() {
                 : 'bg-gray-800/50 text-gray-400 hover:text-white'
             }`}
           >
-            Активные
+            {t('Активные')}
           </button>
           <button
             onClick={() => setFilter('closed')}
@@ -328,29 +331,29 @@ export default function SignalJournal() {
                 : 'bg-gray-800/50 text-gray-400 hover:text-white'
             }`}
           >
-            Закрытые
+            {t('Закрытые')}
           </button>
         </div>
 
         <div className="flex gap-2 overflow-x-auto pb-1 -mx-3 px-3 sm:mx-0 sm:px-0">
           <button
             onClick={handleRestore}
-            title={`Авто-снапшоты: ${snapshots.length} (хранится до 7 последних)`}
+            title={t(`Авто-снапшоты: ${snapshots.length} (хранится до 7 последних)`)}
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-400/20 hover:bg-gray-400/30 text-gray-300 transition-colors"
           >
             <History className="w-4 h-4" />
-            Восстановить{snapshots.length > 0 ? ` (${snapshots.length})` : ''}
+            {t('Восстановить')}{snapshots.length > 0 ? ` (${snapshots.length})` : ''}
           </button>
           <button
             onClick={handleExport}
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 transition-colors"
           >
             <Download className="w-4 h-4" />
-            Экспорт
+            {t('Экспорт')}
           </button>
           <label className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 transition-colors cursor-pointer">
             <Upload className="w-4 h-4" />
-            Импорт
+            {t('Импорт')}
             <input
               type="file"
               accept=".json"
@@ -366,7 +369,7 @@ export default function SignalJournal() {
         {filteredSignals.length === 0 ? (
           <div className="text-center py-12">
             <Target className="w-12 h-12 text-gray-600 mx-auto mb-4" />
-            <p className="text-gray-400">Нет сигналов</p>
+            <p className="text-gray-400">{t('Нет сигналов')}</p>
           </div>
         ) : (
           filteredSignals.map((signal) => (
@@ -417,20 +420,20 @@ export default function SignalJournal() {
 
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm mb-3">
                 <div>
-                  <div className="text-xs text-gray-400 mb-1">Вход</div>
+                  <div className="text-xs text-gray-400 mb-1">{t('Вход')}</div>
                   <div className="font-mono text-white">${formatPrice(signal.entryPrice)}</div>
                 </div>
                 <div>
                   <div className="text-xs text-gray-400 mb-1 flex items-center gap-1">
                     <Shield className="w-3 h-3" />
-                    Стоп
+                    {t('Стоп')}
                   </div>
                   <div className="font-mono text-red-400">${formatPrice(signal.stopLoss)}</div>
                 </div>
                 <div>
                   <div className="text-xs text-gray-400 mb-1 flex items-center gap-1">
                     <Target className="w-3 h-3" />
-                    Цель
+                    {t('Цель')}
                   </div>
                   <div className="font-mono text-green-400">${formatPrice(signal.target)}</div>
                 </div>
@@ -439,7 +442,7 @@ export default function SignalJournal() {
                   <div className="font-mono text-white">1:{signal.riskReward.toFixed(2)}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-gray-400 mb-1">Уверенность</div>
+                  <div className="text-xs text-gray-400 mb-1">{t('Уверенность')}</div>
                   <div className="font-mono text-white">{signal.confidence.toFixed(0)}%</div>
                 </div>
               </div>
@@ -448,7 +451,7 @@ export default function SignalJournal() {
                 <div className="pt-3 border-t border-gray-800/50">
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                     <div>
-                      <div className="text-xs text-gray-400 mb-1">Выход</div>
+                      <div className="text-xs text-gray-400 mb-1">{t('Выход')}</div>
                       <div className="font-mono text-white">${formatPrice(signal.exitPrice)}</div>
                     </div>
                     <div>
@@ -460,14 +463,14 @@ export default function SignalJournal() {
                       </div>
                     </div>
                     <div>
-                      <div className="text-xs text-gray-400 mb-1">Дата закрытия</div>
+                      <div className="text-xs text-gray-400 mb-1">{t('Дата закрытия')}</div>
                       <div className="text-white">
                         {new Date(signal.exitTimestamp!).toLocaleDateString('ru-RU')}
                       </div>
                     </div>
                     {signal.notes && (
                       <div>
-                        <div className="text-xs text-gray-400 mb-1">Заметки</div>
+                        <div className="text-xs text-gray-400 mb-1">{t('Заметки')}</div>
                         <div className="text-white text-xs">{signal.notes}</div>
                       </div>
                     )}
@@ -476,7 +479,7 @@ export default function SignalJournal() {
               )}
 
               <div className="mt-3 pt-3 border-t border-gray-800/50 text-xs text-gray-400">
-                Создан: {new Date(signal.timestamp).toLocaleString('ru-RU')}
+                {t('Создан:')} {new Date(signal.timestamp).toLocaleString(locale)}
               </div>
             </div>
           ))

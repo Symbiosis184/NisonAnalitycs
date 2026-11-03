@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
 import type { CandleDTO, PatternDTO, ZoneDTO, SignalDTO, GapDTO } from '../api/types';
+import { useI18n } from '../i18n';
 
 // Единые типы данных графика — из общего контракта src/api/types.ts
 type Candle = CandleDTO;
@@ -52,6 +53,7 @@ export default function CandlestickChart({
   height = 500,
   live = null,
 }: Props) {
+  const { t } = useI18n();
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
   // Живая свеча обновляется через WebSocket каждые ~сотни миллисекунд —
@@ -242,7 +244,7 @@ export default function CandlestickChart({
               color: `rgba(${rgb},0.95)`, background: 'rgba(15,23,42,0.85)',
               padding: '1px 4px', borderRadius: '4px',
             } as Partial<CSSStyleDeclaration>);
-            tag.textContent = `ГЭП ${g.pct.toFixed(1)}%`;
+            tag.textContent = t(`ГЭП ${g.pct.toFixed(1)}%`);
             el.appendChild(tag);
           }
           cont.appendChild(el);
@@ -276,7 +278,7 @@ export default function CandlestickChart({
         lineWidth: 1,
         lineStyle: 1, // пунктир: вход
         axisLabelVisible: true,
-        title: `${isLong ? '▲' : '▼'} ${sig.pattern} · вход`,
+        title: t(`${isLong ? '▲' : '▼'} ${sig.pattern} · вход`),
       });
       candlestickSeries.createPriceLine({
         price: sig.stop_loss,
@@ -284,7 +286,7 @@ export default function CandlestickChart({
         lineWidth: 1,
         lineStyle: 2,
         axisLabelVisible: true,
-        title: 'стоп',
+        title: t('стоп'),
       });
       candlestickSeries.createPriceLine({
         price: sig.target,
@@ -292,7 +294,7 @@ export default function CandlestickChart({
         lineWidth: 1,
         lineStyle: 2,
         axisLabelVisible: true,
-        title: `цель 1:${sig.rr.toFixed(1)}`,
+        title: t(`цель 1:${sig.rr.toFixed(1)}`),
       });
       if (sig.bar_time) {
         const t = Math.floor(sig.bar_time / 1000);
@@ -407,7 +409,7 @@ export default function CandlestickChart({
             const names = confirmedPatterns
               .filter(p => String(Math.floor(candles[p.candleIndex].time / 1000)) === barTime)
               .map(p => `${p.name} · ${Math.round(Math.min(100, Math.max(0, p.confidence)))}%`);
-            const label = names.length > 1 ? `Паттерны Нисона: ${names.join(' | ')}` : names[0] ?? '';
+            const label = names.length > 1 ? t(`Паттерны Нисона: ${names.join(' | ')}`) : (names[0] ? t(names[0]) : '');
             const cx = chart.timeScale().timeToCoordinate(m.time as any) ?? x;
             const anchorPattern = byTime.get(barTime)?.pattern ?? confirmedPatterns[0];
             const cy = candlestickSeries.priceToCoordinate(
@@ -452,7 +454,7 @@ export default function CandlestickChart({
         chartRef.current = null;
       }
     };
-  }, [candles, ema20, ema50, ema200, patterns, signals, support, resistance, gaps, height]);
+  }, [candles, ema20, ema50, ema200, patterns, signals, support, resistance, gaps, height, t]);
 
   // ── Тихое live-обновление последнего бара (WebSocket) ─────────────────────
   // Не пересоздаём график: обновляем только OHLCV текущего незакрытого бара
