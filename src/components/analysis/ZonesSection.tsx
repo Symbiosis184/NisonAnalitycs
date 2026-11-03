@@ -8,6 +8,7 @@
 import { Shield } from 'lucide-react';
 import type { ZoneDTO } from '../../api/types';
 import { formatPrice } from '../../utils/format';
+import { useI18n } from '../../i18n';
 
 const SIDE_STYLES = {
   support: {
@@ -16,7 +17,8 @@ const SIDE_STYLES = {
     price: 'text-green-400',
     strongCard: 'border-green-500/30 bg-green-500/5',
     strongBadge: 'bg-green-500/10 text-green-400',
-    label: 'поддержки',
+    labelRu: 'поддержки',
+    labelEn: 'support',
   },
   resistance: {
     panel: 'border-red-500/20 bg-red-500/5',
@@ -24,17 +26,19 @@ const SIDE_STYLES = {
     price: 'text-red-400',
     strongCard: 'border-red-500/30 bg-red-500/5',
     strongBadge: 'bg-red-500/10 text-red-400',
-    label: 'сопротивления',
+    labelRu: 'сопротивления',
+    labelEn: 'resistance',
   },
 } as const;
 
 function ZoneList({ zones, side }: { zones: ZoneDTO[]; side: keyof typeof SIDE_STYLES }) {
+  const { t, lang } = useI18n();
   const s = SIDE_STYLES[side];
   return (
     <div className={`p-4 rounded-xl border ${s.panel}`}>
       <h3 className={`text-sm font-semibold mb-3 flex items-center gap-2 ${s.title}`}>
         <Shield className="w-4 h-4" />
-        Зоны {s.label} (по Нисону)
+        {lang === 'en' ? `Zones (${s.labelEn}, per Nison)` : `Зоны ${s.labelRu} (по Нисону)`}
       </h3>
       <div className="space-y-3">
         {zones.slice(0, 5).map((zone, idx: number) => (
@@ -44,19 +48,19 @@ function ZoneList({ zones, side }: { zones: ZoneDTO[]; side: keyof typeof SIDE_S
             <div className="mb-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
               <span className={`${s.price} font-mono text-lg`}>${formatPrice(zone.level)}{zone.halfWidth ? <span className="text-xs text-gray-400 ml-1">[{formatPrice(zone.level - zone.halfWidth)}–{formatPrice(zone.level + zone.halfWidth)}]</span> : null}</span>
               <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                <span className="text-xs text-gray-400">{zone.touches} касаний</span>
+                <span className="text-xs text-gray-400">{zone.touches} {t('касаний')}</span>
                 {zone.strong && (
                   <span className={`px-2 py-0.5 rounded text-xs font-semibold ${s.strongBadge}`}>
-                    СИЛЬНАЯ
+                    {t('СИЛЬНАЯ')}
                   </span>
                 )}
               </div>
             </div>
             <div className="text-xs text-gray-400">
-              <div className="mb-1">Голосов: {zone.votes}</div>
+              <div className="mb-1">{t('Голосов:')} {zone.votes}</div>
               <div className="text-gray-400">
                 {zone.reasons.map((reason: string, i: number) => (
-                  <span key={i} className="inline-block mr-2">• {reason}</span>
+                  <span key={i} className="inline-block mr-2">• {t(reason)}</span>
                 ))}
               </div>
             </div>

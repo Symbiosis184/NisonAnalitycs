@@ -1,9 +1,39 @@
 import { createContext, useContext, useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { BarChart3, TrendingUp, BookOpen, FlaskConical, Heart, CreditCard } from 'lucide-react';
+import { BarChart3, TrendingUp, BookOpen, FlaskConical, Heart, CreditCard, Globe } from 'lucide-react';
 import SupportModal from './SupportModal';
 import ContextMenu from './ContextMenu';
 import { PRICING_ENABLED } from '../App';
+import { useI18n, type Lang } from '../i18n';
+
+/** Переключатель языка RU/EN (иконка Globe + подписи «Русский»/«English»). */
+function LanguageSwitcher() {
+  const { lang, setLang } = useI18n();
+  const btn = (value: Lang, label: string) => (
+    <button
+      key={value}
+      onClick={() => setLang(value)}
+      aria-pressed={lang === value}
+      title={label}
+      className={`px-2 py-1 rounded-md text-[11px] font-medium transition-colors whitespace-nowrap ${
+        lang === value ? 'bg-amber-500/15 text-amber-400' : 'text-gray-400 hover:text-white hover:bg-white/5'
+      }`}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div
+      className="flex items-center gap-0.5 rounded-lg border border-gray-700/60 bg-gray-800/40 px-1 py-0.5"
+      role="group"
+      aria-label="Язык интерфейса"
+    >
+      <Globe className="w-3.5 h-3.5 text-gray-500 mx-1 flex-shrink-0" aria-hidden="true" />
+      {btn('ru', 'Русский')}
+      {btn('en', 'English')}
+    </div>
+  );
+}
 
 // Mini-заголовок в шапке: страница аналитики публикует сюда пару и цену,
 // когда пользователь прокрутил родной заголовок (см. Analysis.tsx).
@@ -27,6 +57,7 @@ export function useHeaderBadge() {
 
 export default function Layout() {
   const location = useLocation();
+  const { t } = useI18n();
   const [supportOpen, setSupportOpen] = useState(false);
   const [badgeRaw, setBadge] = useState<HeaderBadge | null>(null);
   // Нормализация бейджа: рендерим ТОЛЬКО строки. Если страница опубликовала
@@ -85,7 +116,7 @@ export default function Layout() {
                 }`}
               >
                 <TrendingUp className="w-4 h-4" />
-                Обзор
+                {t('Обзор')}
               </Link>
               <Link
                 to="/journal"
@@ -96,7 +127,7 @@ export default function Layout() {
                 }`}
               >
                 <BookOpen className="w-4 h-4" />
-                Журнал
+                {t('Журнал')}
               </Link>
               <Link
                 to="/backtest"
@@ -107,7 +138,7 @@ export default function Layout() {
                 }`}
               >
                 <FlaskConical className="w-4 h-4" />
-                Бэктест
+                {t('Бэктест')}
               </Link>
               {/* Ссылка «Тарифы» скрыта, пока страница закрыта (PRICING_ENABLED=false в App.tsx) */}
               {PRICING_ENABLED && (
@@ -120,16 +151,17 @@ export default function Layout() {
                   }`}
                 >
                   <CreditCard className="w-4 h-4" />
-                  Тарифы
+                  {t('Тарифы')}
                 </Link>
               )}
+              <LanguageSwitcher />
               <button
                 onClick={() => setSupportOpen(true)}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20"
-                title="Поддержать развитие проекта (TON)"
+                title={t('Поддержать развитие проекта (TON)')}
               >
                 <span className="heart-beat"><Heart className="w-4 h-4 fill-current" /></span>
-                Поддержать
+                {t('Поддержать')}
               </button>
             </nav>
 
@@ -160,7 +192,7 @@ export default function Layout() {
               }`}
             >
               <TrendingUp className="w-3.5 h-3.5" />
-              Обзор
+              {t('Обзор')}
             </Link>
             <Link
               to="/journal"
@@ -171,7 +203,7 @@ export default function Layout() {
               }`}
             >
               <BookOpen className="w-3.5 h-3.5" />
-              Журнал
+              {t('Журнал')}
             </Link>
             <Link
               to="/backtest"
@@ -182,7 +214,7 @@ export default function Layout() {
               }`}
             >
               <FlaskConical className="w-3.5 h-3.5" />
-              Бэктест
+              {t('Бэктест')}
             </Link>
             {/* Ссылка «Тарифы» скрыта, пока страница закрыта (PRICING_ENABLED=false в App.tsx) */}
             {PRICING_ENABLED && (
@@ -195,7 +227,7 @@ export default function Layout() {
                 }`}
               >
                 <CreditCard className="w-3.5 h-3.5" />
-                Тарифы
+                {t('Тарифы')}
               </Link>
             )}
             <button
@@ -203,8 +235,9 @@ export default function Layout() {
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20 flex-shrink-0"
             >
               <span className="heart-beat"><Heart className="w-3.5 h-3.5 fill-current" /></span>
-              Поддержать
+              {t('Поддержать')}
             </button>
+            <LanguageSwitcher />
           </nav>
         </div>
       </header>
@@ -229,16 +262,16 @@ export default function Layout() {
                 className="flex items-center gap-1.5 text-amber-400/80 hover:text-amber-300 transition-colors"
               >
                 <span className="heart-beat"><Heart className="w-3.5 h-3.5 fill-current" /></span>
-                Поддержать проект
+                {t('Поддержать проект')}
               </button>
             </div>
           </div>
           <div className="mt-4 flex flex-wrap items-center justify-center sm:justify-between gap-x-4 gap-y-1 text-[11px] text-gray-600">
-            <p>Сервис носит информационный характер и не является индивидуальной инвестиционной рекомендацией.</p>
-            <nav aria-label="Правовые документы" className="flex items-center gap-3">
-              <a href="/legal/terms.html" className="hover:text-gray-400 transition-colors">Публичная оферта</a>
+            <p>{t('Сервис носит информационный характер и не является индивидуальной инвестиционной рекомендацией.')}</p>
+            <nav aria-label={t('Правовые документы')} className="flex items-center gap-3">
+              <a href="/legal/terms.html" className="hover:text-gray-400 transition-colors">{t('Публичная оферта')}</a>
               <span aria-hidden="true">•</span>
-              <a href="/legal/privacy.html" className="hover:text-gray-400 transition-colors">Политика конфиденциальности</a>
+              <a href="/legal/privacy.html" className="hover:text-gray-400 transition-colors">{t('Политика конфиденциальности')}</a>
             </nav>
           </div>
         </div>

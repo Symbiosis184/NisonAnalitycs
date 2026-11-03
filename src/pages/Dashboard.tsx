@@ -10,10 +10,12 @@ import { useBinanceWebSocket } from '../hooks/useBinanceWebSocket';
 import { describeNetworkError } from '../utils/http';
 import type { MarketKind } from '../api/market';
 import { marketLabel, STOCK_SUFFIX } from '../api/market';
+import { useI18n } from '../i18n';
 
 
 /** Переключатель рынков Crypto / TradFi (акции США). */
 function MarketTabs({ value, onChange }: { value: MarketKind; onChange: (m: MarketKind) => void }) {
+  const { t } = useI18n();
   const tab = (m: MarketKind, label: string) => (
     <button
       onClick={() => onChange(m)}
@@ -29,14 +31,15 @@ function MarketTabs({ value, onChange }: { value: MarketKind; onChange: (m: Mark
   );
   return (
     <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-gray-900/60 border border-gray-800/60">
-      {tab('crypto', 'Крипто')}
-      {tab('stock', 'TradFi · Акции США')}
+      {tab('crypto', t('Крипто'))}
+      {tab('stock', t('TradFi · Акции США'))}
     </div>
   );
 }
 
 /** Тело карточки инструмента — переиспользуется для топ-8 и произвольного тикера. */
 function MarketCardBody({ item }: { item: MarketOverview }) {
+  const { t } = useI18n();
   const isPositive = item.change_24h >= 0;
   // Крипта: 'BTCUSDT' -> 'BTC'; акции: 'AAPL:STOCK' -> 'AAPL'.
   const baseAsset = item.symbol.endsWith(STOCK_SUFFIX)
@@ -84,9 +87,9 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
 
       {/* Режим рынка */}
       <div className="mb-3 p-2 rounded-lg bg-gray-800/30">
-        <div className="text-xs text-gray-400 mb-1">Режим рынка</div>
+        <div className="text-xs text-gray-400 mb-1">{t('Режим рынка')}</div>
         <div className={`text-sm font-medium ${getTrendColor(item.regime)}`}>
-          {item.regime}
+          {t(item.regime)}
         </div>
       </div>
 
@@ -100,7 +103,7 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
             </div>
           </div>
           <div className="text-right">
-            <div className="text-xs text-gray-400">Уверенность</div>
+            <div className="text-xs text-gray-400">{t('Уверенность')}</div>
             <div className="text-lg font-bold">
               {item.consensus.confidence.toFixed(0)}%
             </div>
@@ -113,7 +116,7 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
         <div className="mb-3">
           <div className="text-xs text-gray-400 mb-2 flex items-center gap-1">
             <Target className="w-3 h-3" />
-            Подтверждённые паттерны ({confirmedPatterns.length})
+            {`${t('Подтверждённые паттерны')} (${confirmedPatterns.length})`}
           </div>
           <div className="space-y-1">
             {confirmedPatterns.slice(0, 2).map((pattern, idx) => (
@@ -123,7 +126,7 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
                     pattern.type === 'bullish' ? 'text-green-400' :
                     pattern.type === 'bearish' ? 'text-red-400' : 'text-gray-400'
                   }`}>
-                    {pattern.type === 'bullish' ? '▲' : pattern.type === 'bearish' ? '▼' : '◆'} {pattern.name}
+                    {pattern.type === 'bullish' ? '▲' : pattern.type === 'bearish' ? '▼' : '◆'} {t(pattern.name)}
                   </span>
                   <span className="text-green-400 text-[11px]">✓</span>
                 </div>
@@ -139,7 +142,7 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
         <div className="mb-3">
           <div className="text-xs text-gray-400 mb-2 flex items-center gap-1">
             <BarChart2 className="w-3 h-3" />
-            Сценарии ({item.signals.length})
+            {`${t('Сценарии')} (${item.signals.length})`}
           </div>
           <div className="space-y-1">
             {item.signals.slice(0, 2).map((signal, idx) => (
@@ -161,7 +164,7 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
                   </div>
                   <span className="text-green-400 text-[11px]">✓</span>
                 </div>
-                <div className="text-gray-400 text-[11px]">{signal.pattern}</div>
+                <div className="text-gray-400 text-[11px]">{t(signal.pattern)}</div>
                 <div className="flex items-center justify-between mt-1 text-[11px]">
                   <span className="text-gray-400">R:R 1:{signal.rr.toFixed(2)}</span>
                   <span className="text-gray-400">{(signal.quality * 100).toFixed(0)}%</span>
@@ -176,11 +179,11 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
       <div className="mb-3">
         <div className="text-xs text-gray-400 mb-2 flex items-center gap-1">
           <Shield className="w-3 h-3" />
-          Ключевые уровни
+          {t('Ключевые уровни')}
         </div>
         <div className="grid grid-cols-2 gap-2 text-xs">
           <div>
-            <div className="text-green-400 mb-1">Поддержка</div>
+            <div className="text-green-400 mb-1">{t('Поддержка')}</div>
             {item.support.slice(0, 2).map((level, idx) => (
               <div key={idx} className="font-mono text-gray-300">
                 ${formatPrice(level)}
@@ -188,7 +191,7 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
             ))}
           </div>
           <div>
-            <div className="text-red-400 mb-1">Сопротивление</div>
+            <div className="text-red-400 mb-1">{t('Сопротивление')}</div>
             {item.resistance.slice(0, 2).map((level, idx) => (
               <div key={idx} className="font-mono text-gray-300">
                 ${formatPrice(level)}
@@ -201,7 +204,7 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
       {/* Объём */}
       <div className="pt-2 border-t border-gray-800/50">
         <div className="flex items-center justify-between text-xs">
-          <span className="text-gray-400">Объём</span>
+          <span className="text-gray-400">{t('Объём')}</span>
           <span className={`font-mono ${
             volumeRatio > 1.5 ? 'text-green-400' :
             volumeRatio < 0.5 ? 'text-red-400' : 'text-gray-300'
@@ -218,6 +221,7 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
 
 
 export default function Dashboard() {
+  const { t, locale } = useI18n();
   // Карточки всегда относятся только к активному рынку: при переключении
   // Crypto ⇄ TradFi чужие карточки мгновенно исчезают (без «смеси» рынков).
   const [marketData, setMarketData] = useState<MarketOverview[]>([]);
@@ -347,13 +351,13 @@ export default function Dashboard() {
       <Seo meta={dashboardMeta()} />
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-xl sm:text-3xl font-bold text-white leading-tight">Обзор рынка<span className="hidden sm:inline"> по методологии Нисона</span></h1>
+          <h1 className="text-xl sm:text-3xl font-bold text-white leading-tight">{t('Обзор рынка')}<span className="hidden sm:inline">{t(' по методологии Нисона')}</span></h1>
           <p className="text-sm text-gray-400 mt-1">
-            Контекст → Паттерны → Подтверждение → Объём
+            {t('Контекст → Паттерны → Подтверждение → Объём')}
           </p>
           <div className="flex items-center gap-3 mt-1">
             <p className="text-xs text-gray-400">
-              {lastUpdate && `Обновлено: ${lastUpdate.toLocaleTimeString('ru-RU')}`}
+              {lastUpdate && `${t('Обновлено:')} ${lastUpdate.toLocaleTimeString(locale)}`}
             </p>
             {Object.keys(realTimePrices).length > 0 && (
               <span className="flex items-center gap-1 text-xs text-green-400">
@@ -371,7 +375,7 @@ export default function Dashboard() {
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 transition-colors disabled:opacity-50"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            Обновить
+            {t('Обновить')}
           </button>
         </div>
       </div>
@@ -386,7 +390,7 @@ export default function Dashboard() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') handleAnalyze(); }}
-              placeholder={marketKind === 'stock' ? "Введите тикер акции, например AAPL, MSFT…" : "Введите тикер, например TAO, ARB, PEPE…"}
+              placeholder={marketKind === 'stock' ? t('Введите тикер акции, например AAPL, MSFT…') : t('Введите тикер, например TAO, ARB, PEPE…')}
               maxLength={20}
               className="w-full pl-9 pr-9 py-2.5 rounded-lg bg-gray-900/60 border border-gray-700/60 text-white placeholder-gray-400 text-sm focus:outline-none focus:border-amber-500/50"
             />
@@ -394,7 +398,7 @@ export default function Dashboard() {
               <button
                 onClick={() => { setQuery(''); setCustomCard(null); setCustomError(null); }}
                 className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-300"
-                aria-label="Очистить"
+                aria-label={t('Очистить')}
               >
                 <X className="w-4 h-4" />
               </button>
@@ -405,16 +409,16 @@ export default function Dashboard() {
             disabled={customLoading || !query.trim()}
             className="px-5 py-2.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 font-medium text-sm transition-colors disabled:opacity-50 whitespace-nowrap"
           >
-            {customLoading ? 'Анализируем…' : 'Анализировать'}
+            {customLoading ? t('Анализируем…') : t('Анализировать')}
           </button>
         </div>
         <p className="text-xs text-gray-400 mt-2">
-          {marketLabel(marketKind)} — анализ по методологии Нисона. Нажмите Enter или «Анализировать», затем кликните по карточке для полного анализа.
+          {t(`${marketLabel(marketKind)} — анализ по методологии Нисона. Нажмите Enter или «Анализировать», затем кликните по карточке для полного анализа.`)}
         </p>
         {customError && (
           <div className="mt-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 flex items-start gap-2">
             <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
-            <p className="text-xs text-red-400">{customError}</p>
+            <p className="text-xs text-red-400">{t(customError)}</p>
           </div>
         )}
       </div>
@@ -423,8 +427,8 @@ export default function Dashboard() {
         <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 flex items-start gap-3">
           <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
           <div>
-            <p className="text-sm font-semibold text-red-400">Ошибка загрузки</p>
-            <p className="text-xs text-gray-400 mt-1">{error}</p>
+            <p className="text-sm font-semibold text-red-400">{t('Ошибка загрузки')}</p>
+            <p className="text-xs text-gray-400 mt-1">{t(error)}</p>
           </div>
         </div>
       )}
@@ -454,13 +458,13 @@ export default function Dashboard() {
                 {'__custom' in item && item.__custom && (
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-[11px] uppercase tracking-wide text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.5">
-                      Ваш запрос
+                      {t('Ваш запрос')}
                     </span>
                     <button
                       onClick={(e) => { e.preventDefault(); setCustomCard(null); }}
                       className="p-0.5 text-gray-400 hover:text-gray-300"
-                      aria-label="Убрать карточку"
-                      title="Убрать"
+                      aria-label={t('Убрать карточку')}
+                      title={t('Убрать')}
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
@@ -476,28 +480,28 @@ export default function Dashboard() {
       {!loading && marketData.length === 0 && !error && (
         <div className="text-center py-12">
           <Activity className="w-12 h-12 text-gray-600 mx-auto mb-4" />
-          <p className="text-gray-400">Нет данных для отображения</p>
+          <p className="text-gray-400">{t('Нет данных для отображения')}</p>
         </div>
       )}
       {/* Легенда методологии */}
       <div className="p-4 rounded-xl border border-gray-800/60 bg-surface-panel/50">
-        <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><BookOpen className="w-4 h-4 text-gray-400" aria-hidden="true" /> Методология Стива Нисона</h3>
+        <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><BookOpen className="w-4 h-4 text-gray-400" aria-hidden="true" /> {t('Методология Стива Нисона')}</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
           <div>
-            <div className="text-amber-400 font-semibold mb-1">1. Контекст</div>
-            <div className="text-gray-400">Определяем тренд и режим рынка. Торгуем только в направлении тренда.</div>
+            <div className="text-amber-400 font-semibold mb-1">{t('1. Контекст')}</div>
+            <div className="text-gray-400">{t('Определяем тренд и режим рынка. Торгуем только в направлении тренда.')}</div>
           </div>
           <div>
-            <div className="text-amber-400 font-semibold mb-1">2. Паттерны</div>
-            <div className="text-gray-400">Ищем свечные паттерны в контексте тренда. Паттерны без контекста не работают.</div>
+            <div className="text-amber-400 font-semibold mb-1">{t('2. Паттерны')}</div>
+            <div className="text-gray-400">{t('Ищем свечные паттерны в контексте тренда. Паттерны без контекста не работают.')}</div>
           </div>
           <div>
-            <div className="text-amber-400 font-semibold mb-1">3. Подтверждение</div>
-            <div className="text-gray-400">Каждый паттерн должен быть подтверждён следующей свечой или объёмом.</div>
+            <div className="text-amber-400 font-semibold mb-1">{t('3. Подтверждение')}</div>
+            <div className="text-gray-400">{t('Каждый паттерн должен быть подтверждён следующей свечой или объёмом.')}</div>
           </div>
           <div>
-            <div className="text-amber-400 font-semibold mb-1">4. Правило множества</div>
-            <div className="text-gray-400">Минимум 3 независимых сигнала для входа. Consensus score показывает силу.</div>
+            <div className="text-amber-400 font-semibold mb-1">{t('4. Правило множества')}</div>
+            <div className="text-gray-400">{t('Минимум 3 независимых сигнала для входа. Consensus score показывает силу.')}</div>
           </div>
         </div>
       </div>

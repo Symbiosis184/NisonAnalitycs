@@ -5,14 +5,16 @@ import type { PatternDTO } from '../../api/types';
 import { Icon } from '../ui/Icon';
 import { num } from '../../utils/num';
 import { formatConfirmedTime } from '../../utils/format';
+import { useI18n } from '../../i18n';
 
 export function ConfirmedPatternsList({ patterns, total, timeframe }: { patterns: PatternDTO[]; total: number; timeframe?: string }) {
+  const { t } = useI18n();
   return (
     <div className="panel p-6 ">
       <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-        <Icon name="candle" className="text-gray-400" /> Подтверждённые паттерны
+        <Icon name="candle" className="text-gray-400" /> {t('Подтверждённые паттерны')}
         <span className="text-xs text-gray-400 font-normal ml-2">
-          ({patterns.length} из {total})
+          ({patterns.length}{t(' из ')}{total})
         </span>
       </h3>
       <div className="space-y-3">
@@ -39,17 +41,17 @@ export function ConfirmedPatternsList({ patterns, total, timeframe }: { patterns
                     pattern.type === 'bullish' ? 'text-green-400' :
                     pattern.type === 'bearish' ? 'text-red-400' : 'text-gray-300'
                   }`}>
-                    {pattern.name}
+                    {t(pattern.name)}
                   </div>
                   <div className="text-xs text-gray-400">
-                    Уверенность: {pattern.confidence}%
+                    {t('Уверенность:')} {pattern.confidence}%
                     {/* Дата/время подтверждения — закрытие подтверждающей свечи (Нисон) */}
                     {(() => {
                       const confirmedAt = formatConfirmedTime(pattern.confirmedTime, timeframe);
                       return confirmedAt ? (
                         <span className="ml-2 inline-flex items-center gap-1 whitespace-nowrap text-gray-500">
                           <Icon name="clock" className="text-gray-600" />
-                          Подтверждён: {confirmedAt}
+                          {t('Подтверждён:')} {confirmedAt}
                         </span>
                       ) : null;
                     })()}
@@ -58,16 +60,16 @@ export function ConfirmedPatternsList({ patterns, total, timeframe }: { patterns
               </div>
               <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 sm:justify-end">
                 <span className="whitespace-nowrap rounded border border-green-500/20 bg-green-500/10 px-2 py-1 text-xs text-green-400">
-                  ✓ Подтверждён
+                  {t('✓ Подтверждён')}
                 </span>
                 {pattern.hasVolume && (
                   <span className="whitespace-nowrap rounded border border-blue-500/20 bg-blue-500/10 px-2 py-1 text-xs text-blue-400 inline-flex items-center gap-1">
-                    <Icon name="volume" /> Объём
+                    <Icon name="volume" /> {t('Объём')}
                   </span>
                 )}
                 {pattern.atLevel && (
                   <span className="whitespace-nowrap rounded border border-purple-500/20 bg-purple-500/10 px-2 py-1 text-xs text-purple-400 inline-flex items-center gap-1">
-                    <Icon name="target" /> У уровня
+                    <Icon name="target" /> {t('У уровня')}
                   </span>
                 )}
               </div>
@@ -75,7 +77,7 @@ export function ConfirmedPatternsList({ patterns, total, timeframe }: { patterns
             {pattern.story && (
               <div className="text-xs text-gray-400 italic border-t border-gray-800/50 pt-2 mt-2 flex items-start gap-1.5">
                 <Icon name="story" className="text-gray-500 mt-0.5" />
-                <span>{pattern.story}</span>
+                <span>{t(pattern.story)}</span>
               </div>
             )}
           </div>
@@ -86,6 +88,7 @@ export function ConfirmedPatternsList({ patterns, total, timeframe }: { patterns
 }
 
 export function IndicatorsSection({ report }: { report: AnalysisReport }) {
+  const { t } = useI18n();
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       <div className="panel p-4 ">
@@ -98,15 +101,14 @@ export function IndicatorsSection({ report }: { report: AnalysisReport }) {
         </div>
         {/* Честная зональная классификация: extremes — это <20/>80, а не 30/70 */}
         <div className="text-xs text-gray-400 mt-1">
-          {report.rsi >= 80 ? 'Экстремальная перекупленность' :
+          {t(report.rsi >= 80 ? 'Экстремальная перекупленность' :
            report.rsi > 70 ? 'Зона перекупленности' :
            report.rsi <= 20 ? 'Экстремальная перепроданность' :
-           report.rsi < 30 ? 'Зона перепроданности' : 'Нейтральная зона (30–70)'}
+           report.rsi < 30 ? 'Зона перепроданности' : 'Нейтральная зона (30–70)')}
         </div>
         <div className="text-xs text-gray-600 mt-2 leading-relaxed flex items-start gap-1.5">
           <Icon name="warning" className="text-amber-500/80 mt-0.5" />
-          <span>По Нисону RSI — только контекст. В сильном тренде перекупленность
-          сохраняется долго и сама по себе НЕ сигнал на продажу.</span>
+          <span>{t('По Нисону RSI — только контекст. В сильном тренде перекупленность сохраняется долго и сама по себе НЕ сигнал на продажу.')}</span>
         </div>
       </div>
 
@@ -120,18 +122,17 @@ export function IndicatorsSection({ report }: { report: AnalysisReport }) {
           {((num(report.macd?.histogram) / Math.max(num(report.price), 1e-9)) * 100).toFixed(3)}%
         </div>
         <div className="text-xs text-gray-400 mt-1">
-          {report.macd.histogram > 0 ? 'Бычий импульс' : 'Медвежий импульс'}
-          {' · '}гистограмма от цены
+          {t(report.macd.histogram > 0 ? 'Бычий импульс' : 'Медвежий импульс')}
+          {' · '}{t('гистограмма от цены')}
         </div>
         <div className="text-xs text-gray-600 mt-2 leading-relaxed flex items-start gap-1.5">
           <Icon name="warning" className="text-amber-500/80 mt-0.5" />
-          <span>Контекстный индикатор (лагирует). Вход по Нисону определяется
-          свечами + объёмом + уровнями, а не MACD.</span>
+          <span>{t('Контекстный индикатор (лагирует). Вход по Нисону определяется свечами + объёмом + уровнями, а не MACD.')}</span>
         </div>
       </div>
 
       <div className="panel p-4 ">
-        <h3 className="text-sm font-semibold text-gray-400 mb-2">Тренд</h3>
+        <h3 className="text-sm font-semibold text-gray-400 mb-2">{t('Тренд')}</h3>
         <div className={`text-3xl font-bold ${
           report.trend === 'ВОСХОДЯЩИЙ' ? 'text-green-400' :
           report.trend === 'НИСХОДЯЩИЙ' ? 'text-red-400' : 'text-yellow-400'
@@ -139,11 +140,10 @@ export function IndicatorsSection({ report }: { report: AnalysisReport }) {
           {(num(report.trend_strength) * 100).toFixed(1)}%
         </div>
         <div className="text-xs text-gray-400 mt-1">
-          Сила направленного движения ({report.trend})
+          {t('Сила направленного движения')} ({t(report.trend)})
         </div>
         <div className="text-xs text-gray-600 mt-2 leading-relaxed">
-          Метрика: КПД пути цены за последние 20 баров (net move ÷ суммарные
-          диапазоны). ~0% — флэт/шум; 40%+ — чистое направленное движение.
+          {t('Метрика: КПД пути цены за последние 20 баров (net move ÷ суммарные диапазоны). ~0% — флэт/шум; 40%+ — чистое направленное движение.')}
         </div>
       </div>
     </div>

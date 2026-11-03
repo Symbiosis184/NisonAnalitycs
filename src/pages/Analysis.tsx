@@ -23,8 +23,10 @@ import { formatPrice } from '../utils/format';
 import { loadRiskSettings, saveRiskSettings } from '../utils/risk_settings';
 import { isValidSymbol } from '../utils/validation';
 import { isStockSymbol } from '../api/market';
+import { useI18n } from '../i18n';
 
 export default function Analysis() {
+  const { t, locale } = useI18n();
   const rawSymbol = useParams<{ symbol: string }>().symbol;
   // Валидация symbol из URL: недопустивые значения не дойдут до внешних API-запросов
   const symbol = rawSymbol && isValidSymbol(rawSymbol) ? rawSymbol.trim().toUpperCase() : undefined;
@@ -133,7 +135,7 @@ export default function Analysis() {
       <div className="flex items-center justify-center h-96">
         <div className="text-center">
           <RefreshCw className="w-8 h-8 text-amber-400 animate-spin mx-auto mb-4" />
-          <p className="text-gray-400">Загрузка анализа...</p>
+          <p className="text-gray-400">{t('Загрузка анализа...')}</p>
         </div>
       </div>
     );
@@ -143,8 +145,8 @@ export default function Analysis() {
     return (
       <div className="p-6 rounded-lg bg-red-500/10 border border-red-500/20">
         <AlertTriangle className="w-6 h-6 text-red-400 mb-2" />
-        <p className="text-red-400 font-semibold">Ошибка</p>
-        <p className="text-gray-400 text-sm mt-1">{error || 'Данные не найдены'}</p>
+        <p className="text-red-400 font-semibold">{t('Ошибка')}</p>
+        <p className="text-gray-400 text-sm mt-1">{t(error || 'Данные не найдены')}</p>
       </div>
     );
   }
@@ -167,7 +169,7 @@ export default function Analysis() {
       {/* Навигация */}
       <Link to="/" className="inline-flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors">
         <ArrowLeft className="w-4 h-4" />
-        Назад к обзору
+        {t('Назад к обзору')}
       </Link>
 
       {/* Заголовок с ценой */}
@@ -180,13 +182,13 @@ export default function Analysis() {
               report.trend === 'НИСХОДЯЩИЙ' ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
               'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20'
             }`}>
-              {report.trend}
+              {t(report.trend)}
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2">
             <span className="text-xl sm:text-2xl font-bold text-white">${formatPrice(currentPrice)}</span>
             {livePriceFresh && (
-              <span className="animate-live-pulse inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-500/10 border border-green-500/20 text-green-400 text-[11px] font-medium" title="Цена и свеча обновляются в реальном времени через WebSocket Bybit">
+              <span className="animate-live-pulse inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-500/10 border border-green-500/20 text-green-400 text-[11px] font-medium" title={t('Цена и свеча обновляются в реальном времени через WebSocket Bybit')}>
                 <span className="relative flex w-1.5 h-1.5">
                   <span className="absolute inline-flex w-full h-full rounded-full bg-green-400 opacity-60 animate-ping" />
                   <span className="relative inline-flex w-1.5 h-1.5 rounded-full bg-green-400" />
@@ -224,13 +226,13 @@ export default function Analysis() {
       <Collapsible
         storageKey="context"
         icon={<Activity className="w-5 h-5 text-sky-400" />}
-        title="Контекст рынка"
+        title={t('Контекст рынка')}
         badge={
           <>
             <span className={`text-xs font-semibold ${
               report.regime === 'ВОСХОДЯЩИЙ' ? 'text-green-400' : report.regime === 'НИСХОДЯЩИЙ' ? 'text-red-400' : 'text-yellow-400'
-            }`}>{report.regime}</span>
-            <span className="text-xs text-gray-400">Consensus {consensusScore.toFixed(1)}/5 · Объём {volumeRatio.toFixed(2)}x</span>
+            }`}>{t(report.regime)}</span>
+            <span className="text-xs text-gray-400">Consensus {consensusScore.toFixed(1)}/5 · {t('Объём')} {volumeRatio.toFixed(2)}x</span>
           </>
         }
       >
@@ -241,8 +243,8 @@ export default function Analysis() {
       <Collapsible
         storageKey="chart"
         icon={<ChartIcon className="w-5 h-5 text-amber-400" />}
-        title={`График ${displayPair} · ${timeframe}`}
-        badge={<span className="text-xs text-gray-400">{report.patterns.length} паттернов · {report.support.length + report.resistance.length} зон</span>}
+        title={`${t('График')} ${displayPair} · ${timeframe}`}
+        badge={<span className="text-xs text-gray-400">{report.patterns.length}{t(' паттернов')} · {report.support.length + report.resistance.length}{t(' зон')}</span>}
       >
         <CandlestickChart
           candles={report.candles}
@@ -261,17 +263,17 @@ export default function Analysis() {
         <Collapsible
           storageKey="vprofile"
           icon={<BarChart2 className="w-5 h-5 text-blue-400" />}
-          title="Контекст рынка и объёма"
+          title={t('Контекст рынка и объёма')}
           badge={
             <>
               {report.wyckoff && (
                 <span className="text-xs text-gray-400">
-                  Вайкофф: {PHASE_SHORT[report.wyckoff.phase] ?? report.wyckoff.phase} · {(num(report.wyckoff.confidence) * 100).toFixed(0)}%
+                  {t('Вайкофф:')} {t(PHASE_SHORT[report.wyckoff.phase] ?? report.wyckoff.phase)} · {(num(report.wyckoff.confidence) * 100).toFixed(0)}%
                 </span>
               )}
               {report.delta_summary && (
                 <span className={`text-xs font-mono ${report.delta_summary.cumulative_delta >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  ΣΔ {report.delta_summary.cumulative_delta >= 0 ? '+' : ''}{Math.round(report.delta_summary.cumulative_delta).toLocaleString('ru-RU')}
+                  ΣΔ {report.delta_summary.cumulative_delta >= 0 ? '+' : ''}{Math.round(report.delta_summary.cumulative_delta).toLocaleString(locale)}
                 </span>
               )}
             </>
@@ -291,12 +293,12 @@ export default function Analysis() {
       <Collapsible
         storageKey="zones"
         icon={<Shield className="w-5 h-5 text-green-400" />}
-        title={`Зоны поддержки и сопротивления · ${timeframe}`}
+        title={`${t('Зоны поддержки и сопротивления')} · ${timeframe}`}
         badge={
           <>
             <span className="text-xs text-green-400">↓ {report.support.length}</span>
             <span className="text-xs text-red-400">↑ {report.resistance.length}</span>
-            <span className="text-xs text-gray-400">кластеризация + сила по касаниям (Нисон)</span>
+            <span className="text-xs text-gray-400">{t('кластеризация + сила по касаниям (Нисон)')}</span>
           </>
         }
       >
@@ -308,8 +310,8 @@ export default function Analysis() {
         <Collapsible
           storageKey="patterns"
           icon={<ChartIcon className="w-5 h-5 text-amber-400" />}
-          title="Подтверждённые паттерны"
-          badge={<span className="text-xs text-gray-400">{confirmedPatterns.length} из {report.patterns.length} · подтверждены объёмом/уровнем</span>}
+          title={t('Подтверждённые паттерны')}
+          badge={<span className="text-xs text-gray-400">{confirmedPatterns.length}{t(' из ')}{report.patterns.length} {t('· подтверждены объёмом/уровнем')}</span>}
         >
           <ConfirmedPatternsList patterns={confirmedPatterns} total={report.patterns.length} timeframe={report.timeframe} />
         </Collapsible>
@@ -323,7 +325,7 @@ export default function Analysis() {
         <Collapsible
           storageKey="signals"
           icon={<Target className="w-5 h-5 text-amber-400" />}
-          title="Сценарии (Нисон: ожидание → подтверждение)"
+          title={t('Сценарии (Нисон: ожидание → подтверждение)')}
           badge={
             <>
               <span className="text-xs text-green-400">✓ {report.signals.filter((s) => s.lifecycle_status === 'confirmed').length}</span>
@@ -345,12 +347,12 @@ export default function Analysis() {
       <Collapsible
         storageKey="indicators"
         icon={<Activity className="w-5 h-5 text-sky-400" />}
-        title="Индикаторы"
+        title={t('Индикаторы')}
         badge={
           <>
             <span className="text-xs text-gray-400">RSI {num(report.rsi).toFixed(1)}</span>
             <span className="text-xs text-gray-400">MACD {num(report.macd?.histogram).toFixed(2)}</span>
-            <span className="text-xs text-gray-400">Тренд {(num(report.trend_strength) * 100).toFixed(1)}%</span>
+            <span className="text-xs text-gray-400">{t('Тренд')} {(num(report.trend_strength) * 100).toFixed(1)}%</span>
           </>
         }
       >
@@ -362,9 +364,9 @@ export default function Analysis() {
         <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 flex-shrink-0" />
         <div>
           <p className="text-xs text-gray-400 leading-relaxed">
-            <strong className="text-amber-400">Внимание:</strong> Данный анализ основан на методологии Стива Нисона.
-            Контекст рынка важнее отдельных паттернов. Всегда используйте подтверждение и управление рисками.
-            Это не является финансовой рекомендацией.
+            <strong className="text-amber-400">{t('Внимание:')}</strong> {t('Данный анализ основан на методологии Стива Нисона.')}{' '}
+            {t('Контекст рынка важнее отдельных паттернов. Всегда используйте подтверждение и управление рисками.')}{' '}
+            {t('Это не является финансовой рекомендацией.')}
           </p>
         </div>
       </div>
