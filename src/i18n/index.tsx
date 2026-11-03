@@ -12,6 +12,25 @@ export type { Lang };
 
 const STORAGE_KEY = 'kairi-lang';
 
+// --- Глобальный мост языка для модулей вне React (движки анализа: trend_detection,
+// pattern_engine, zone_voter, stats, wyckoff и т.д.). Их тексты генерируются по-русски
+// и переводятся на лету через TR() при lang === 'en'. ---
+let _curLang: Lang = (() => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved === 'en' || saved === 'ru') return saved;
+  } catch { /* ignore */ }
+  const nav = typeof navigator !== 'undefined' ? (navigator.language || 'ru') : 'ru';
+  return nav.toLowerCase().startsWith('en') ? 'en' : 'ru';
+})();
+
+/** Текущий язык для не-React кода. */
+export function getLang(): Lang { return _curLang; }
+/** Обновить глобальный язык (вызывается из I18nProvider при смене). */
+export function setGlobalLang(l: Lang): void { _curLang = l; }
+/** Перевод строки домена в не-React коде (no-op на ru). */
+export function TR(s: string): string { return translateString(s, _curLang); }
+
 function detectInitialLang(): Lang {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -48,8 +67,12 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   const setLang = useCallback((l: Lang) => {
     setLangState(l);
+    setGlobalLang(l);
     try { localStorage.setItem(STORAGE_KEY, l); } catch { /* ignore */ }
   }, []);
+
+  // Синхронизируем глобальный мост при старте (на случай смены языка в другой вкладке).
+  useEffect(() => { setGlobalLang(lang); }, [lang]);
 
   const value = useMemo<I18nCtx>(() => ({
     lang,
