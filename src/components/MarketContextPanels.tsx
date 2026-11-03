@@ -12,6 +12,7 @@ import { Icon } from './ui/Icon';
 import type { AnalysisReport, EdgeCohortDTO, SignalDTO } from '../api/types';
 import { formatPrice } from '../utils/format';
 import { Collapsible } from '../components/Collapsible';
+import { useI18n } from '../i18n';
 
 type Phase = NonNullable<AnalysisReport['wyckoff']>['phase'];
 
@@ -79,16 +80,17 @@ export function WyckoffPhasePanel({ wyckoff }: WProps) {
   const shown = selected ?? wyckoff.phase;
   const details = PHASE_DETAILS[shown];
   const detailsMeta = PHASE_META[shown];
+  const { t } = useI18n();
 
   return (
     <div className="panel p-4 ">
       <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
-        <Icon name="target" className="text-gray-500" /> Фаза цикла Вайкоффа
+        <Icon name="target" className="text-gray-500" /> {t('Фаза цикла Вайкоффа')}
         <span
           className="ml-auto px-2 py-0.5 rounded text-xs font-semibold"
           style={{ backgroundColor: `${meta.color}20`, color: meta.color }}
         >
-          {meta.label} · {(wyckoff.confidence * 100).toFixed(0)}%
+          {t(meta.label)} · {(wyckoff.confidence * 100).toFixed(0)}%
         </span>
       </h3>
 
@@ -107,9 +109,9 @@ export function WyckoffPhasePanel({ wyckoff }: WProps) {
               }}
               className={`flex-1 rounded-md px-1.5 py-1.5 text-center text-[11px] sm:text-xs font-medium transition-colors cursor-pointer ${active ? '' : 'opacity-40'}`}
               style={active ? { backgroundColor: `${m.color}25`, color: m.color, boxShadow: `inset 0 0 0 1px ${m.color}60` } : { color: m.color }}
-              title={`${m.label}: показать подробное описание`}
+              title={t(m.label) + ': ' + t('показать подробное описание')}
             >
-              {m.label}
+              {t(m.label)}
             </button>
           );
         })}
@@ -117,28 +119,28 @@ export function WyckoffPhasePanel({ wyckoff }: WProps) {
 
       {/* Позиция цены внутри диапазона консолидации */}
       <div className="mb-1 flex justify-between text-[11px] text-gray-400 font-mono">
-        <span>Диапазон: ${formatPrice(wyckoff.range_low)}</span>
+        <span>{t('Диапазон:')} ${formatPrice(wyckoff.range_low)}</span>
         <span>${formatPrice(wyckoff.range_high)}</span>
       </div>
       <div className="relative h-2.5 rounded-full bg-gray-800 overflow-visible mb-1">
         <div
           className="absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full border-2 border-white"
           style={{ left: `calc(${posPct}% - 7px)`, backgroundColor: meta.color }}
-          title={`Цена в ${posPct}% диапазона`}
+          title={t('Цена в {posPct}% диапазона').replace('{posPct}', String(posPct))}
         />
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-400 mt-2">
-        <span title="Ширина диапазона в единицах ATR: значимость консолидации">
-          Ширина: <span className="text-gray-300 font-mono">{wyckoff.range_width_atr.toFixed(1)} ATR</span>
+        <span title={t('Ширина диапазона в единицах ATR: значимость консолидации')}>
+          {t('Ширина:')} <span className="text-gray-300 font-mono">{wyckoff.range_width_atr.toFixed(1)} ATR</span>
         </span>
-        <span title="Отношение среднего объёма на верхах диапазона к объёму на низах (>1 — перекос вверх)">
-          Объёмный перекос ↕: <span className={wyckoff.vol_skew_high_low >= 1 ? 'text-green-400' : 'text-red-400'}>{wyckoff.vol_skew_high_low.toFixed(2)}</span>
+        <span title={t('Отношение среднего объёма на верхах диапазона к объёму на низах (>1 — перекос вверх)')}>
+          {t('Объёмный перекос ↕:')} <span className={wyckoff.vol_skew_high_low >= 1 ? 'text-green-400' : 'text-red-400'}>{wyckoff.vol_skew_high_low.toFixed(2)}</span>
         </span>
         <span>
-          Позиция в диапазоне: <span className="text-gray-300 font-mono">{posPct}%</span>
+          {t('Позиция в диапазоне:')} <span className="text-gray-300 font-mono">{posPct}%</span>
         </span>
       </div>
-      <p className="text-xs text-gray-400 mt-2 italic leading-relaxed">{wyckoff.description}</p>
+      <p className="text-xs text-gray-400 mt-2 italic leading-relaxed">{t(wyckoff.description)}</p>
 
       {/* Подробное описание фазы (раскрывается под шкалой цикла) */}
       <div className="mt-3 border-t border-gray-800/60 pt-2">
@@ -149,33 +151,33 @@ export function WyckoffPhasePanel({ wyckoff }: WProps) {
           className="w-full flex items-center gap-1.5 text-[11px] font-medium text-gray-400 hover:text-gray-200 transition-colors cursor-pointer"
         >
           <ChevronDown size={13} className={`transition-transform ${expanded ? '' : '-rotate-90'}`} />
-          Подробное описание фазы
+          {t('Подробное описание фазы')}
           {shown !== wyckoff.phase && (
             <span className="ml-auto text-[11px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400">
-              просмотр: {detailsMeta.label} · активная: {meta.label}
+              {t('просмотр')}:{' '}{t(detailsMeta.label)} · {t('активная')}:{' '}{t(meta.label)}
             </span>
           )}
         </button>
         {expanded && (
           <div className="mt-2 space-y-2 text-[11px] leading-relaxed">
             <div className="font-semibold" style={{ color: detailsMeta.color }}>
-              {details.title}
+              {t(details.title)}
             </div>
             <div>
-              <span className="text-gray-400 font-medium">Что происходит: </span>
-              <span className="text-gray-300">{details.what}</span>
+              <span className="text-gray-400 font-medium">{t('Что происходит: ')}</span>
+              <span className="text-gray-300">{t(details.what)}</span>
             </div>
             <div>
-              <span className="text-gray-400 font-medium">Кто действует: </span>
-              <span className="text-gray-300">{details.who}</span>
+              <span className="text-gray-400 font-medium">{t('Кто действует: ')}</span>
+              <span className="text-gray-300">{t(details.who)}</span>
             </div>
             <div>
-              <span className="text-gray-400 font-medium">Объём (усилие vs результат): </span>
-              <span className="text-gray-300">{details.volume}</span>
+              <span className="text-gray-400 font-medium">{t('Объём (усилие vs результат): ')}</span>
+              <span className="text-gray-300">{t(details.volume)}</span>
             </div>
             <div className="rounded-lg bg-gray-800/40 border border-gray-700/40 px-2.5 py-2">
-              <span className="text-gray-400 font-medium">Как использовать в анализе: </span>
-              <span className="text-gray-300">{details.action}</span>
+              <span className="text-gray-400 font-medium">{t('Как использовать в анализе: ')}</span>
+              <span className="text-gray-300">{t(details.action)}</span>
             </div>
           </div>
         )}
@@ -190,6 +192,7 @@ interface PathProps {
 
 /** Карточка «пути цены»: чем отличается честный adjusted RR от формального. */
 export function PricePathCard({ signal }: PathProps) {
+  const { t } = useI18n();
   const path = signal.path;
   if (!path) return null;
   const dirColor = signal.direction === 'long' ? 'text-green-400' : 'text-red-400';
@@ -200,12 +203,12 @@ export function PricePathCard({ signal }: PathProps) {
   return (
     <div className="mt-3 p-3 rounded-lg bg-gray-800/30 border border-gray-700/40">
       <div className="text-xs text-gray-400 mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="font-medium text-gray-400"><Icon name="path" className="mr-1" />Путь цены до цели</span>
+        <span className="font-medium text-gray-400"><Icon name="path" className="mr-1" />{t('Путь цены до цели')}</span>
         <span>
-          Формальный R:R <span className="font-mono text-white">1:{signal.rr.toFixed(2)}</span>
+          {t('Формальный R:R')} <span className="font-mono text-white">1:{signal.rr.toFixed(2)}</span>
           {' → '}
           <span className={`font-mono font-semibold ${dirColor}`}>1:{path.adjusted_rr.toFixed(2)}</span>
-          {rrDrop > 0.05 && <span className="text-orange-400 ml-1">(−{rrDrop.toFixed(2)} из-за транзита)</span>}
+          {rrDrop > 0.05 && <span className="text-orange-400 ml-1">(−{rrDrop.toFixed(2)} {t('из-за транзита')})</span>}
         </span>
       </div>
 
@@ -214,13 +217,13 @@ export function PricePathCard({ signal }: PathProps) {
         <div className="flex-1 h-1.5 rounded-full bg-gray-700/60 overflow-hidden">
           <div className={`h-full ${qualityColor}`} style={{ width: `${qualityPct}%` }} />
         </div>
-        <span className="text-[11px] font-mono text-gray-400">чистота пути {qualityPct}%</span>
+        <span className="text-[11px] font-mono text-gray-400">{t('чистота пути')} {qualityPct}%</span>
       </div>
 
       <div className="text-[11px] text-gray-400 mb-2">
-        Дистанция до цели: <span className="text-gray-300 font-mono">{path.distance_pct.toFixed(2)}%</span>
+        {t('Дистанция до цели:')} <span className="text-gray-300 font-mono">{path.distance_pct.toFixed(2)}%</span>
         {path.first_obstacle_pct !== null && (
-          <> · первое препятствие через <span className="text-orange-400 font-mono">{path.first_obstacle_pct.toFixed(2)}%</span></>
+          <> · {t('первое препятствие через')} <span className="text-orange-400 font-mono">{path.first_obstacle_pct.toFixed(2)}%</span></>
         )}
       </div>
 
@@ -231,14 +234,14 @@ export function PricePathCard({ signal }: PathProps) {
               <span className={`shrink-0 mt-0.5 inline-block w-2 h-2 rounded-full ${o.kind === 'hvn' ? 'bg-amber-500' : 'bg-rose-400'}`} />
               <span className="text-gray-400">
                 <span className="font-mono text-gray-300">${formatPrice(o.level)}</span>
-                {' '}· {o.kind === 'hvn' ? 'HVN-узел профиля' : 'S/R-зона'} (сила {(o.strength * 100).toFixed(0)}%)
-                {' '}· <span className="text-gray-400">{o.detail}</span>
+                {' '}· {o.kind === 'hvn' ? t('HVN-узел профиля') : t('S/R-зона')} ({t('сила')} {(o.strength * 100).toFixed(0)}%)
+                {' '}· <span className="text-gray-400">{t(o.detail)}</span>
               </span>
             </li>
           ))}
         </ul>
       )}
-      <p className="text-[11px] text-gray-400 italic mt-2">{path.description}</p>
+      <p className="text-[11px] text-gray-400 italic mt-2">{t(path.description)}</p>
     </div>
   );
 }
@@ -252,6 +255,7 @@ const VERDICT_META: Record<string, { label: string; cls: string; icon: typeof Ch
 
 /** Горизонтальная полоса expectancy когорты со шкалой CI (центральная ось = 0 R). */
 function CohortBar({ c }: { c: EdgeCohortDTO }) {
+  const { t } = useI18n();
   // Масштабируем по максимуму |CI| среди концов, минимум ±0.5R
   const maxAbs = Math.max(Math.abs(c.exp_ci_low), Math.abs(c.exp_ci_high), Math.abs(c.avg_net_r), 0.5);
   const toPct = (v: number) => ((v / maxAbs + 1) / 2) * 100;
@@ -266,10 +270,10 @@ function CohortBar({ c }: { c: EdgeCohortDTO }) {
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs mb-1">
         <span className="font-medium text-gray-300 inline-flex items-center gap-1.5">
           <Icon name={c.cohort === 'trend' ? 'trend-up' : c.cohort === 'range' ? 'range' : 'flash'} className="text-gray-400" />
-          {c.label}
+          {t(c.label)}
         </span>
         <span className="text-gray-400">
-          сделок <span className="text-gray-300 font-mono">{c.trades}</span>
+          {t('сделок')} <span className="text-gray-300 font-mono">{c.trades}</span>
           {' · '}WR <span className="text-gray-300 font-mono">{c.win_rate.toFixed(0)}%</span> [{c.ci_low.toFixed(0)}–{c.ci_high.toFixed(0)}]
         </span>
         {c.has_edge ? (
@@ -289,13 +293,13 @@ function CohortBar({ c }: { c: EdgeCohortDTO }) {
         <div
           className="absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full border border-black/40"
           style={{ left: `calc(${mean}% - 5px)`, backgroundColor: color }}
-          title={`Expectancy: ${c.avg_net_r >= 0 ? '+' : ''}${c.avg_net_r.toFixed(2)} R/сделку`}
+          title={`${t('Expectancy')}: ${c.avg_net_r >= 0 ? '+' : ''}${c.avg_net_r.toFixed(2)} ${t('R/сделку')}`}
         />
       </div>
       <div className="flex justify-between text-[11px] text-gray-600 font-mono mt-0.5">
         <span>{(-maxAbs).toFixed(1)} R</span>
         <span className={c.avg_net_r >= 0 ? 'text-green-400' : 'text-red-400'}>
-          {c.avg_net_r >= 0 ? '+' : ''}{c.avg_net_r.toFixed(2)} R/сд · Σ {c.total_net_r >= 0 ? '+' : ''}{c.total_net_r.toFixed(1)} R
+          {c.avg_net_r >= 0 ? '+' : ''}{c.avg_net_r.toFixed(2)} {t('R/сд')} · Σ {c.total_net_r >= 0 ? '+' : ''}{c.total_net_r.toFixed(1)} R
         </span>
         <span>+{maxAbs.toFixed(1)} R</span>
       </div>
@@ -308,6 +312,7 @@ interface EProps {
 }
 
 export function EdgeVerificationPanel({ edge }: EProps) {
+  const { t } = useI18n();
   const v = VERDICT_META[edge.verdict] ?? VERDICT_META.insufficient;
   const Icon = v.icon;
   const d = edge.degradation;
@@ -316,59 +321,59 @@ export function EdgeVerificationPanel({ edge }: EProps) {
     <Collapsible
       storageKey="edge"
       icon={<TrendingUp className="w-5 h-5 text-amber-400" />}
-      title="Верификация преимущества (edge)"
+      title={t('Верификация преимущества (edge)')}
       badge={
         <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${v.cls}`}>
-          {v.label}
+          {t(v.label)}
           {d.recent_expectancy != null && (
-            <> · {(d.recent_expectancy >= 0 ? '+' : '') + d.recent_expectancy.toFixed(2)} R/сд за 90д</>
+            <> · {(d.recent_expectancy >= 0 ? '+' : '') + d.recent_expectancy.toFixed(2)} {t('R/сд')} {t('за 90д')}</>
           )}
         </span>
       }
     >
       <div>
       <p className="text-xs text-gray-400 mb-4">
-        Эмпирический бэктест детектора на истории инструмента ({edge.sample_trades} сделок, без lookahead).
-        Cлева — где преимущество реально, справа — не деградирует ли оно сейчас.
+        {t('Эмпирический бэктест детектора на истории инструмента')} ({edge.sample_trades} {t('сделок')}, {t('без lookahead')}).{' '}
+        {t('Слева — где преимущество реально, справа — не деградирует ли оно сейчас.')}
       </p>
 
       {/* Вердикт */}
       <div className={`flex items-start gap-3 p-3 rounded-lg border mb-4 ${v.cls}`}>
         <Icon className="w-5 h-5 mt-0.5 shrink-0" />
         <div>
-          <div className="text-sm font-semibold">{v.label}</div>
-          <div className="text-xs text-gray-400 mt-1 leading-relaxed">{edge.summary}</div>
+          <div className="text-sm font-semibold">{t(v.label)}</div>
+          <div className="text-xs text-gray-400 mt-1 leading-relaxed">{t(edge.summary)}</div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Когорты по режимам */}
         <div>
-          <h4 className="text-sm font-semibold text-gray-300 mb-2">Эффективность по режимам рынка</h4>
+          <h4 className="text-sm font-semibold text-gray-300 mb-2">{t('Эффективность по режимам рынка')}</h4>
           {edge.cohorts.length > 0 ? (
             edge.cohorts.map((c) => <CohortBar key={c.cohort} c={c} />)
           ) : (
-            <p className="text-xs text-gray-400">Ни одна когорта не набрала наблюдений.</p>
+            <p className="text-xs text-gray-400">{t('Ни одна когорта не набрала наблюдений.')}</p>
           )}
           <p className="text-[11px] text-gray-600 mt-2">
-            Точка — средний net R когорты, полоса — 95% CI. EDGE = CI целиком выше нуля при n ≥ 20.
+            {t('Точка — средний net R когорты, полоса — 95% CI. EDGE = CI целиком выше нуля при n ≥ 20.')}
           </p>
         </div>
 
         {/* Деградация 90 дней vs история */}
         <div>
           <h4 className="text-sm font-semibold text-gray-300 mb-2">
-            Мониторинг деградации · последние {d.window_days} дней
+            {t('Мониторинг деградации')} · {t('последние')} {d.window_days} {t('дней')}
           </h4>
           <div className="grid grid-cols-2 gap-2 text-xs mb-3">
             <div className="p-2 rounded bg-gray-800/40">
-              <div className="text-gray-400 mb-1">Окно ({d.recent_trades} сд.)</div>
+              <div className="text-gray-400 mb-1">{t('Окно')} ({d.recent_trades} {t('сд.')})</div>
               <div className={`font-mono text-base font-bold ${d.recent_expectancy === null ? 'text-gray-600' : d.recent_expectancy >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                 {d.recent_expectancy === null ? '—' : `${d.recent_expectancy >= 0 ? '+' : ''}${d.recent_expectancy.toFixed(2)} R`}
               </div>
             </div>
             <div className="p-2 rounded bg-gray-800/40">
-              <div className="text-gray-400 mb-1">История ({d.history_trades} сд.)</div>
+              <div className="text-gray-400 mb-1">{t('История')} ({d.history_trades} {t('сд.')})</div>
               <div className={`font-mono text-base font-bold ${d.history_expectancy === null ? 'text-gray-600' : d.history_expectancy >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                 {d.history_expectancy === null ? '—' : `${d.history_expectancy >= 0 ? '+' : ''}${d.history_expectancy.toFixed(2)} R`}
               </div>
@@ -400,8 +405,8 @@ export function EdgeVerificationPanel({ edge }: EProps) {
             };
             return (
               <div className="mb-3">
-                {bar(d.history_expectancy, 'История', '#64748b')}
-                {bar(d.recent_expectancy, `Окно ${d.window_days}д`, d.degraded ? '#fb7185' : '#eab308')}
+                {bar(d.history_expectancy, t('История'), '#64748b')}
+                {bar(d.recent_expectancy, `${t('Окно')} ${d.window_days}${t('д')}`, d.degraded ? '#fb7185' : '#eab308')}
               </div>
             );
           })()}
@@ -412,7 +417,7 @@ export function EdgeVerificationPanel({ edge }: EProps) {
             <span>p = {d.p_value === null ? '—' : d.p_value.toFixed(3)}</span>
           </div>
           <p className={`text-xs leading-relaxed ${d.degraded ? 'text-red-400' : d.insufficient_data ? 'text-gray-400' : 'text-green-400'}`}>
-            {d.degraded && '⚠ '}{d.note}
+            {d.degraded && '⚠ '}{t(d.note)}
           </p>
         </div>
       </div>

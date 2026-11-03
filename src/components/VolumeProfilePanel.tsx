@@ -7,6 +7,7 @@
 import { formatPrice } from '../utils/format';
 import { Icon } from './ui/Icon';
 import type { AnalysisReport, SignalDTO } from '../api/types';
+import { useI18n } from '../i18n';
 
 const COLORS = {
   hvn: '#f59e0b',
@@ -28,6 +29,7 @@ interface VPProps {
 
 /** Текстовая расшифровка профиля объёма (под графиком, см. «Как читать») */
 export function VolumeProfileNotes({ profile, price }: Pick<VPProps, 'profile' | 'price'>) {
+  const { t } = useI18n();
   const bins = profile.bins ?? [];
   const hvnPct = bins.length > 0
     ? (profile.hvn.reduce((s, n) => s + n.volume, 0) / Math.max(1e-9, bins.reduce((s, b) => s + b.volume, 0))) * 100
@@ -37,9 +39,9 @@ export function VolumeProfileNotes({ profile, price }: Pick<VPProps, 'profile' |
   const positionVsVa = price > profile.vah ? 'above' : price < profile.val ? 'below' : 'inside';
   const positionNote =
     positionVsVa === 'inside'
-      ? `Цена внутри Value Area (~70% всего объёма окна) — рынок в равновесии. Наиболее вероятен возврат к POC («магнит ликвидности») и боковое движение между VAH и VAL: у VAL ищем отскок вверх, у VAH — вниз, а не торговлю на пробой.`
+      ? t('Цена внутри Value Area (~70% всего объёма окна) — рынок в равновесии. Наиболее вероятен возврат к POC («магнит ликвидности») и боковое движение между VAH и VAL: у VAL ищем отскок вверх, у VAH — вниз, а не торговлю на пробой.')
       : positionVsVa === 'above'
-        ? `Цена ВЫШЕ Value Area — покупатели удерживают зону дисбаланса, пробой верхней границы зафиксирован. Откат к VAH при удержании выше него — потенциальная точка входа по тренду; если же свеча закроется обратно внутри VA, срабатывает стоп-реверс (правило 80% П. Стейдента): вероятен проход к противоположной границе VAL.`
+        ? t('Цена ВЫШЕ Value Area — покупатели удерживают зону дисбаланса, пробой верхней границы зафиксирован. Откат к VAH при удержании выше него — потенциальная точка входа по тренду; если же свеча закроется обратно внутри VA, срабатывает стоп-реверс (правило 80% П. Стейдента): вероятен проход к противоположной границе VAL.')
         : `Цена НИЖЕ Value Area — продавцы контролируют ценовое открытие, нижняя граница пробита. Возврат внутрь VA маловероятен без роста дельты покупателей; VAH теперь — сильное сопротивление, а продолжение движения через LVN-«дыры» обычно проходит быстро и без откатов.`;
 
   return (
@@ -80,6 +82,7 @@ export function VolumeProfileNotes({ profile, price }: Pick<VPProps, 'profile' |
 }
 
 export function VolumeProfileChart({ profile, price, signal }: VPProps) {
+  const { t } = useI18n();
   const bins = profile.bins ?? [];
   if (bins.length === 0) return null;
 
@@ -237,6 +240,7 @@ function divergenceNote(summary: DeltaSummary, priceChangePct?: number): { icon:
 }
 
 export function DeltaNotes({ summary, priceChangePct }: { summary: DeltaSummary; priceChangePct?: number }) {
+  const { t } = useI18n();
   const points = summary.points ?? [];
   if (points.length === 0) return null;
   const maxAbs = Math.max(...points.map((p) => Math.abs(p.delta))) || 1;
@@ -282,6 +286,7 @@ export function DeltaNotes({ summary, priceChangePct }: { summary: DeltaSummary;
 }
 
 export function DeltaChart({ summary }: DeltaProps) {
+  const { t } = useI18n();
   const points = summary.points ?? [];
   if (points.length === 0) return null;
 
