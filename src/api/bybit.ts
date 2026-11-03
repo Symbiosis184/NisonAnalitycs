@@ -176,11 +176,18 @@ const STOCK_INTERVAL_MAP: Record<string, string> = {
   'D': 'd', 'W': 'w', 'M': 'm',
 };
 
-/** ТФ приложения -> интервал прокси ('30','60','120','240','d','w'); null — недоступен. */
+/**
+ * ТФ приложения -> интервал прокси ('30','60','120','240','d','w'); null — недоступен.
+ * Фолбэк на дневной канон ('d') для неизвестных форм (например, сырой '1M' до
+ * нормализации): раньше неизвестный ТФ бросал «Таймфрейм недоступен для акций»,
+ * и на боевом домене карточки акций работали только на D. Дневная история у
+ * Twelvedata deepest и есть гарантированно; серверный прокси дополнительно
+ * фолбэчит неподдерживаемые внутридневные формы на ближайший больший ТФ.
+ */
 export function toStockResolution(tf: unknown): string | null {
   const bybitForm = toBybitInterval(tf);
-  if (!bybitForm) return null;
-  return STOCK_INTERVAL_MAP[bybitForm] ?? null;
+  if (!bybitForm) return 'd';
+  return STOCK_INTERVAL_MAP[bybitForm] ?? 'd';
 }
 
 // Глобальный троттлер исходящих запросов к прокси (min interval между стартами).
@@ -350,13 +357,21 @@ const INTERVAL_MAP: Record<string, string> = {
   '4H': '240', '240': '240', '4h': '240',
   '1D': 'D', 'D': 'D', 'd': 'D', '1d': 'D',
   '1W': 'W', 'W': 'W', 'w': 'W', '1w': 'W',
+  // Месячный ТФ: канон UI '1M' и Bybit-форма 'M'. Раньше ни одной формы
+  // месячного интервала в словаре не было — toBybitInterval('1M') возвращал
+  // null, и акции падали с «Таймфрейм недоступен» (для D канон случайно совпадал).
+  // '1m' остаётся минутой ('1'): ключи словаря чувствительны к регистру.
+  '1M': 'M', 'M': 'M', '1mo': 'M',
 };
 
 /** Нормализация произвольной записи ТФ в канон Bybit REST/WS ('15', '60', 'D'...). */
 export function toBybitInterval(tf: unknown): string | null {
   if (typeof tf !== 'string') return null;
   const t = tf.trim();
-  return INTERVAL_MAP[t] ?? INTERVAL_MAP[t.toUpperCase()] ?? null;
+  // Только точное совпадение: верхний регистр всей строки превращал бы '1m'
+  // (минута) в '1M' (месяц), а нижний — 'D'/'W' в часовые/неверные формы.
+  // Все ходящие по коду варианты перечислены ключами словаря явно.
+  return INTERVAL_MAP[t] ?? null;
 }
 
 export async function fetchKlines(rawSymbol: string, interval: string, rawLimit: number, opts: { force?: boolean } = {}): Promise<Kline[]> {
@@ -365,7 +380,9 @@ export async function fetchKlines(rawSymbol: string, interval: string, rawLimit:
   // Это исключает инъекцию параметров в URL запроса к API.
   const symbol = assertValidSymbol(rawSymbol);
   const mapped = toBybitInterval(interval);
-  if (!mapped && !isValidTimeframe(interval)) {
+  // Крипто требует whitelist-валидный ТФ; для акций фильтр ниже (все формы
+  // уходят в прокси, а неподдерживаемые фолбэчатся на ближайший больший ТФ).
+  if (!mapped && !isValidTimeframe(interval) && parseMarket(symbol).market !== 'stock') {
     throw new Error(`Invalid interval: ${String(interval).slice(0, 32)}`);
   }
   const limit = clampNumber(rawLimit, 1, 1000, 250);
@@ -375,10 +392,10 @@ export async function fetchKlines(rawSymbol: string, interval: string, rawLimit:
   // ── TradFi: американские акции (Twelvedata через серверный прокси) ─────────
   const { base: stockBase, market } = parseMarket(symbol);
   if (market === 'stock') {
-    const resolution = toStockResolution(bybitInterval);
-    if (!resolution) {
-      throw new Error(`Таймфрейм ${String(interval).slice(0, 16)} недоступен для акций`);
-    }
+    // toStockResolution никогда не возвращает null для строки (неизвестные
+    // формы фолбэчатся на дневной канон) — «Таймфрейм недоступен для акций»
+    // больше не может быть причиной ошибки на внутридневных ТФ.
+    const resolution = toStockResolution(bybitInterval) ?? 'd';
     return fetchStockKlines(stockBase, resolution, limit, opts.force === true);
   }
 

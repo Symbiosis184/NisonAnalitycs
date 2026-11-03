@@ -635,7 +635,13 @@ def quotes_klines(
         # Неподдерживаемые у источника формы ('1'/'3'/'1m' — 1min у Twelvedata
         # недоступен) фолбэчатся на ближайший больший ТФ (_td_wire), а не
         # падают ошибкой: часть истории лучше «ошибки загрузки» карточки.
-        iv = str(_td_wire(iv)[0])
+        td_iv = _td_wire(iv)[0]  # wire-форма для запроса к источнику ('5min','1h','1day',...)
+        # Внутренний канон — для ключа кэша и TTL: '1day' иначе попадал в
+        # ветку минутных интервалов (TTL 30 с вместо суточного) и дублировал
+        # обращения к лимитированному источнику.
+        iv = {"5min": "5", "15min": "15", "30min": "30", "45min": "45",
+              "1h": "60", "2h": "120", "4h": "240", "8h": "480",
+              "1day": "d", "1week": "w", "1month": "m"}.get(td_iv, td_iv)
     elif iv not in BYBIT_INTERVAL:
         raise HTTPException(status_code=400, detail="bad interval")
     if exchange not in ALLOWED_EXCHANGES:
