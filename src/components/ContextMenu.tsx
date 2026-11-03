@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Share2, Heart } from 'lucide-react';
+import { useI18n } from '../i18n';
 
 interface Props {
   /** Открыть модалку поддержки (кнопка «Поддержать» в шапке). */
@@ -12,9 +13,9 @@ interface MenuState {
 }
 
 /** Делится ссылкой на текущую страницу: системный шаринг, иначе буфер обмена. */
-async function shareProject() {
+async function shareProject(shareText: string) {
   const url = window.location.href;
-  const data = { title: 'Kairi Analytics', text: 'Анализ рынка по методу Стива Нисона', url };
+  const data = { title: 'Kairi Analytics', text: shareText, url };
   try {
     if (navigator.share) {
       await navigator.share(data);
@@ -45,6 +46,7 @@ async function shareProject() {
  * «Поддержать» (модалка GRAM/TON).
  */
 export default function ContextMenu({ onSupport }: Props) {
+  const { t } = useI18n();
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [copied, setCopied] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -94,7 +96,7 @@ export default function ContextMenu({ onSupport }: Props) {
     <div
       ref={menuRef}
       role="menu"
-      aria-label="Меню действий"
+      aria-label={t('Меню действий')}
       className="fixed z-[100] min-w-[220px] rounded-xl border border-gray-700/70 bg-surface-raised/95 backdrop-blur-xl shadow-2xl shadow-black/50 py-1.5 animate-in"
       style={{ left: menu.x, top: menu.y }}
     >
@@ -103,13 +105,13 @@ export default function ContextMenu({ onSupport }: Props) {
         role="menuitem"
         className={itemCls}
         onClick={async () => {
-          await shareProject();
+          await shareProject(t('Анализ рынка по методу Стива Нисона'));
           setCopied(true);
           setTimeout(() => setMenu(null), 700);
         }}
       >
         <Share2 className="w-4 h-4 text-amber-400 flex-shrink-0" />
-        {copied ? 'Ссылка скопирована ✓' : 'Поделиться'}
+        {copied ? t('Ссылка скопирована ✓') : t('Поделиться')}
       </button>
       <button
         type="button"
@@ -121,10 +123,10 @@ export default function ContextMenu({ onSupport }: Props) {
         }}
       >
         <Heart className="w-4 h-4 text-rose-400 flex-shrink-0" />
-        Поддержать
+        {t('Поддержать')}
       </button>
       <div className="mt-1 px-3 pt-1.5 border-t border-gray-800/70 text-[11px] text-gray-400">
-        Kairi Analytics · правый клик отключён браузером
+        {t('Kairi Analytics · правый клик отключён браузером')}
       </div>
     </div>
   );

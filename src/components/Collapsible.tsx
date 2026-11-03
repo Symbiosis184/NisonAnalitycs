@@ -9,6 +9,7 @@
 //    панелей: профиль объёма, дельта, мульти-ТФ карта).
 
 import { useState, type ReactNode } from 'react';
+import { useI18n } from '../i18n';
 
 const STORAGE_PREFIX = 'nison:section:';
 
@@ -25,6 +26,7 @@ interface CollapsibleProps {
 }
 
 export function Collapsible({ storageKey, title, icon, badge, defaultOpen = true, children }: CollapsibleProps) {
+  const { t } = useI18n();
   const [open, setOpen] = useState<boolean>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_PREFIX + storageKey);
@@ -62,7 +64,7 @@ export function Collapsible({ storageKey, title, icon, badge, defaultOpen = true
         <span className="text-sm font-semibold text-white sm:text-base">{title}</span>
         {badge && <span className="ml-1 flex flex-wrap items-center gap-2">{badge}</span>}
         <span className="ml-auto text-[11px] uppercase tracking-wide text-gray-600">
-          {open ? 'свернуть' : 'развернуть'}
+          {open ? t('свернуть') : t('развернуть')}
         </span>
       </button>
       {open && <div className="px-4 pb-4 sm:px-6 sm:pb-6">{children}</div>}

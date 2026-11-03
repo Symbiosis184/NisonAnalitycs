@@ -23,6 +23,7 @@ const PHASE_META: Record<Phase, { label: string; color: string }> = {
   markdown: { label: 'Падение', color: '#fb7185' },
   transition: { label: 'Переход', color: '#94a3b8' },
 };
+// Примечание: метки рендерятся через t(label) — переводы лежат в UI_STRINGS.
 
 /** Подробные описания фаз цикла Вайкоффа (по «Методу Уайкоффа» / классике цикла). */
 const PHASE_DETAILS: Record<Phase, { title: string; what: string; who: string; volume: string; action: string }> = {
