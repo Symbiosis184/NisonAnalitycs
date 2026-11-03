@@ -49,7 +49,7 @@ function fmt(n: number, d = 2): string {
 }
 
 export default function BacktestPage() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const [symbol, setSymbol] = useState('BTCUSDT');
   const [timeframe, setTimeframe] = useState('1D');
   const [candles, setCandles] = useState<Candle[]>([]);
@@ -176,7 +176,7 @@ export default function BacktestPage() {
         <label className="text-xs text-slate-400">{t('Таймфрейм')}
           <select value={timeframe} onChange={(e) => setTimeframe(e.target.value)}
             className="block mt-1 bg-slate-800 text-slate-100 text-sm rounded px-2 py-1 border border-slate-700">
-            {TIMEFRAMES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            {TIMEFRAMES.map(([v, ru, en]) => <option key={v} value={v}>{lang === 'en' ? en : ru}</option>)}
           </select>
         </label>
         <label className="text-xs text-slate-400">{t('Комиссия, %/сторона')}

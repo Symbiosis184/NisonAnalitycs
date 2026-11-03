@@ -137,7 +137,6 @@ const PATTERN_SUFFIX_EN: Record<string, string> = {
 
 /** Общие UI-строки: RU (ключ) → EN */
 export const UI_STRINGS: Record<string, string> = {
-  // ── Layout / навигация ──
   'Обзор': 'Overview',
   'Журнал': 'Journal',
   'Бэктест': 'Backtest',
@@ -147,15 +146,12 @@ export const UI_STRINGS: Record<string, string> = {
   'Поддержать проект': 'Support the project',
   'Язык интерфейса': 'Interface language',
   'Поддержать развитие проекта (TON)': 'Support the project development (TON)',
-  'Сервис носит информационный характер и не является индивидуальной инвестиционной рекомендацией.':
-    'This service is informational only and does not constitute investment advice.',
+  'Сервис носит информационный характер и не является индивидуальной инвестиционной рекомендацией.': 'This service is informational only and does not constitute investment advice.',
   'Публичная оферта': 'Terms of Service',
   'Политика конфиденциальности': 'Privacy Policy',
   'Правовые документы': 'Legal documents',
   'Раздел временно недоступен — мы его дорабатываем.': 'This section is temporarily unavailable — we are improving it.',
   'Вернуться на обзор рынка': 'Back to market overview',
-
-  // ── Dashboard ──
   'Крипто': 'Crypto',
   'TradFi · Акции США': 'TradFi · US Stocks',
   'Обзор рынка': 'Market Overview',
@@ -182,28 +178,20 @@ export const UI_STRINGS: Record<string, string> = {
   'Анализировать': 'Analyze',
   'Методология Стива Нисона': 'Steve Nison Methodology',
   '1. Контекст': '1. Context',
-  'Определяем тренд и режим рынка. Торгуем только в направлении тренда.':
-    'We identify the trend and market regime. We trade only in the direction of the trend.',
+  'Определяем тренд и режим рынка. Торгуем только в направлении тренда.': 'We identify the trend and market regime. We trade only in the direction of the trend.',
   '2. Паттерны': '2. Patterns',
-  'Ищем свечные паттерны в контексте тренда. Паттерны без контекста не работают.':
-    'We look for candlestick patterns within the trend context. Patterns without context do not work.',
+  'Ищем свечные паттерны в контексте тренда. Паттерны без контекста не работают.': 'We look for candlestick patterns within the trend context. Patterns without context do not work.',
   '3. Подтверждение': '3. Confirmation',
-  'Каждый паттерн должен быть подтверждён следующей свечой или объёмом.':
-    'Every pattern must be confirmed by the next candle or by volume.',
+  'Каждый паттерн должен быть подтверждён следующей свечой или объёмом.': 'Every pattern must be confirmed by the next candle or by volume.',
   '4. Правило множества': '4. Rule of Confluence',
-  'Минимум 3 независимых сигнала для входа. Consensus score показывает силу.':
-    'At least 3 independent signals to enter. The consensus score shows the strength.',
-  'Не удалось получить данные по акциям (Twelvedata). Котировочный прокси недоступен — попробуйте позже.':
-    'Failed to fetch stock data (Twelvedata). The quote proxy is unavailable — please try again later.',
+  'Минимум 3 независимых сигнала для входа. Consensus score показывает силу.': 'At least 3 independent signals to enter. The consensus score shows the strength.',
+  'Не удалось получить данные по акциям (Twelvedata). Котировочный прокси недоступен — попробуйте позже.': 'Failed to fetch stock data (Twelvedata). The quote proxy is unavailable — please try again later.',
   'Не удалось получить данные с Bybit API': 'Failed to fetch data from the Bybit API',
-
-  // ── Analysis page ──
   'Загрузка анализа...': 'Loading analysis...',
   'Ошибка': 'Error',
   'Данные не найдены': 'Data not found',
   'Назад к обзору': 'Back to overview',
-  'Цена и свеча обновляются в реальном времени через WebSocket Bybit':
-    'Price and candle update in real time via Bybit WebSocket',
+  'Цена и свеча обновляются в реальном времени через WebSocket Bybit': 'Price and candle update in real time via Bybit WebSocket',
   'Контекст рынка': 'Market Context',
   'График': 'Chart',
   ' паттернов': ' patterns',
@@ -222,27 +210,20 @@ export const UI_STRINGS: Record<string, string> = {
   'Тренд': 'Trend',
   'Внимание:': 'Note:',
   'Данный анализ основан на методологии Стива Нисона.': 'This analysis is based on Steve Nison’s methodology.',
-  'Контекст рынка важнее отдельных паттернов. Всегда используйте подтверждение и управление рисками.':
-    'Market context matters more than individual patterns. Always use confirmation and risk management.',
+  'Контекст рынка важнее отдельных паттернов. Всегда используйте подтверждение и управление рисками.': 'Market context matters more than individual patterns. Always use confirmation and risk management.',
   'Это не является финансовой рекомендацией.': 'This is not financial advice.',
-
-  // ── MarketContextSection ──
   'Каскад ТФ · бета': 'TF Cascade · beta',
   '⚠ не подтверждён сверху': '⚠ not confirmed by higher TF',
-  'Нет подтверждения на ТФ старше того, что дало направление':
-    'No confirmation on a timeframe higher than the one that set the direction',
+  'Нет подтверждения на ТФ старше того, что дало направление': 'No confirmation on a timeframe higher than the one that set the direction',
   'Consensus Score': 'Consensus Score',
   'Уверенность:': 'Confidence:',
   'Бычий консенсус': 'Bullish consensus',
   'Медвежий консенсус': 'Bearish consensus',
   'Нейтральный': 'Neutral',
-  'Оценка согласия подтверждённых свечных сценариев (последние 20 баров) в одну сторону. Противоречивые сигналы (long+short одновременно) дают низкий балл даже при их большом количестве — это шум, а не консенсус. Высокая оценка = несколько независимых паттернов, усиленных объёмом и уровнями S/R.':
-    'Agreement of confirmed candlestick scenarios (last 20 bars) in one direction. Conflicting signals (long+short at once) score low even when numerous — that is noise, not consensus. A high score means several independent patterns reinforced by volume and S/R levels.',
+  'Оценка согласия подтверждённых свечных сценариев (последние 20 баров) в одну сторону. Противоречивые сигналы (long+short одновременно) дают низкий балл даже при их большом количестве — это шум, а не консенсус. Высокая оценка = несколько независимых паттернов, усиленных объёмом и уровнями S/R.': 'Agreement of confirmed candlestick scenarios (last 20 bars) in one direction. Conflicting signals (long+short at once) score low even when numerous — that is noise, not consensus. A high score means several independent patterns reinforced by volume and S/R levels.',
   'Повышенный объём - подтверждение': 'Elevated volume — confirmation',
   'Низкий объём - слабость': 'Low volume — weakness',
   'Нормальный объём': 'Normal volume',
-
-  // ── MultiTFZonesPanel ──
   'Мульти-ТФ карта уровней S/R': 'Multi-TF S/R Level Map',
   'ТФ': 'TF',
   'Масштаб': 'Scale',
@@ -250,10 +231,7 @@ export const UI_STRINGS: Record<string, string> = {
   'Поддержки ↓': 'Supports ↓',
   'активный': 'active',
   'каждый ТФ — со своей калибровкой': 'each TF has its own calibration',
-  '★ — сильная зона (≥3 голосов); ± — полуширина зоны (ATR-калиброванная, Нисон: уровень это полоса, а не линия).':
-    '★ — strong zone (≥3 votes); ± — half-width of the zone (ATR-calibrated; Nison: a level is a band, not a line).',
-
-  // ── PatternsAndIndicators ──
+  '★ — сильная зона (≥3 голосов); ± — полуширина зоны (ATR-калиброванная, Нисон: уровень это полоса, а не линия).': '★ — strong zone (≥3 votes); ± — half-width of the zone (ATR-calibrated; Nison: a level is a band, not a line).',
   'Подтверждён:': 'Confirmed:',
   '✓ Подтверждён': '✓ Confirmed',
   'У уровня': 'At level',
@@ -261,62 +239,41 @@ export const UI_STRINGS: Record<string, string> = {
   'Перекупленность': 'Overbought',
   'Зона перепроданности': 'Oversold zone',
   'Нейтральная зона (30–70)': 'Neutral zone (30–70)',
-  'По Нисону RSI — только контекст. В сильном тренде перекупленность сохраняется долго и сама по себе НЕ сигнал на продажу.':
-    'Per Nison, RSI is context only. In a strong trend overbought persists for long and by itself is NOT a sell signal.',
+  'По Нисону RSI — только контекст. В сильном тренде перекупленность сохраняется долго и сама по себе НЕ сигнал на продажу.': 'Per Nison, RSI is context only. In a strong trend overbought persists for long and by itself is NOT a sell signal.',
   'Бычий импульс': 'Bullish momentum',
   'Медвежий импульс': 'Bearish momentum',
   'гистограмма от цены': 'histogram vs price',
-  'Контекстный индикатор (лагирует). Вход по Нисону определяется свечами + объёмом + уровнями, а не MACD.':
-    'A contextual indicator (it lags). Per Nison, entries are defined by candles + volume + levels, not MACD.',
+  'Контекстный индикатор (лагирует). Вход по Нисону определяется свечами + объёмом + уровнями, а не MACD.': 'A contextual indicator (it lags). Per Nison, entries are defined by candles + volume + levels, not MACD.',
   'Сила направленного движения': 'Directional movement strength',
-  'Метрика: КПД пути цены за последние 20 баров (net move ÷ суммарные диапазоны). ~0% — флэт/шум; 40%+ — чистое направленное движение.':
-    'Metric: price-path efficiency over the last 20 bars (net move ÷ summed ranges). ~0% — flat/noise; 40%+ — clean directional move.',
-
-  // ── VolumeContextSection ──
+  'Метрика: КПД пути цены за последние 20 баров (net move ÷ суммарные диапазоны). ~0% — флэт/шум; 40%+ — чистое направленное движение.': 'Metric: price-path efficiency over the last 20 bars (net move ÷ summed ranges). ~0% — flat/noise; 40%+ — clean directional move.',
   'Профиль объёма · HVN/LVN · Value Area': 'Volume Profile · HVN/LVN · Value Area',
   'без сигнала': 'no signal',
   'Как читать профиль объёма': 'How to read the volume profile',
   'Дельта агрессии (покупатели − продавцы)': 'Aggression delta (buyers − sellers)',
   'Как читать дельту агрессии': 'How to read the aggression delta',
-
-  // ── CandlestickChart ──
   'ГЭП': 'GAP',
   'стоп': 'stop',
   'цель': 'target',
   'Паттерны Нисона': 'Nison patterns',
-
-  // ── client.ts / errors ──
   'Боковик (флэт)': 'Range (flat)',
   'Восходящий тренд': 'Uptrend',
   'Нисходящий тренд': 'Downtrend',
-  'Структура вершин/впадин не сформирована — разворотные паттерны надёжны только у границ диапазона (уровни S/R), продолжение тренда торговать нельзя.':
-    'Swing structure has not formed — reversal patterns are reliable only at range edges (S/R levels); trading trend continuation is not allowed.',
+  'Структура вершин/впадин не сформирована — разворотные паттерны надёжны только у границ диапазона (уровни S/R), продолжение тренда торговать нельзя.': 'Swing structure has not formed — reversal patterns are reliable only at range edges (S/R levels); trading trend continuation is not allowed.',
   'Режим:': 'Regime:',
-  'повышенная волатильность (ATR выше среднего) — риск шумовых ложных пробоев':
-    'elevated volatility (ATR above average) — risk of noisy false breakouts',
+  'повышенная волатильность (ATR выше среднего) — риск шумовых ложных пробоев': 'elevated volatility (ATR above average) — risk of noisy false breakouts',
   'Введите тикер акции, например AAPL или MSFT': 'Enter a stock ticker, e.g. AAPL or MSFT',
   'Введите название криптовалюты, например TAO или ARB': 'Enter a cryptocurrency name, e.g. TAO or ARB',
   'Инструмент не найден среди спотовых USDT-пар Bybit': 'Instrument not found among Bybit spot USDT pairs',
   'Не удалось получить данные по инструменту. Попробуйте ещё раз.': 'Failed to fetch instrument data. Please try again.',
-  'Биржа ограничила частоту запросов. Подождите пару минут и попробуйте снова.':
-    'The exchange rate-limited requests. Wait a couple of minutes and try again.',
+  'Биржа ограничила частоту запросов. Подождите пару минут и попробуйте снова.': 'The exchange rate-limited requests. Wait a couple of minutes and try again.',
   'Инструмент не найден на бирже или недоступен.': 'Instrument not found on the exchange or unavailable.',
-  'Сервер биржи не ответил вовремя. Попробуйте обновить страницу.':
-    'The exchange server did not respond in time. Try refreshing the page.',
-  'Нет соединения с API биржи. Проверьте интернет или зайдите позже.':
-    'No connection to the exchange API. Check your internet or come back later.',
-  'Не удалось получить данные с биржи. Попробуйте обновить страницу.':
-    'Failed to fetch data from the exchange. Try refreshing the page.',
-  'Акция не найдена (Twelvedata). Проверьте тикер — доступны только котировки США.':
-    'Stock not found (Twelvedata). Check the ticker — only US quotes are available.',
-
-  // ── ErrorBoundary ──
+  'Сервер биржи не ответил вовремя. Попробуйте обновить страницу.': 'The exchange server did not respond in time. Try refreshing the page.',
+  'Нет соединения с API биржи. Проверьте интернет или зайдите позже.': 'No connection to the exchange API. Check your internet or come back later.',
+  'Не удалось получить данные с биржи. Попробуйте обновить страницу.': 'Failed to fetch data from the exchange. Try refreshing the page.',
+  'Акция не найдена (Twelvedata). Проверьте тикер — доступны только котировки США.': 'Stock not found (Twelvedata). Check the ticker — only US quotes are available.',
   'Что-то пошло не так': 'Something went wrong',
-  'Произошла непредвиденная ошибка в интерфейсе. Попробуйте обновить страницу — если проблема повторяется, подробности видны в консоли браузера (F12).':
-    'An unexpected interface error occurred. Try refreshing the page — if it repeats, details are visible in the browser console (F12).',
+  'Произошла непредвиденная ошибка в интерфейсе. Попробуйте обновить страницу — если проблема повторяется, подробности видны в консоли браузера (F12).': 'An unexpected interface error occurred. Try refreshing the page — if it repeats, details are visible in the browser console (F12).',
   'Обновить страницу': 'Reload page',
-
-  // ── SignalsSection (сценарии/риск-панель) ──
   'подтверждено': 'confirmed',
   'ждёт': 'pending',
   'из': 'of',
@@ -341,30 +298,20 @@ export const UI_STRINGS: Record<string, string> = {
   'Номинал': 'Notional',
   'Убыток по стопу': 'Loss at stop',
   'Издержки цикла': 'Cycle costs',
-  '\u26a0 Объём ограничен потолком номинала \u2014 фактический риск меньше заявленного.':
-    '\u26a0 Size capped by the notional limit \u2014 actual risk is lower than requested.',
+  '\u26a0 Объём ограничен потолком номинала \u2014 фактический риск меньше заявленного.': '\u26a0 Size capped by the notional limit \u2014 actual risk is lower than requested.',
   '\u2713 Сигнал автоматически сохранён в журнал': '\u2713 Signal saved to the journal automatically',
   'ожидает подтверждения': 'awaiting confirmation',
   'подтверждён': 'confirmed',
   'отменён (стоп пробит)': 'invalidated (stop hit)',
   'истёк (нет подтверждения)': 'expired (no confirmation)',
-  'Нисон гл. 3\u20136: модель требует закрытия СЛЕДУЮЩЕЙ свечи в направлении сигнала \u2014 вход только после подтверждения':
-    'Nison ch. 3\u20136: the pattern requires the NEXT candle to close in the signal direction \u2014 enter only after confirmation',
-  'Нисон гл. 5\u20136: завершённая формация \u2014 её последняя свеча и есть подтверждение, отдельная следующая свеча не требуется':
-    'Nison ch. 5\u20136: a completed formation \u2014 its last candle is itself the confirmation; no separate next candle is needed',
-
-  // ── VolumeContextSection ──
+  'Нисон гл. 3\u20136: модель требует закрытия СЛЕДУЮЩЕЙ свечи в направлении сигнала \u2014 вход только после подтверждения': 'Nison ch. 3\u20136: the pattern requires the NEXT candle to close in the signal direction \u2014 enter only after confirmation',
+  'Нисон гл. 5\u20136: завершённая формация \u2014 её последняя свеча и есть подтверждение, отдельная следующая свеча не требуется': 'Nison ch. 5\u20136: a completed formation \u2014 its last candle is itself the confirmation; no separate next candle is needed',
   'Показать путь цены': 'Show price path',
-
-  // ── Backtest ──
-  'Бэктест в бета-версии: методика и выборка дорабатываются, результаты — ориентировочные':
-    'Backtest is in beta: methodology and sample are still being refined, results are indicative',
+  'Бэктест в бета-версии: методика и выборка дорабатываются, результаты — ориентировочные': 'Backtest is in beta: methodology and sample are still being refined, results are indicative',
   'Проверка': 'Testing',
   'текущей стратегии целиком': 'the current strategy as a whole',
-  'подтверждённый сигнал Нисона \u2192 вход по close\n        свечи подтверждения, стоп = граница формации, тейк = ближайшая структурная цель (как в живом анализе), максимум\n        удержания 60 свечей. Результат каждой сделки уменьшен на издержки цикла':
-    'a confirmed Nison signal \u2192 entry at the close of the confirmation candle, stop = formation boundary, take-profit = nearest structural target (same as live analysis), maximum holding of 60 candles. Each trade result is reduced by cycle costs',
-  'Вход без lookahead: управление позицией со следующей свечи. Вердикты внизу страницы переводят статистику в\n        практический вывод — можно ли торговать паттерн на этом инструменте.':
-    'No-lookahead entry: position managed from the next candle. The verdicts below turn statistics into a practical conclusion \u2014 whether this pattern can be traded on this instrument.',
+  'подтверждённый сигнал Нисона \u2192 вход по close\n        свечи подтверждения, стоп = граница формации, тейк = ближайшая структурная цель (как в живом анализе), максимум\n        удержания 60 свечей. Результат каждой сделки уменьшен на издержки цикла': 'a confirmed Nison signal \u2192 entry at the close of the confirmation candle, stop = formation boundary, take-profit = nearest structural target (same as live analysis), maximum holding of 60 candles. Each trade result is reduced by cycle costs',
+  'Вход без lookahead: управление позицией со следующей свечи. Вердикты внизу страницы переводят статистику в\n        практический вывод — можно ли торговать паттерн на этом инструменте.': 'No-lookahead entry: position managed from the next candle. The verdicts below turn statistics into a practical conclusion \u2014 whether this pattern can be traded on this instrument.',
   'Инструмент': 'Instrument',
   'Таймфрейм': 'Timeframe',
   'Комиссия, %/сторона': 'Fee, %/side',
@@ -388,8 +335,7 @@ export const UI_STRINGS: Record<string, string> = {
   'Сделок': 'Trades',
   'Итог': 'Summary',
   'накопленный net R': 'cumulative net R',
-  'Недостаточно наблюдений (минимум 3 сигнала на паттерн) для статистики.':
-    'Not enough observations (minimum 3 signals per pattern) for statistics.',
+  'Недостаточно наблюдений (минимум 3 сигнала на паттерн) для статистики.': 'Not enough observations (minimum 3 signals per pattern) for statistics.',
   'МАЛО ДАННЫХ': 'LOW DATA',
   'EDGE ПОДТВЕРЖДЁН': 'EDGE CONFIRMED',
   'EDGE НЕ ПОДТВЕРЖДЁН': 'EDGE NOT CONFIRMED',
@@ -399,35 +345,22 @@ export const UI_STRINGS: Record<string, string> = {
   'РЕБРО НЕ НАЙДЕНО': 'NO EDGE FOUND',
   'СТРАТЕГИЯ РАБОТАЕТ': 'STRATEGY WORKS',
   'РЕБРО ЕСТЬ, НО УЗКОЕ': 'EDGE EXISTS BUT IS NARROW',
-  'Всего {n} сделок — статистика случайна, никаких выводов делать нельзя. Накопите больше сигналов этого паттерна.':
-    'Only {n} trades \u2014 the statistics are random, no conclusions can be drawn. Accumulate more signals of this pattern.',
-  'Средний результат +{x} R/сделку достоверно выше нуля и подтверждён на будущих данных (OOS {y} R). Паттерн можно торговать с полным риском.':
-    'Average result +{x} R/trade is reliably above zero and confirmed on future data (OOS {y} R). The pattern can be traded with full risk.',
-  'История выглядит прибыльной (+{x} R), но {overfit ? \u0027на свежих данных результат заметно хуже (возможна подгонка)\u0027 : \u0027для проверки на будущих данных не хватает сделок\u0027}. Торговать осторожно, уменьшенным объёмом.':
-    'History looks profitable (+{x} R), but {reason}. Trade cautiously with a reduced size.',
+  'Всего {n} сделок — статистика случайна, никаких выводов делать нельзя. Накопите больше сигналов этого паттерна.': 'Only {n} trades \u2014 the statistics are random, no conclusions can be drawn. Accumulate more signals of this pattern.',
+  'Средний результат +{x} R/сделку достоверно выше нуля и подтверждён на будущих данных (OOS {y} R). Паттерн можно торговать с полным риском.': 'Average result +{x} R/trade is reliably above zero and confirmed on future data (OOS {y} R). The pattern can be traded with full risk.',
+  'История выглядит прибыльной (+{x} R), но {overfit ? \u0027на свежих данных результат заметно хуже (возможна подгонка)\u0027 : \u0027для проверки на будущих данных не хватает сделок\u0027}. Торговать осторожно, уменьшенным объёмом.': 'History looks profitable (+{x} R), but {reason}. Trade cautiously with a reduced size.',
   'на свежих данных результат заметно хуже (возможна подгонка)': 'on fresh data the result is notably worse (possible overfitting)',
   'для проверки на будущих данных не хватает сделок': 'there are not enough trades to validate on future data',
-  'Средний результат {x} R достоверно ниже нуля — на этом инструменте паттерн системно теряет. Сигналы игнорировать.':
-    'Average result {x} R is reliably below zero \u2014 on this instrument the pattern systemically loses. Ignore its signals.',
-  'Результат (+{x} R) неотличим от нуля — сделки закрываются «в шум». Паттерн сам по себе преимущества не даёт, используйте только как контекст.':
-    'Result (+{x} R) is indistinguishable from zero \u2014 trades close \u201cinto noise\u201d. The pattern alone gives no edge; use it as context only.',
-  'Сделок слишком мало ({n}) — текущая выборка не позволяет оценить стратегию.':
-    'Too few trades ({n}) \u2014 the current sample does not allow evaluating the strategy.',
-  'Ни одна из {n} стратегий не показала положительного результата вне шума ({m} сделок). На этом инструменте/таймфрейме паттерны Нисона сейчас не дают преимущества.':
-    'None of the {n} strategies showed a positive result beyond noise ({m} trades). On this instrument/timeframe Nison patterns currently give no edge.',
-  '{a} из {n} паттернов показывают достоверное ребро на {m} сделках. Текущая конфигурация подтверждена историей.':
-    '{a} of {n} patterns show a reliable edge over {m} trades. The current configuration is confirmed by history.',
-  'Достоверное преимущество только у {a} из {n} паттернов ({m} сделок). Торговать следует лишь отобранные стратегии, остальные — наблюдения.':
-    'A reliable edge exists only for {a} of {n} patterns ({m} trades). Trade only the selected strategies; treat the rest as observations.',
-
-  // ── Pricing ──
+  'Средний результат {x} R достоверно ниже нуля — на этом инструменте паттерн системно теряет. Сигналы игнорировать.': 'Average result {x} R is reliably below zero \u2014 on this instrument the pattern systemically loses. Ignore its signals.',
+  'Результат (+{x} R) неотличим от нуля — сделки закрываются «в шум». Паттерн сам по себе преимущества не даёт, используйте только как контекст.': 'Result (+{x} R) is indistinguishable from zero \u2014 trades close \u201cinto noise\u201d. The pattern alone gives no edge; use it as context only.',
+  'Сделок слишком мало ({n}) — текущая выборка не позволяет оценить стратегию.': 'Too few trades ({n}) \u2014 the current sample does not allow evaluating the strategy.',
+  'Ни одна из {n} стратегий не показала положительного результата вне шума ({m} сделок). На этом инструменте/таймфрейме паттерны Нисона сейчас не дают преимущества.': 'None of the {n} strategies showed a positive result beyond noise ({m} trades). On this instrument/timeframe Nison patterns currently give no edge.',
+  '{a} из {n} паттернов показывают достоверное ребро на {m} сделках. Текущая конфигурация подтверждена историей.': '{a} of {n} patterns show a reliable edge over {m} trades. The current configuration is confirmed by history.',
+  'Достоверное преимущество только у {a} из {n} паттернов ({m} сделок). Торговать следует лишь отобранные стратегии, остальные — наблюдения.': 'A reliable edge exists only for {a} of {n} patterns ({m} trades). Trade only the selected strategies; treat the rest as observations.',
   'Загрузка тарифов…': 'Loading plans\u2026',
-  'Доступ к аналитике и журналу сигналов по подписке. Оплата в USDT (on-chain),\n        активация после подтверждения платежа.':
-    'Access to analytics and the signal journal via subscription. Payment in USDT (on-chain), activation after payment confirmation.',
+  'Доступ к аналитике и журналу сигналов по подписке. Оплата в USDT (on-chain),\n        активация после подтверждения платежа.': 'Access to analytics and the signal journal via subscription. Payment in USDT (on-chain), activation after payment confirmation.',
   'Первый доступ': 'First access',
   'дней бесплатно': 'days free',
-  'Backend недоступен (локальная разработка) — покупка отключена.':
-    'Backend unavailable (local development) \u2014 purchases are disabled.',
+  'Backend недоступен (локальная разработка) — покупка отключена.': 'Backend unavailable (local development) \u2014 purchases are disabled.',
   'Ваш аккаунт': 'Your account',
   'действует до': 'active until',
   'Заявка': 'Order',
@@ -443,8 +376,7 @@ export const UI_STRINGS: Record<string, string> = {
   'Заявка создана': 'Order created',
   'Переведите': 'Send',
   'USDT на адрес оплаты': 'USDT to the payment address',
-  '— подписка активируется после подтверждения платежа (обычно до 1 часа).':
-    '\u2014 the subscription activates after payment confirmation (usually within 1 hour).',
+  '— подписка активируется после подтверждения платежа (обычно до 1 часа).': '\u2014 the subscription activates after payment confirmation (usually within 1 hour).',
   'Не удалось оформить заявку': 'Failed to create the order',
   'Скопировано': 'Copied',
   'Скопировать адрес': 'Copy address',
@@ -461,18 +393,14 @@ export const UI_STRINGS: Record<string, string> = {
   'Free': 'Free',
   'Pro': 'Pro',
   'Premium': 'Premium',
-
-  // ── SignalJournal ──
   'Журнал сигналов': 'Signal Journal',
-  'Журнал в бета-версии: накопленная статистика формируется, интерпретировать метрики с осторожностью':
-    'Journal is in beta: statistics are still accumulating, interpret metrics with caution',
+  'Журнал в бета-версии: накопленная статистика формируется, интерпретировать метрики с осторожностью': 'Journal is in beta: statistics are still accumulating, interpret metrics with caution',
   'Активен': 'Active',
   'Цель достигнута': 'Target hit',
   'Стоп сработал': 'Stop hit',
   'Истёк': 'Expired',
   'Синхронизировано с сервером': 'Synced with server',
-  'Серверное хранилище недоступно — журнал хранится только в этом браузере':
-    'Server storage unavailable — the journal is kept only in this browser',
+  'Серверное хранилище недоступно — журнал хранится только в этом браузере': 'Server storage unavailable — the journal is kept only in this browser',
   'Проверяем доступность серверного хранилища...': 'Checking server storage availability...',
   '⏳ синхронизация…': '⏳ syncing…',
   '☁ синхронизировано': '☁ synced',
@@ -495,17 +423,13 @@ export const UI_STRINGS: Record<string, string> = {
   'Заметки': 'Notes',
   'Создан:': 'Created:',
   'Резервных снапшотов пока нет.': 'There are no backup snapshots yet.',
-  'Восстановить журнал из снапшота от {when} ({latest.entries} записей)?\nТекущее состояние также будет сохранено в снапшоты.':
-    'Restore the journal from the snapshot of {when} ({count} entries)?\nThe current state will also be saved to snapshots.',
+  'Восстановить журнал из снапшота от {when} ({latest.entries} записей)?\nТекущее состояние также будет сохранено в снапшоты.': 'Restore the journal from the snapshot of {when} ({count} entries)?\nThe current state will also be saved to snapshots.',
   'Журнал восстановлен: {restored.length} записей.': 'Journal restored: {count} entries.',
   'Не удалось восстановить журнал из снапшота.': 'Failed to restore the journal from the snapshot.',
   'Удалить сигнал?': 'Delete this signal?',
-  'Импортировано сигналов: {imported}. Отклонено некорректных записей: {rejected}.':
-    'Signals imported: {imported}. Invalid records rejected: {rejected}.',
+  'Импортировано сигналов: {imported}. Отклонено некорректных записей: {rejected}.': 'Signals imported: {imported}. Invalid records rejected: {rejected}.',
   'Не удалось импортировать журнал': 'Failed to import the journal',
   'Авто-снапшоты: {n} (хранится до 7 последних)': 'Auto-snapshots: {n} (up to 7 latest are kept)',
-
-  // ── MarketContextPanels (Вайкофф / путь цены / edge) ──
   'Накопление': 'Accumulation',
   'Рост': 'Markup',
   'Распределение': 'Distribution',
@@ -519,7 +443,7 @@ export const UI_STRINGS: Record<string, string> = {
   'Что происходит: ': 'What is happening: ',
   'Кто действует: ': 'Who is acting: ',
   'Объём (усилие vs результат): ': 'Volume (effort vs result): ',
-  'Как использовать в анализе: ': 'How to use it in analysis: ',
+  'Как использовать в анализе: ': 'How to use in analysis: ',
   'Фаза цикла Вайкоффа': 'Wyckoff cycle phase',
   'показать подробное описание': 'show detailed description',
   'просмотр': 'viewing',
@@ -529,8 +453,7 @@ export const UI_STRINGS: Record<string, string> = {
   'Цена в {posPct}% диапазона': 'Price at {posPct}% of the range',
   'Ширина диапазона в единицах ATR: значимость консолидации': 'Range width in ATR units: consolidation significance',
   'Ширина:': 'Width:',
-  'Отношение среднего объёма на верхах диапазона к объёму на низах (>1 — перекос вверх)':
-    'Ratio of average volume at range highs to volume at lows (>1 — upward skew)',
+  'Отношение среднего объёма на верхах диапазона к объёму на низах (>1 — перекос вверх)': 'Ratio of average volume at range highs to volume at lows (>1 — upward skew)',
   'Объёмный перекос ↕:': 'Volume skew ↕:',
   'Позиция в диапазоне:': 'Position in range:',
   'Подробное описание фазы': 'Detailed phase description',
@@ -555,8 +478,7 @@ export const UI_STRINGS: Record<string, string> = {
   'Эмпирический бэктест детектора на истории инструмента': 'Empirical backtest of the detector on instrument history',
   'сделок': 'trades',
   'без lookahead': 'no lookahead',
-  'Слева — где преимущество реально, справа — не деградирует ли оно сейчас.':
-    'Left — where the edge is real; right — whether it is degrading now.',
+  'Слева — где преимущество реально, справа — не деградирует ли оно сейчас.': 'Left — where the edge is real; right — whether it is degrading now.',
   'из-за транзита': 'due to transit',
   'чистота пути': 'path purity',
   'первое препятствие через': 'first obstacle at',
@@ -571,11 +493,8 @@ export const UI_STRINGS: Record<string, string> = {
   'д': 'd',
   'Эффективность по режимам рынка': 'Effectiveness by market regime',
   'Ни одна когорта не набрала наблюдений.': 'No cohort has gathered enough observations.',
-  'Точка — средний net R когорты, полоса — 95% CI. EDGE = CI целиком выше нуля при n ≥ 20.':
-    'Dot — cohort mean net R, band — 95% CI. EDGE = CI entirely above zero with n ≥ 20.',
+  'Точка — средний net R когорты, полоса — 95% CI. EDGE = CI целиком выше нуля при n ≥ 20.': 'Dot — cohort mean net R, band — 95% CI. EDGE = CI entirely above zero with n ≥ 20.',
   'История': 'History',
-
-  // ── VolumeProfilePanel ──
   'Профиль объёма': 'Volume Profile',
   'Дельта агрессии': 'Aggression Delta',
   'Как читать этот график': 'How to read this chart',
@@ -587,32 +506,22 @@ export const UI_STRINGS: Record<string, string> = {
   'Насыщенные зелёные': 'Saturated green',
   'насыщенные красные': 'saturated red',
   'Жёлтая линия': 'Yellow line',
-  'Бычья дивергенция: цена выросла за окно ({p}%), но дельта отрицательная / падает — рост делают пассивные лимитки, а не агрессивный спрос. По Нисону такое движение хрупкое: без подтверждения объёмом на пробое ему не доверяем.':
-    'Bullish divergence: price rose over the window ({p}%) but delta is negative/falling — the rally is driven by passive limit orders, not aggressive demand. Per Nison such a move is fragile: without volume confirmation on breakout we do not trust it.',
-  'Медвежья дивергенция: цена снизилась ({p}%), но покупатели агрессивно подбирают (ΣΔ > 0 / дельта растёт). Часто это признак поглощения предложения — кандидат на разворот вверх после подтверждения следующей свечой.':
-    'Bearish divergence: price fell ({p}%) but buyers are aggressively absorbing (ΣΔ > 0 / delta rising). Often a sign of supply absorption — a candidate for an upside reversal after the next candle confirms.',
-  'Подтверждённый рост: цена и накопленная дельта идут вместе — спрос агрессивный и настоящий, движению можно доверять.':
-    'Confirmed rally: price and cumulative delta rise together — demand is aggressive and genuine; the move can be trusted.',
-  'Подтверждённое снижение: продавцы давят и ценой, и дельтой — отскоки без смены знака ΣΔ лучше рассматривать как повод для шорта, а не разворот.':
-    'Confirmed decline: sellers press both price and delta — bounces without a ΣΔ sign flip are better seen as short opportunities rather than reversals.',
+  'Бычья дивергенция: цена выросла за окно ({p}%), но дельта отрицательная / падает — рост делают пассивные лимитки, а не агрессивный спрос. По Нисону такое движение хрупкое: без подтверждения объёмом на пробое ему не доверяем.': 'Bullish divergence: price rose over the window ({p}%) but delta is negative/falling — the rally is driven by passive limit orders, not aggressive demand. Per Nison such a move is fragile: without volume confirmation on breakout we do not trust it.',
+  'Медвежья дивергенция: цена снизилась ({p}%), но покупатели агрессивно подбирают (ΣΔ > 0 / дельта растёт). Часто это признак поглощения предложения — кандидат на разворот вверх после подтверждения следующей свечой.': 'Bearish divergence: price fell ({p}%) but buyers are aggressively absorbing (ΣΔ > 0 / delta rising). Often a sign of supply absorption — a candidate for an upside reversal after the next candle confirms.',
+  'Подтверждённый рост: цена и накопленная дельта идут вместе — спрос агрессивный и настоящий, движению можно доверять.': 'Confirmed rally: price and cumulative delta rise together — demand is aggressive and real, the move can be trusted.',
+  'Подтверждённое снижение: продавцы давят и ценой, и дельтой — отскоки без смены знака ΣΔ лучше рассматривать как повод для шорта, а не разворот.': 'Confirmed decline: sellers press both price and delta — bounces without a ΣΔ sign flip are better treated as short opportunities, not reversals.',
   'Накопленная дельта:': 'Cumulative delta:',
   'Доля бычьих свечей:': 'Share of bullish candles:',
   'Средний CLV:': 'Average CLV:',
   'Тренд дельты:': 'Delta trend:',
   '* proxy-оценка по OHLCV (без тикового footprint)': '* proxy estimate from OHLCV (no tick-level footprint)',
-  'Proxy-оценка по OHLCV: тикового стакана/ленты Bybit здесь нет, поэтому дельта вычисляется из формы свечи (тело + позиция закрытия + объём). Она надёжна для оценки перекоса агрессии и дивергенций, но абсолютные числа не равны биржевой дельте из footprint-терминалов. Правило Нисона сохраняется: любой сигнал подтверждается только на следующей свече.':
-    'Proxy estimate from OHLCV: there is no Bybit tick order book/tape here, so delta is computed from candle shape (body + close location + volume). It is reliable for gauging aggression skew and divergences, but absolute numbers are not equal to exchange delta from footprint terminals. The Nison rule stands: any signal is confirmed only on the next candle.',
+  'Proxy-оценка по OHLCV: тикового стакана/ленты Bybit здесь нет, поэтому дельта вычисляется из формы свечи (тело + позиция закрытия + объём). Она надёжна для оценки перекоса агрессии и дивергенций, но абсолютные числа не равны биржевой дельте из footprint-терминалов. Правило Нисона сохраняется: любой сигнал подтверждается только на следующей свече.': 'OHLCV proxy estimate: Bybit tick order book/tape is unavailable here, so delta is derived from candle shape (body + close position + volume). It is reliable for gauging aggression skew and divergences, but absolute numbers do not equal exchange delta from footprint terminals. Nison\'s rule still applies: any signal is confirmed only on the next candle.',
   'Сумма proxy-дельт за окно (агрессия покупателей минус продавцов)': 'Sum of proxy deltas over the window (buyer aggression minus seller aggression)',
-  'Средний Close Location Value: закрытия у вершин (+) или оснований (−) диапазона':
-    'Average Close Location Value: closes near highs (+) or lows (−) of the range',
-  'Цена внутри Value Area (~70% всего объёма окна) — рынок в равновесии. Наиболее вероятен возврат к POC («магнит ликвидности») и боковое движение между VAH и VAL: у VAL ищем отскок вверх, у VAH — вниз, а не торговлю на пробой.':
-    'Price is inside the Value Area (~70% of window volume) — the market is in balance. The most likely outcome is a return to POC (the liquidity magnet) and sideways movement between VAH and VAL: look for an upward bounce at VAL and downward at VAH, not breakout trading.',
-  'Цена ВЫШЕ Value Area — покупатели удерживают зону дисбаланса, пробой верхней границы зафиксирован. Откат к VAH при удержании выше него — потенциальная точка входа по тренду; если же свеча закроется обратно внутри VA, срабатывает стоп-реверс (правило 80% П. Стейдента): вероятен проход к противоположной границе VAL.':
-    'Price ABOVE the Value Area — buyers hold the imbalance zone, the upper boundary breakout is accepted. A pullback to VAH while staying above it is a potential trend-following entry; if a candle closes back inside the VA, the 80% rule (P. Steidtmayer) stop-reverse triggers: a traverse to the opposite boundary VAL becomes likely.',
-  'Цена НИЖЕ Value Area — продавцы контролируют ценовое открытие, нижняя граница пробита. Возврат внутрь VA маловероятен без роста дельты покупателей; VAH теперь — сильное сопротивление, а продолжение движения через LVN-«дыры» обычно проходит быстро и без откатов.':
-    'Price BELOW the Value Area — sellers control the open, the lower boundary is broken. A return inside the VA is unlikely without rising buyer delta; VAH is now strong resistance, and continuation through LVN holes usually moves fast without pullbacks.',
-  'Профиль показывает, на каких ценах за окно анализа реально торговался объём (в отличие от объёма по времени внизу графика свечей). Горизонтальная длина каждого бара = доля объёма на этом ценовом уровне.':
-    'The profile shows at which prices volume actually traded over the analysis window (unlike time-based volume under the candle chart). The horizontal length of each bar = share of volume at that price level.',
+  'Средний Close Location Value: закрытия у вершин (+) или оснований (−) диапазона': 'Average Close Location Value: closes near range highs (+) or lows (−)',
+  'Цена внутри Value Area (~70% всего объёма окна) — рынок в равновесии. Наиболее вероятен возврат к POC («магнит ликвидности») и боковое движение между VAH и VAL: у VAL ищем отскок вверх, у VAH — вниз, а не торговлю на пробой.': 'Price inside the Value Area (~70% of window volume) — market in balance. Most likely outcome: reversion to POC (the liquidity magnet) and sideways movement between VAH and VAL: at VAL look for an upward bounce, at VAH downward — not breakout trades.',
+  'Цена ВЫШЕ Value Area — покупатели удерживают зону дисбаланса, пробой верхней границы зафиксирован. Откат к VAH при удержании выше него — потенциальная точка входа по тренду; если же свеча закроется обратно внутри VA, срабатывает стоп-реверс (правило 80% П. Стейдента): вероятен проход к противоположной границе VAL.': 'Price ABOVE the Value Area — buyers hold the imbalance zone, upper boundary breakout confirmed. A pullback to VAH that holds above it is a potential trend-following entry; if a candle closes back inside the VA, the 80% rule (P. Steidtmayer) stop-reversal triggers: a run to the opposite boundary VAL is likely.',
+  'Цена НИЖЕ Value Area — продавцы контролируют ценовое открытие, нижняя граница пробита. Возврат внутрь VA маловероятен без роста дельты покупателей; VAH теперь — сильное сопротивление, а продолжение движения через LVN-«дыры» обычно проходит быстро и без откатов.': 'Price BELOW the Value Area — sellers control the open, the lower boundary is broken. A return inside the VA is unlikely without rising buyer delta; VAH is now strong resistance, and continuation through LVN holes usually moves fast without pullbacks.',
+  'Профиль показывает, на каких ценах за окно анализа реально торговался объём (в отличие от объёма по времени внизу графика свечей). Горизонтальная длина каждого бара = доля объёма на этом ценовом уровне.': 'The profile shows at which prices volume actually traded over the analysis window (unlike time-based volume under the candle chart). The horizontal length of each bar = share of volume at that price level.',
   'пики объёма ({p}% всего объёма окна)': 'volume peaks ({p}% of total window volume)',
   'LVN': 'LVN',
   'дыры': 'holes',
@@ -621,8 +530,7 @@ export const UI_STRINGS: Record<string, string> = {
   'Value Area': 'Value Area',
   'затенённая полоса ~70% объёма': 'shaded band of ~70% of volume',
   'Границы VA — естественные уровни для входов от границ и стопов.': 'VA boundaries are natural levels for edge entries and stops.',
-  'Совпадение POC или границы VA с уровнем S/R мульти-ТФ карты резко повышает значимость зоны: два независимых метода указывают на одну цену.':
-    'A POC or VA boundary coinciding with a multi-TF map S/R level sharply raises the zone significance: two independent methods point at one price.',
+  'Совпадение POC или границы VA с уровнем S/R мульти-ТФ карты резко повышает значимость зоны: два независимых метода указывают на одну цену.': 'A POC or VA boundary coinciding with a multi-TF map S/R level sharply raises the zone significance: two independent methods point at one price.',
   'объёма': 'volume',
   'Цена': 'Price',
   'HVN (трение)': 'HVN (friction)',
@@ -640,27 +548,20 @@ export const UI_STRINGS: Record<string, string> = {
   'бычьих': 'bullish',
   'медвежьих сильных дисбалансов': 'bearish strong imbalances',
   'За окном найдено:': 'Found over the window:',
-  'Их скопление у уровня поддержки — типичное «всасывание» предложения по Нисону; у сопротивления — активность распределения.':
-    'Their clustering at support is typical supply absorption per Nison; at resistance — distribution activity.',
-  'за свечу агрессия покупателей превысила агрессию продавцов (покупали по рынку / «били в аск»)':
-    'within the bar buyer aggression exceeded seller aggression (bought at market / hit the ask)',
+  'Их скопление у уровня поддержки — типичное «всасывание» предложения по Нисону; у сопротивления — активность распределения.': 'Their clustering at support is typical supply absorption per Nison; at resistance — distribution activity.',
+  'за свечу агрессия покупателей превысила агрессию продавцов (покупали по рынку / «били в аск»)': 'within the bar buyer aggression exceeded seller aggression (bought at market / hit the ask)',
   'наоборот, продавали в рынок. Высота столбца = величина перевеса.': 'vice versa, sold into the market. Bar height = size of the edge.',
   'дисбаланс агрессии (перевес одной стороны ≥3:1 внутри бара)': 'aggression imbalance (one side ≥3:1 within the bar)',
-  'накопленная дельта (сумма всех Δ слева направо). Растёт = рынок чистят покупатели; падает = продавцы; плоская при движении цены = работу делает пассивная сторона (тонкая ликвидность).':
-    'cumulative delta (sum of all Δ left to right). Rising = buyers clearing the book; falling = sellers; flat while price moves = the passive side does the work (thin liquidity).',
+  'накопленная дельта (сумма всех Δ слева направо). Растёт = рынок чистят покупатели; падает = продавцы; плоская при движении цены = работу делает пассивная сторона (тонкая ликвидность).': 'cumulative delta (sum of all Δ left to right). Rising = buyers clearing the book; falling = sellers; flat while price moves = the passive side does the work (thin liquidity).',
   'CLV (Close Location Value)': 'CLV (Close Location Value)',
   'где внутри диапазона свечи закрылась цена:': 'where within the candle range the close landed:',
   'у самого максимума (покупатели дожали бар)': 'at the very high (buyers pressed the bar)',
   'у минимума': 'at the low',
   'в середине': 'mid-range',
   'Средний CLV окна:': 'Average CLV of the window:',
-
-  // ── misc ──
   'Тренд на': 'Trend on',
   'лонг': 'long',
   'шорт': 'short',
-
-  // ── Signal journal statuses ──
   '⏳ Активен': '⏳ Active',
   '✓ Цель достигнута': '✓ Target hit',
   '✗ Стоп сработал': '✗ Stop hit',
@@ -681,8 +582,6 @@ export const UI_STRINGS: Record<string, string> = {
   '(хранится до 7 последних)': '(up to 7 latest kept)',
   ' · вход': ' · entry',
   'Паттерны Нисона:': 'Nison patterns:',
-
-  // ── Backtest verdicts (stats.ts) ──,
   'сделок — статистика случайна, никаких выводов делать нельзя. Накопите больше сигналов этого паттерна.': 'trades — statistics are random, no conclusions can be drawn. Accumulate more signals of this pattern.',
   'R/сделку достоверно выше нуля и подтверждён на будущих данных (OOS': 'R/trade is reliably above zero and confirmed on out-of-sample data (OOS',
   'R). Паттерн можно торговать с полным риском.': 'R). The pattern can be traded with full risk.',
@@ -701,7 +600,31 @@ export const UI_STRINGS: Record<string, string> = {
   'Достоверное преимущество только у': 'Reliable advantage only in',
   'паттернов (': 'patterns (',
   'сделок). Торговать следует лишь отобранные стратегии, остальные — наблюдения.': 'trades). Trade only the selected strategies; treat the rest as observations.',
-
+  'свернуть': 'collapse',
+  'развернуть': 'expand',
+  'Меню действий': 'Action menu',
+  'Анализ рынка по методу Стива Нисона': 'Market analysis using Steve Nison\'s method',
+  'Ссылка скопирована ✓': 'Link copied ✓',
+  'Поделиться': 'Share',
+  'Kairi Analytics · правый клик отключён браузером': 'Kairi Analytics · right-click disabled by browser',
+  ': здесь цена «застряла», много двусторонних сделок. Работают как магниты и зоны трения: подход к HVN обычно замедляет движение, пробой требует сильной дельты.': ': price gets stuck here, heavy two-sided trading. HVNs act as magnets and friction zones: approaching an HVN usually slows the move, breaking through requires strong delta.',
+  '— «дыры» в профиле': '— holes in the profile',
+  'объём здесь почти не торговался, цены пролетают такие зоны быстро, откаты в них коротки. LVN между входом и целью — союзник транзита; LVN сразу за стопом — сигнал, что выбить вас будет трудно.': 'almost no volume traded here, prices fly through such zones quickly and pullbacks into them are short. An LVN between entry and target is a transit ally; an LVN just beyond your stop means it will be hard to wick you out.',
+  '— цена максимального объёма («справедливая цена» окна). В равновесном рынке притягивает цену обратно.': '— the highest-volume price (the fair price of the window). In a balanced market it pulls price back.',
+  '— затенённая полоса ~70% объёма. Границы VA — естественные уровни для входов от границ и стопов.': '— shaded band holding ~70% of volume. VA boundaries are natural levels for edge entries and stops.',
+  '— за свечу агрессия покупателей превысила агрессию продавцов (покупали по рынку / «били в аск»).': '— within the candle buyer aggression exceeded seller aggression (market buys / hitting the ask).',
+  '— наоборот, продавали в рынок. Высота столбца = величина перевеса.': '— conversely, selling into the market. Bar height = size of the skew.',
+  '— дисбаланс агрессии (перевес одной стороны ≥3:1 внутри бара). За окном найдено:': '— aggression imbalance (one side dominating ≥3:1 within the bar). Found in window:',
+  'медвежьих сильных дисбалансов. Их скопление у уровня поддержки — типичное «всасывание» предложения по Нисону; у сопротивления — активность распределения.': ' strong bearish imbalances. Their cluster at support is typical absorption of supply (Nison); at resistance — distribution activity.',
+  'Растёт = рынок чистят покупатели; падает = продавцы; плоская при движении цены = работу делает пассивная сторона (тонкая ликвидность).': 'Rising = buyers lifting the offer; falling = sellers hitting the bid; flat while price moves = the passive side is doing the work (thin liquidity).',
+  'Последние': 'Last',
+  'баров': 'bars',
+  '(важнее всей линии: показывает, кто контролирует рынок прямо сейчас).': '(more important than the whole line: shows who controls the market right now).',
+  'дисбаланс': 'imbalance',
+  'proxy-оценка по OHLCV (без тикового footprint)': 'OHLCV proxy estimate (no tick footprint)',
+  'подтверждённый сигнал Нисона → вход по close свечи подтверждения, стоп = граница формации, тейк = ближайшая структурная цель (как в живом анализе), максимум удержания 60 свечей. Результат каждой сделки уменьшен на издержки цикла': 'confirmed Nison signal → entry at the confirmation candle close, stop = formation boundary, take-profit = nearest structural target (as in live analysis), max hold 60 candles. Each trade result is reduced by round-trip costs',
+  'Вход без lookahead: управление позицией со следующей свечи. Вердикты внизу страницы переводят статистику в практический вывод — можно ли торговать паттерн на этом инструменте.': 'No-lookahead entry: position managed from the next candle. The verdicts at the bottom turn statistics into a practical conclusion — whether the pattern is tradable on this instrument.',
+  'Боковик': 'Sideways',
 };
 
 /** Перевод произвольной строки домена (паттерн/тренд/причина/фаза/UI-фраза). */
