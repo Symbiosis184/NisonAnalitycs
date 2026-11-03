@@ -42,7 +42,7 @@ export function VolumeProfileNotes({ profile, price }: Pick<VPProps, 'profile' |
       ? t('Цена внутри Value Area (~70% всего объёма окна) — рынок в равновесии. Наиболее вероятен возврат к POC («магнит ликвидности») и боковое движение между VAH и VAL: у VAL ищем отскок вверх, у VAH — вниз, а не торговлю на пробой.')
       : positionVsVa === 'above'
         ? t('Цена ВЫШЕ Value Area — покупатели удерживают зону дисбаланса, пробой верхней границы зафиксирован. Откат к VAH при удержании выше него — потенциальная точка входа по тренду; если же свеча закроется обратно внутри VA, срабатывает стоп-реверс (правило 80% П. Стейдента): вероятен проход к противоположной границе VAL.')
-        : `Цена НИЖЕ Value Area — продавцы контролируют ценовое открытие, нижняя граница пробита. Возврат внутрь VA маловероятен без роста дельты покупателей; VAH теперь — сильное сопротивление, а продолжение движения через LVN-«дыры» обычно проходит быстро и без откатов.`;
+        : t('Цена НИЖЕ Value Area — продавцы контролируют ценовое открытие, нижняя граница пробита. Возврат внутрь VA маловероятен без роста дельты покупателей; VAH теперь — сильное сопротивление, а продолжение движения через LVN-«дыры» обычно проходит быстро и без откатов.');
 
   return (
     <div className="mt-2 space-y-2 text-xs leading-relaxed text-gray-400">
@@ -74,8 +74,8 @@ export function VolumeProfileNotes({ profile, price }: Pick<VPProps, 'profile' |
       </ul>
       <p className="rounded-lg border border-gray-800/60 bg-surface-base p-2 text-gray-300">{positionNote}</p>
       <p className="text-gray-400">
-        Совпадение POC или границы VA с уровнем S/R мульти-ТФ карты резко повышает
-        значимость зоны: два независимых метода указывают на одну цену.
+        {t(`Совпадение POC или границы VA с уровнем S/R мульти-ТФ карты резко повышает
+        значимость зоны: два независимых метода указывают на одну цену.`)}
       </p>
     </div>
   );
@@ -218,23 +218,27 @@ function classifyImbalance(p: DeltaPoint, maxAbs: number): 'strong' | 'weak' | n
   return Math.abs(p.delta) >= 0.6 * maxAbs ? 'strong' : 'weak';
 }
 
-function divergenceNote(summary: DeltaSummary, priceChangePct?: number): { icon: 'warning' | 'check'; text: string } | null {
+function divergenceNote(
+  summary: DeltaSummary,
+  priceChangePct?: number,
+  t: (s: string) => string = (x) => x,
+): { icon: 'warning' | 'check'; text: string } | null {
   if (priceChangePct === undefined || Math.abs(priceChangePct) < 0.3) return null;
   const cum = summary.cumulative_delta;
   const trendUp = summary.delta_trend === 'rising';
   const priceUp = priceChangePct > 0;
   // Дивергенция: цена идёт в одну сторону, накопленная агрессия — в другую
   if (priceUp && (cum < 0 || summary.delta_trend === 'falling')) {
-    return { icon: 'warning', text: `Бычья дивергенция: цена выросла за окно (${priceUp ? '+' : ''}${priceChangePct.toFixed(1)}%), но дельта отрицательная / падает — рост делают пассивные лимитки, а не агрессивный спрос. По Нисону такое движение хрупкое: без подтверждения объёмом на пробое ему не доверяем.` };
+    return { icon: 'warning', text: t(`Бычья дивергенция: цена выросла за окно (${priceUp ? '+' : ''}${priceChangePct.toFixed(1)}%), но дельта отрицательная / падает — рост делают пассивные лимитки, а не агрессивный спрос. По Нисону такое движение хрупкое: без подтверждения объёмом на пробое ему не доверяем.`) };
   }
   if (!priceUp && (cum > 0 || trendUp)) {
-    return { icon: 'warning', text: `Медвежья дивергенция: цена снизилась (${priceChangePct.toFixed(1)}%), но покупатели агрессивно подбирают (ΣΔ > 0 / дельта растёт). Часто это признак поглощения предложения — кандидат на разворот вверх после подтверждения следующей свечой.` };
+    return { icon: 'warning', text: t(`Медвежья дивергенция: цена снизилась (${priceChangePct.toFixed(1)}%), но покупатели агрессивно подбирают (ΣΔ > 0 / дельта растёт). Часто это признак поглощения предложения — кандидат на разворот вверх после подтверждения следующей свечой.`) };
   }
   if (priceUp && cum > 0 && trendUp) {
-    return { icon: 'check', text: 'Подтверждённый рост: цена и накопленная дельта идут вместе — спрос агрессивный и настоящий, движению можно доверять.' };
+    return { icon: 'check', text: t('Подтверждённый рост: цена и накопленная дельта идут вместе — спрос агрессивный и настоящий, движению можно доверять.');
   }
   if (!priceUp && cum < 0 && summary.delta_trend === 'falling') {
-    return { icon: 'check', text: 'Подтверждённое снижение: продавцы давят и ценой, и дельтой — отскоки без смены знака ΣΔ лучше рассматривать как повод для шорта, а не разворот.' };
+    return { icon: 'check', text: t('Подтверждённое снижение: продавцы давят и ценой, и дельтой — отскоки без смены знака ΣΔ лучше рассматривать как повод для шорта, а не разворот.');
   }
   return null;
 }
@@ -249,25 +253,25 @@ export function DeltaNotes({ summary, priceChangePct }: { summary: DeltaSummary;
   const strongSell = points.filter((p) => classifyImbalance(p, maxAbs) === 'strong' && p.imbalance === 'sell').length;
   const lastN = points.slice(-Math.min(8, points.length));
   const recentSum = lastN.reduce((s, p) => s + p.delta, 0);
-  const div = divergenceNote(summary, priceChangePct);
+  const div = divergenceNote(summary, priceChangePct, t);
 
   return (
     <div className="text-xs text-gray-400 leading-relaxed space-y-2">
-      <p className="text-gray-300 font-medium">Как читать этот график</p>
+      <p className="text-gray-300 font-medium">{t(`Как читать этот график`)}</p>
       <ul className="list-disc list-inside space-y-1">
         <li>
-          <span className="text-green-400 font-medium">Зелёный столбец</span> — за свечу агрессия покупателей превысила агрессию продавцов (покупали по рынку / «били в аск»).{' '}
-          <span className="text-red-400 font-medium">Красный</span> — наоборот, продавали в рынок. Высота столбца = величина перевеса.
+          <span className="text-green-400 font-medium">{t(`Зелёный столбец`)}</span> — за свечу агрессия покупателей превысила агрессию продавцов (покупали по рынку / «били в аск»).{' '}
+          <span className="text-red-400 font-medium">{t(`Красный`)}</span> — наоборот, продавали в рынок. Высота столбца = величина перевеса.
         </li>
         <li>
-          <span className="text-green-500 font-medium">Насыщенные зелёные / <span className="text-red-500">насыщенные красные</span></span> — дисбаланс агрессии (перевес одной стороны ≥3:1 внутри бара). За окном найдено:{' '}
-          <b className="text-white">{strongBuy}</b> бычьих и <b className="text-white">{strongSell}</b> медвежьих сильных дисбалансов. Их скопление у уровня поддержки — типичное «всасывание» предложения по Нисону; у сопротивления — активность распределения.
+          <span className="text-green-500 font-medium">{t(`Насыщенные зелёные /`)} <span className="text-red-500">{t(`насыщенные красные`)}</span></span> — дисбаланс агрессии (перевес одной стороны ≥3:1 внутри бара). За окном найдено:{' '}
+          <b className="text-white">{strongBuy}</b> {t(`бычьих и`)} <b className="text-white">{strongSell}</b> медвежьих сильных дисбалансов. Их скопление у уровня поддержки — типичное «всасывание» предложения по Нисону; у сопротивления — активность распределения.
         </li>
         <li>
-          <span className="text-amber-400 font-medium">Жёлтая линия</span> — накопленная дельта (сумма всех Δ слева направо). Растёт = рынок чистят покупатели; падает = продавцы; плоская при движении цены = работу делает пассивная сторона (тонкая ликвидность).
+          <span className="text-amber-400 font-medium">{t(`Жёлтая линия`)}</span> — накопленная дельта (сумма всех Δ слева направо). Растёт = рынок чистят покупатели; падает = продавцы; плоская при движении цены = работу делает пассивная сторона (тонкая ликвидность).
         </li>
         <li>
-          <b className="text-gray-300">CLV (Close Location Value)</b> — где внутри диапазона свечи закрылась цена: <span className="text-green-400">+1</span> — у самого максимума (покупатели дожали бар), <span className="text-red-400">−1</span> — у минимума, <span className="text-gray-300">0</span> — в середине. Средний CLV окна: <span className={summary.avg_clv >= 0 ? 'text-green-400' : 'text-red-400'}><b>{summary.avg_clv.toFixed(2)}</b></span> — {summary.avg_clv >= 0.2 ? 'закрытия жмутся к вершинам свечей, buyers держат финал каждого бара' : summary.avg_clv <= -0.2 ? 'закрытия у оснований свечей — продавцы закрывают бары на минимумах, давление реальное' : 'закрытия в середине диапазонов — ни одна сторона не продавила итог бара (борьба/флэт)'}.
+          <b className="text-gray-300">CLV (Close Location Value)</b> {t(`— где внутри диапазона свечи закрылась цена:`)} <span className="text-green-400">+1</span> — у самого максимума (покупатели дожали бар), <span className="text-red-400">−1</span> {t(`— у минимума,`)} <span className="text-gray-300">0</span> {t(`— в середине. Средний CLV окна:`)} <span className={summary.avg_clv >= 0 ? 'text-green-400' : 'text-red-400'}><b>{summary.avg_clv.toFixed(2)}</b></span> — {summary.avg_clv >= 0.2 ? 'закрытия жмутся к вершинам свечей, buyers держат финал каждого бара' : summary.avg_clv <= -0.2 ? 'закрытия у оснований свечей — продавцы закрывают бары на минимумах, давление реальное' : 'закрытия в середине диапазонов — ни одна сторона не продавила итог бара (борьба/флэт)'}.
         </li>
         <li>
           <b className="text-gray-300">Последние {lastN.length} баров:</b> ΣΔ {recentSum >= 0 ? <span className="text-green-400">+{Math.round(recentSum).toLocaleString('ru-RU')}</span> : <span className="text-red-400">{Math.round(recentSum).toLocaleString('ru-RU')}</span>} — {recentSum >= 0 ? 'на свежем участке спрос перевешивает' : 'на свежем участке перевешивает предложение'} (важнее всей линии: показывает, кто контролирует рынок прямо сейчас).
@@ -339,11 +343,11 @@ export function DeltaChart({ summary }: DeltaProps) {
             {summary.cumulative_delta >= 0 ? '+' : ''}{Math.round(summary.cumulative_delta).toLocaleString('ru-RU')}
           </span>
         </span>
-        <span>Доля бычьих свечей: <span className="text-white font-mono">{buySharePct}%</span></span>
+        <span>{t(`Доля бычьих свечей:`)} <span className="text-white font-mono">{buySharePct}%</span></span>
         <span title="Средний Close Location Value: закрытия у вершин (+) или оснований (−) диапазона">
-          Средний CLV: <span className={summary.avg_clv >= 0 ? 'text-green-400' : 'text-red-400'}>{summary.avg_clv.toFixed(2)}</span>
+          {t(`Средний CLV:`)} <span className={summary.avg_clv >= 0 ? 'text-green-400' : 'text-red-400'}>{summary.avg_clv.toFixed(2)}</span>
         </span>
-        <span>Тренд дельты: <span className="text-amber-400">{TREND_LABEL_RU[summary.delta_trend] ?? summary.delta_trend}</span></span>
+        <span>{t(`Тренд дельты:`)} <span className="text-amber-400">{TREND_LABEL_RU[summary.delta_trend] ?? summary.delta_trend}</span></span>
         <span className="text-gray-600">* proxy-оценка по OHLCV (без тикового footprint)</span>
       </div>
     </div>
