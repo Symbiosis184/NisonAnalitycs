@@ -1,4 +1,15 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { translateString, type Lang } from '../i18n/dictionaries';
+
+/** Язык для фолбэк-рендера: класс-компонент живёт вне I18nContext, читаем напрямую. */
+function getUiLang(): Lang {
+  try {
+    const saved = localStorage.getItem('kairi-lang');
+    if (saved === 'en' || saved === 'ru') return saved;
+  } catch { /* ignore */ }
+  const nav = typeof navigator !== 'undefined' ? (navigator.language || 'ru') : 'ru';
+  return nav.toLowerCase().startsWith('en') ? 'en' : 'ru';
+}
 
 interface Props {
   children: ReactNode;
@@ -32,6 +43,8 @@ export class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.error) {
+      const lang = getUiLang();
+      const tr = (s: string) => translateString(s, lang);
       return (
         <div
           style={{
@@ -45,10 +58,9 @@ export class ErrorBoundary extends Component<Props, State> {
             gap: '1rem',
           }}
         >
-          <h2>Что-то пошло не так</h2>
+          <h2>{tr('Что-то пошло не так')}</h2>
           <p style={{ opacity: 0.7, maxWidth: '40rem' }}>
-            Произошла непредвиденная ошибка в интерфейсе. Попробуйте обновить страницу —
-            если проблема повторяется, подробности видны в консоли браузера (F12).
+            {tr('Произошла непредвиденная ошибка в интерфейсе. Попробуйте обновить страницу — если проблема повторяется, подробности видны в консоли браузера (F12).')}
           </p>
           <pre
             style={{
@@ -73,7 +85,7 @@ export class ErrorBoundary extends Component<Props, State> {
               cursor: 'pointer',
             }}
           >
-            Обновить страницу
+            {tr('Обновить страницу')}
           </button>
         </div>
       );

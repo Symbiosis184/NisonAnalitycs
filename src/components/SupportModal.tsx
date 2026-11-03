@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { X, Copy, Check, Heart } from 'lucide-react';
 import QRCode from 'qrcode';
+import { useI18n } from '../i18n';
 
 /** Кошелёк GRAM (TON-адрес для приёма GRAMUSDT в сети The Open Network). */
 const TON_ADDRESS = 'UQC1vSZHIqeUse_Zsql534hbGKRQEBFgdlk6nEtkKbLo5HX6';
@@ -13,6 +14,7 @@ interface Props {
 }
 
 export default function SupportModal({ open, onClose }: Props) {
+  const { t } = useI18n();
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [copied, setCopied] = useState(false);
   const imgRef = useRef<HTMLImageElement | null>(null);
@@ -111,7 +113,7 @@ export default function SupportModal({ open, onClose }: Props) {
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label="Поддержать развитие проекта"
+      aria-label={t('Поддержать развитие проекта')}
     >
       <div
         className="relative w-full max-w-md rounded-2xl border border-amber-500/30 bg-surface-raised shadow-2xl shadow-amber-500/10 p-6"
@@ -119,7 +121,7 @@ export default function SupportModal({ open, onClose }: Props) {
       >
         <button
           onClick={onClose}
-          aria-label="Закрыть"
+          aria-label={t('Закрыть')}
           className="absolute right-3 top-3 p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
         >
           <X className="w-4 h-4" />
@@ -127,11 +129,10 @@ export default function SupportModal({ open, onClose }: Props) {
 
         <div className="flex items-center gap-2 mb-1">
           <Heart className="w-5 h-5 text-amber-400 fill-amber-400/20" />
-          <h3 className="text-lg font-bold text-white">Поддержать проект</h3>
+          <h3 className="text-lg font-bold text-white">{t('Поддержать проект')}</h3>
         </div>
         <p className="text-sm text-gray-400 mb-5">
-          Kairi Analytics развивается бесплатно. Если анализ полезен — вы можете поддержать
-          развитие проекта переводом GRAM в сети The Open Network.
+          {t('Kairi Analytics развивается бесплатно. Если анализ полезен — вы можете поддержать развитие проекта переводом GRAM в сети The Open Network.')}
         </p>
 
         {/* QR с deep-link ton://transfer/<адрес> — сканируется Tonkeeper и другими кошельками TON */}
@@ -140,25 +141,25 @@ export default function SupportModal({ open, onClose }: Props) {
             <img
               ref={imgRef}
               src={qrDataUrl}
-              alt="QR-код для отправки GRAM"
+              alt={t('QR-код для отправки GRAM')}
               className="w-48 h-48 rounded-xl border-4 border-white bg-white p-1"
             />
           ) : (
             <div className="w-48 h-48 rounded-xl bg-white/5 animate-pulse flex items-center justify-center text-xs text-gray-400">
-              Генерация QR…
+              {t('Генерация QR…')}
             </div>
           )}
         </div>
 
         <p className="text-[11px] text-gray-400 text-center mb-4 -mt-2">
-          Откройте кошелёк TON (Tonkeeper / MyTonWallet) → «Отправить» → отсканируйте QR.
-          Сеть: <span className="text-gray-300 font-medium">The Open Network (TON)</span>.
+          {t('Откройте кошелёк TON (Tonkeeper / MyTonWallet) → «Отправить» → отсканируйте QR.')}{' '}
+          {t('Сеть')}: <span className="text-gray-300 font-medium">The Open Network (TON)</span>.
         </p>
 
         {/* Адрес + копирование */}
         <div className="rounded-lg border border-gray-800 bg-surface-deep p-3">
           <div className="text-[11px] uppercase tracking-wider text-gray-400 mb-1">
-            Адрес кошелька GRAM
+            {t('Адрес кошелька GRAM')}
           </div>
           <div className="flex items-center gap-2">
             <code className="flex-1 break-all text-xs text-amber-300 font-mono leading-relaxed">
@@ -171,16 +172,16 @@ export default function SupportModal({ open, onClose }: Props) {
                   ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
                   : 'bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20'
               }`}
-              title="Скопировать адрес"
+              title={t('Скопировать адрес')}
             >
               {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-              {copied ? 'Скопировано' : 'Копировать'}
+              {copied ? t('Скопировано') : t('Копировать')}
             </button>
           </div>
         </div>
 
         <p className="text-[11px] text-gray-600 mt-4 text-center">
-          Переводите только GRAMUSDT в сети TON. Отправка в другой сети приведёт к потере средств.
+          {t('Переводите только GRAMUSDT в сети TON. Отправка в другой сети приведёт к потере средств.')}
         </p>
       </div>
     </div>

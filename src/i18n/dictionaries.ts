@@ -145,6 +145,7 @@ export const UI_STRINGS: Record<string, string> = {
   'Бэктест паттернов Нисона': 'Nison Pattern Backtest',
   'Поддержать': 'Support',
   'Поддержать проект': 'Support the project',
+  'Язык интерфейса': 'Interface language',
   'Поддержать развитие проекта (TON)': 'Support the project development (TON)',
   'Сервис носит информационный характер и не является индивидуальной инвестиционной рекомендацией.':
     'This service is informational only and does not constitute investment advice.',

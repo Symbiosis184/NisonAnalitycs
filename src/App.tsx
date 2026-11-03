@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import Layout from './components/Layout';
+import { useI18n } from './i18n';
 import Dashboard from './pages/Dashboard';
 import { ErrorBoundary } from './components/ErrorBoundary';
 // Флаг доступа к странице «Тарифы». Страница закрыта до доработки приёма
@@ -26,6 +27,7 @@ function PageFallback() {
 }
 
 export default function App() {
+  const { t } = useI18n();
   return (
     <BrowserRouter>
       <Routes>
@@ -75,9 +77,9 @@ export default function App() {
               path="pricing"
               element={
                 <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
-                  <p className="text-gray-400 text-sm">Раздел временно недоступен — мы его дорабатываем.</p>
+                  <p className="text-gray-400 text-sm">{t('Раздел временно недоступен — мы его дорабатываем.')}</p>
                   <Link to="/" className="text-amber-400 text-sm underline hover:text-amber-300">
-                    Вернуться на обзор рынка
+                    {t('Вернуться на обзор рынка')}
                   </Link>
                 </div>
               }

@@ -1,36 +1,74 @@
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { BarChart3, TrendingUp, BookOpen, FlaskConical, Heart, CreditCard, Globe } from 'lucide-react';
+import { BarChart3, TrendingUp, BookOpen, FlaskConical, Heart, CreditCard, Globe, ChevronDown } from 'lucide-react';
 import SupportModal from './SupportModal';
 import ContextMenu from './ContextMenu';
 import { PRICING_ENABLED } from '../App';
 import { useI18n, type Lang } from '../i18n';
 
-/** Переключатель языка RU/EN (иконка Globe + подписи «Русский»/«English»). */
+const LANG_OPTIONS: Array<{ value: Lang; label: string }> = [
+  { value: 'ru', label: 'Русский' },
+  { value: 'en', label: 'English' },
+];
+
+/** Компактный переключатель языка: только иконка Globe, по клику — выпадающий список. */
 function LanguageSwitcher() {
-  const { lang, setLang } = useI18n();
-  const btn = (value: Lang, label: string) => (
-    <button
-      key={value}
-      onClick={() => setLang(value)}
-      aria-pressed={lang === value}
-      title={label}
-      className={`px-2 py-1 rounded-md text-[11px] font-medium transition-colors whitespace-nowrap ${
-        lang === value ? 'bg-amber-500/15 text-amber-400' : 'text-gray-400 hover:text-white hover:bg-white/5'
-      }`}
-    >
-      {label}
-    </button>
-  );
+  const { lang, setLang, t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Закрытие по клику вне компонента и по Escape
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
   return (
-    <div
-      className="flex items-center gap-0.5 rounded-lg border border-gray-700/60 bg-gray-800/40 px-1 py-0.5"
-      role="group"
-      aria-label="Язык интерфейса"
-    >
-      <Globe className="w-3.5 h-3.5 text-gray-500 mx-1 flex-shrink-0" aria-hidden="true" />
-      {btn('ru', 'Русский')}
-      {btn('en', 'English')}
+    <div ref={ref} className="relative flex-shrink-0">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={t('Язык интерфейса')}
+        title={t('Язык интерфейса')}
+        className={`flex items-center justify-center w-8 h-8 rounded-lg border transition-colors ${
+          open
+            ? 'border-amber-500/40 bg-amber-500/10 text-amber-400'
+            : 'border-gray-700/60 bg-gray-800/40 text-gray-400 hover:text-white hover:bg-white/5'
+        }`}
+      >
+        <Globe className="w-4 h-4" aria-hidden="true" />
+      </button>
+      {open && (
+        <ul
+          role="listbox"
+          aria-label={t('Язык интерфейса')}
+          className="absolute right-0 top-full mt-1.5 min-w-[130px] rounded-lg border border-gray-700/70 bg-gray-900 shadow-xl shadow-black/40 py-1 z-[60]"
+        >
+          {LANG_OPTIONS.map((opt) => (
+            <li key={opt.value} role="option" aria-selected={lang === opt.value}>
+              <button
+                onClick={() => { setLang(opt.value); setOpen(false); }}
+                className={`w-full flex items-center justify-between gap-2 px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
+                  lang === opt.value ? 'text-amber-400 bg-amber-500/10' : 'text-gray-300 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                {opt.label}
+                {lang === opt.value && <ChevronDown className="w-3 h-3 rotate-180 flex-shrink-0" aria-hidden="true" />}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
