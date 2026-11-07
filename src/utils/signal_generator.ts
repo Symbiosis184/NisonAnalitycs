@@ -1,8 +1,7 @@
-// Signal Generator - Главный класс генерации торговых сигналов по Нисону
+// Signal Generator — генерация торговых сигналов строго по канону Нисона.
 import { Candle } from './candle';
-import { PatternDetector, VolumeAnalyzer } from './pattern_engine';
-
-import { getTrendContext, getTrendMacro } from './trend_detection';
+import { PatternDetector, patternCanon, basePatternName, type PatternCanon } from './pattern_engine';
+import { getTrendMacro } from './trend_detection';
 import { atr } from './indicators';
 import { patternStory } from './patterns';
 import { isReversalPatternName, requiresNextCandleConfirmation } from './pattern_ids';
@@ -12,36 +11,18 @@ import { computeSignalQuality } from './signal_quality';
 import type { Zone } from './zone_voter';
 import { evaluatePricePath, type PricePathInfo } from './price_path';
 import { detectPhase, phaseMultiplier, type PhaseInfo } from './wyckoff';
-import { buildVolumeProfile, type VolumeProfile } from './volume_profile';
 
-// Константы
-const TIMEOUT_H1 = 10800; // 3 часа в секундах
-const TIMEOUT_D1 = 259200; // 3 дня в секундах
-const DOJI_MAX_FREQ = 0.15;
-const RANGE_PROXIMITY_PCT = 0.015;
+// Параметры риска (НЕ канон Нисона: книга требует оценивать соотношение риска и прибыли
+// — ЯС гл. 4, ЗГ гл. 4 — но числовых порогов не фиксирует). Значения вынесены в opts.
+const DEFAULT_MIN_RR = 2;
+const DEFAULT_MAX_RISK_PCT = 0.10;
+const DEFAULT_MAX_REWARD_PCT = 0.20;
+const SCAN_BARS = 20;
+const MAX_SIGNALS = 8;
 
-// Точное соответствие книгам Нисона («Japanese Candlestick Charting Techniques»):
-//  • гл. 3: односвечные модели (молот, повешенный, падающая звезда, доджи,
-//    поясные головы) — «сигнал к сигналу», вход ТОЛЬКО после подтверждения
-//    следующей закрытой свечой;
-//  • гл. 4–6: харами/харами-кроссы, татами, тычущие линии, контратака,
-//    твизеры — неполные формации, подтверждение ОБЯЗАТЕЛЬНО;
-//  • гл. 5–6: завершённые формации (утренняя/вечерняя звезда, поглощения,
-//    тёмное облако, три белых солдата / три чёрных ворона, покинутое дитя) —
-//    последняя свеча самой модели И ЕСТЬ подтверждение Нисона: торговое
-//    решение принимается сразу по её закрытии, ждать ещё одну свечу книга
-//    требует только для моделей из первых двух пунктов.
-// Учёт ведёт единый канонический список CONFIRMATION_REQUIRED_IDS
-// (pattern_ids.ts). Инвертированный список SELF_CONFIRMING («не требуют
-// подтверждения») удалён как противоречащий книге. Жизненный цикл
-// (signal_lifecycle.resolveSignalStatus) остаётся единым для всех моделей —
-// он фиксирует отмену сигнала при пробое границ формации.
-
-/** Рыночный контекст для «путь-осознанной» фильтрации (запрос: контекст рынка). */
+/** Рыночный контекст для «путь-осознанной» фильтрации. */
 export interface MarketContext {
-  /** Зоны S/R, собранные ZoneVoter относительно текущей цены */
   zones: { support: Zone[]; resistance: Zone[] };
-  /** Опционально: профиль объёма (HVN/LVN bands) из volume_profile.buildVolumeProfile */
   volumeBands?: Array<{ low: number; high: number; weight: number }>;
 }
 
@@ -56,11 +37,8 @@ export interface Signal {
   quality: number;
   timestamp: number;
   confirmed: boolean;
-  // Аудит №11: полноценный жизненный цикл по Нисону вместо булева «раз и навсегда».
   status?: SignalStatus;
   story: string;
-  // Контекст рынка (запрос: фазы Вайкоффа + путь цены). Заполняются, только если
-  // вызывающий передал marketContext в findSignals — обратная совместимость сохранена.
   path?: PricePathInfo;
   phase?: PhaseInfo;
   meta: {
@@ -72,22 +50,31 @@ export interface Signal {
   };
 }
 
+/**
+ * Предупреждения (ЯС гл. 7–8): модели, которые НЕ являются точкой входа —
+ * дожи, «высокая волна», «отбитое наступление», «торможение».
+ * «Многие… считают доджи прямым сигналом покупать или продавать. Это неправильно».
+ */
+export interface CautionSignal {
+  index: number;
+  pattern: string;
+  note: string;
+  severity: number;
+}
+
+type Candidate = {
+  check: { found: boolean; name: string };
+  direction: 'long' | 'short';
+  candle: Candle;
+  i: number;
+  closed: Candle[];
+};
+
 export class SignalGenerator {
-  // FIX бэктест-аудита №2: события «первого наблюдения» формации.
-  // findSignals сканирует окно последних 20 баров, поэтому одна и та же
-  // формация возвращается на каждом последующем баре окна; в one-at-a-time
-  // прогонах (Backtest.tsx, computeEdgeReport) фильтр «свежих» событий
-  // patternEndIdx === i ловил бы формацию только на её ПЕРВОМ баре окна —
-  // т.е. за день ДО подтверждения. Здесь фиксируем момент, когда пара
-  // (паттерн|направление|endIdx) появляется в выдаче впервые за прогон,
-  // и помечаем сигнал isFreshEvent. Потребители фильтруют по этому флагу:
-  // вход происходит сразу после подтверждения формации, без lookahead
-  // (весь контекст — только закрытые свечи до текущего бара).
-  // Кэш живёт между вызовами одного one-at-a-time прогона (слайсы растут от
-  // одного стартового бара → длина не убывает); при новом прогоне (длина
-  // уменьшилась) кэш сбрасывается автоматически.
+  // Кэш «свежих» событий для one-at-a-time прогонов (без lookahead).
   private firstSeen = new Map<string, number>();
   private lastRunLen = -1;
+
   private markFresh(arr: Signal[], len: number): void {
     if (len < this.lastRunLen) this.firstSeen.clear();
     this.lastRunLen = len;
@@ -100,43 +87,41 @@ export class SignalGenerator {
     }
   }
 
-  // Сброс кэша «свежих событий» — вызывается перед новым one-at-a-time прогоном
-  // (страница «Бэктест», computeEdgeReport), чтобы первый бар прогона гарантиро-
-  // ванно считался событием, даже если история пересеклась с предыдущим прогоном.
   resetRun(): void {
     this.firstSeen.clear();
     this.lastRunLen = -1;
   }
 
-  // Оценка качества тени
-  private shadowQuality(c: Candle, kind: 'hammer' | 'hanging' | 'star'): number {
-    let ratio: number;
-    if (kind === 'hammer' || kind === 'hanging') {
-      ratio = c.body > 0 ? c.lowerWick / c.body : 9;
-    } else {
-      ratio = c.body > 0 ? c.upperWick / c.body : 9;
-    }
-    return ratio >= 2.0 ? 1.0 : 0.7;
+  /** Классификация модели: локальный канон (таблица по книгам) → внешний маппер как fallback. */
+  private canon(name: string): PatternCanon & { isReversal: boolean } {
+    const c = patternCanon(name);
+    const base = basePatternName(name);
+    const isReversal = c.kind === 'reversal' ? true : c.kind === 'continuation' ? false : isReversalPatternName(base);
+    return { ...c, isReversal };
   }
 
-  // Создание сигнала с улучшенной логикой
+  private needsConfirmation(name: string): boolean {
+    const base = basePatternName(name);
+    const local = patternCanon(base);
+    return local ? local.needsConfirmation : requiresNextCandleConfirmation(base);
+  }
+
   private makeSignal(
     direction: 'long' | 'short',
     pattern: string,
     candle: Candle,
     closedCandles: Candle[],
     tf: string,
-    quality: number = 1.0,
-    boundsOverride?: { patternLow: number; patternHigh: number; patternCandlesCount?: number; patternStartIdx?: number; patternEndIdx?: number }
+    quality: number,
+    boundsOverride?: {
+      patternLow: number;
+      patternHigh: number;
+      patternCandlesCount?: number;
+      patternStartIdx?: number;
+      patternEndIdx?: number;
+    },
+    limits?: { minRR?: number; maxRiskPct?: number; maxRewardPct?: number },
   ): Signal | null {
-    // Книжные границы формации (FIX аудита №4: берём ГРАНИЦЫ ПАТТЕРНА, а не одной свечи)
-    // FIX бэктест-аудита: раньше при boundsOverride границы брались с полного
-    // массива, но patternStartIdx/patternEndIdx перезаписывались относительными
-    // индексами короткого среза closed (closedCandles.length-1), из-за чего у
-    // потребителей, сверяющих endIdx с индексом бара на ПОЛНОМ массиве
-    // (Backtest.tsx, computeEdgeReport), никогда не было совпадения → 0 событий.
-    // Теперь override целиком авторитетен (он вычислен вызывающим на полном
-    // массиве со смещением i); если индексов нет — считаем их по closed.
     const endIdx = closedCandles.length - 1;
     type Bounds = ReturnType<typeof PatternDetector.getFormationBounds>;
     let bounds: Bounds;
@@ -159,50 +144,26 @@ export class SignalGenerator {
         if (boundsOverride.patternStartIdx !== undefined) bounds.patternStartIdx = boundsOverride.patternStartIdx;
       }
     }
+
+    // ЯС гл. 4: стоп — за экстремумом ФОРМАЦИИ («книжный» стоп).
     const bookStop = direction === 'long' ? bounds.patternLow : bounds.patternHigh;
-
-    // Проверка реалистичности стопа.
-    // FIX (согласно канону Нисона, гл. 4–6): стоп = экстремум формации («книжный»
-    // стоп). Раньше он отвергался абсолютным порогом «слишком близко» (< 0.5%),
-    // чего у Нисона нет: близость стопа к цене — свойство самих свечных моделей
-    // (молот, поглощение), а не порок сигнала. Широкий стоп по-прежнему отсекается
-    // как нереалистичный (защита позиции вне методологии).
     const risk = Math.abs(candle.close - bookStop);
+    if (risk === 0) return null;
     const riskPercent = risk / candle.close;
-    
-    if (riskPercent > 0.10) {
-      return null; // Сигнал нереалистичен
-    }
+    if (riskPercent > (limits?.maxRiskPct ?? DEFAULT_MAX_RISK_PCT)) return null;
 
-    // Канон Нисона (гл. 4–6): цель — ближайший ЗНАЧИМЫЙ ценовой ориентир
-    // (сильная S/R-зона или экстремум предшествующего движения), а не индикаторный уровень.
-    // FIX: удалена подмена «Цель = 3×ATR» — у Нисона выход определяется структурой рынка.
-    // ATR остаётся только как шумовой пол (risk-менеджмент, см. nison_targets.ts).
+    // ЯС гл. 4/11: цель — ближайший ЗНАЧИМЫЙ ценовой ориентир (зона S/R или экстремум),
+    // ATR используется только как шумовой пол.
     const noiseFloor = Math.max(candle.close * 0.01, atr(closedCandles, 14));
-    const maxReward = candle.close * 0.20;
-    const structural = nearestStructuralTarget(candle.close, direction, closedCandles, {
-      noiseFloor,
-      maxReward,
-    });
-    if (!structural) return null; // Нет явного уровня — ждём (Нисон), сигнал не генерируем
+    const maxReward = candle.close * (limits?.maxRewardPct ?? DEFAULT_MAX_REWARD_PCT);
+    const structural = nearestStructuralTarget(candle.close, direction, closedCandles, { noiseFloor, maxReward });
+    if (!structural) return null; // нет явного ориентира — сигнала нет
+
     const target = structural.level;
-    const minReward = noiseFloor;
-
-    // Проверка реалистичности цели
     const reward = Math.abs(target - candle.close);
-    
-    // Цель должна быть в разумном диапазоне относительно входа и стопа
-    if (reward < minReward || reward > maxReward) {
-      return null; // Сигнал нереалистичен
-    }
-
-    // Явная проверка на нулевой риск перед расчётом R:R
-    if (risk === 0) {
-      return null; // Невозможно рассчитать R:R
-    }
+    if (reward < noiseFloor || reward > maxReward) return null;
 
     const rr = reward / risk;
-
     return {
       direction,
       pattern,
@@ -213,15 +174,20 @@ export class SignalGenerator {
       rr,
       quality,
       timestamp: Date.now(),
-      confirmed: false, // Будет установлено позже
-      story: patternStory(pattern) + ` | цель: ${structural.detail} (${structural.kind === 'zone' ? 'S/R-зона' : 'свинг'})`,
+      confirmed: false,
+      story:
+        patternStory(pattern) +
+        ` | цель: ${structural.detail} (${structural.kind === 'zone' ? 'S/R-зона' : 'свинг'})`,
       meta: bounds,
     };
   }
 
-  // Аудит №11: подтверждение = жизненный цикл signal_lifecycle.resolveSignalStatus,
-  // вычисляемый ТОЛЬКО по закрытым свечам (closedCount). Булев confirmed сохранён
-  // как «status === 'confirmed'» для обратной совместимости UI/journal.
+  /**
+   * Жизненный цикл сигнала (ЯС гл. 4–6):
+   * завершённые формации содержат подтверждение в себе; модели из гл. 3/6
+   * (односвечные, харами, татами, тычущие, контратака, пинцет, последнее поглощение)
+   * ждут подтверждения СЛЕДУЮЩЕЙ закрытой свечой.
+   */
   private applyLifecycle(
     signal: Signal,
     direction: 'long' | 'short',
@@ -235,26 +201,23 @@ export class SignalGenerator {
   ): void {
     let status = resolveSignalStatus(candles, i, direction, patternCandle.close, bounds, closedCount);
 
-    // Строго по книгам Нисона (гл. 5–6): ЗАВЕРШЁННЫЕ формации (звёзды,
-    // поглощения, тёмное облако, три солдата/ворона, покинутое дитя и т.п.)
-    // содержат подтверждение внутри себя — последняя свеча модели, закрывшаяся
-    // в направлении сигнала, И ЕСТЬ подтверждающая свеча. Для них ждать ещё
-    // одну следующую свечу книга не требует → фиксируем confirmed сразу
-    // (при условии, что жизненный цикл не вынес более строгий вердикт —
-    // invalidated/expired остаются в силе).
-    // Модели из CONFIRMATION_REQUIRED_IDS (односвечные гл. 3, харами, татами,
-    // тычущие, контратака, твизеры) ждут подтверждения следующей свечой.
-    if (status === 'pending' && !requiresNextCandleConfirmation(signal.pattern)) {
+    if (status === 'pending' && !this.needsConfirmation(signal.pattern)) {
       const formationClosed = i < closedCount; // сигнальная свеча уже закрыта
-      const inDirection = direction === 'long' ? patternCandle.isBullish : patternCandle.isBearish;
-      if (formationClosed && inDirection) status = 'confirmed';
+      // Для «последнего поглощения» направление противоположно цвету последней свечи
+      // (ЗГ гл. 3): подтверждение — закрытие за её уровнем, его проверяет resolveSignalStatus.
+      const base = basePatternName(signal.pattern);
+      const selfConfirming = base.startsWith('ПОСЛЕДНЕЕ ПОГЛОЩЕНИЕ')
+        ? true
+        : direction === 'long'
+          ? patternCandle.isBullish
+          : patternCandle.isBearish;
+      if (formationClosed && selfConfirming) status = 'confirmed';
     }
 
     signal.status = status;
     signal.confirmed = status === 'confirmed';
 
-    // Аудит №12: честная оценка силы сигнала по канону Нисона вместо константы 1.0
-    // (тренд-контекст + объём подтверждения + тело свечи + качество тени + жизненный цикл).
+    const canon = this.canon(signal.pattern);
     signal.quality = computeSignalQuality({
       direction,
       pattern: signal.pattern,
@@ -262,10 +225,9 @@ export class SignalGenerator {
       priorCandles: candles.slice(0, i),
       status,
     });
+    // Вес модели по книге (второстепенные сигналы не должны конкурировать с основными).
+    signal.quality = Math.min(1, Math.round(signal.quality * canon.weight * 100) / 100);
 
-    // Контекст рынка (запрос пользователя): фаза Вайкоффа + «путь цены» до цели.
-    // quality корректируется множителем фазы; adjustedRR учитывает препятствия
-    // на транзите — фильтр в findSignals использует его вместо формального rr.
     if (phase) {
       signal.phase = phase;
       signal.quality = Math.min(1, Math.round(signal.quality * phaseMultiplier(direction, phase) * 100) / 100);
@@ -284,40 +246,114 @@ export class SignalGenerator {
     }
   }
 
-  // Главный метод поиска всех сигналов с жизненным циклом по Нисону.
-  // opts.context — рыночный контекст (зоны S/R, фазы Вайкоффа, профиль объёма).
-  // Без него поведение идентично прежнему (обратная совместимость тестов/UI).
+  /** Сбор всех кандидатов на баре i (единый конвейер вместо трёх дублирующих веток). */
+  private collectCandidates(candles: Candle[], i: number): Candidate[] {
+    const patternCandle = candles[i];
+    const closed = candles.slice(0, i + 1);
+    const out: Candidate[] = [];
+    const push = (check: { found: boolean; name: string }, direction: 'long' | 'short'): void => {
+      if (check.found) out.push({ check, direction, candle: patternCandle, i, closed });
+    };
+
+    // --- формации из 3+ свечей ---
+    if (closed.length >= 3) {
+      push(PatternDetector.isMorningStar(closed), 'long');
+      push(PatternDetector.isEveningStar(closed), 'short');
+      push(PatternDetector.isThreeWhiteSoldiers(closed), 'long');
+      push(PatternDetector.isThreeBlackCrows(closed), 'short');
+      push(PatternDetector.isAdvanceBlock(closed), 'short'); // neutral → в caution-поток
+      push(PatternDetector.isStalled(closed), 'short'); //      neutral → в caution-поток
+      push(PatternDetector.isTwoCrows(closed), 'short');
+      push(PatternDetector.isTasuki(closed), closed[closed.length - 1].isBullish ? 'long' : 'short');
+      push(PatternDetector.isAbandonedBaby(closed), closed[closed.length - 1].isBullish ? 'long' : 'short');
+      push(PatternDetector.isDoubleThrustingBull(closed), 'long');
+    }
+    if (closed.length >= 5) {
+      push(PatternDetector.isRisingThree(closed), 'long');
+      push(PatternDetector.isFallingThree(closed), 'short');
+      push(PatternDetector.isMatHold(closed), 'long');
+      push(PatternDetector.isLadderBottom(closed), 'long');
+    }
+    if (closed.length >= 6) {
+      push(PatternDetector.isTowerTop(closed), 'short');
+      push(PatternDetector.isTowerBottom(closed), 'long');
+      push(PatternDetector.isConsolidationBreakout(closed), closed[closed.length - 1].isBullish ? 'long' : 'short');
+    }
+    if (closed.length >= 7) push(PatternDetector.isGappingPlay(closed), closed[closed.length - 1].isBullish ? 'long' : 'short');
+    if (closed.length >= 12) {
+      push(PatternDetector.isThreeMountains(closed), 'short');
+      push(PatternDetector.isThreeRivers(closed), 'long');
+    }
+    if (closed.length >= 21) {
+      push(PatternDetector.isKeyReversal(closed), closed[closed.length - 1].isBullish ? 'long' : 'short');
+      push(PatternDetector.isSpring(closed), 'long');
+      push(PatternDetector.isUpthrust(closed), 'short');
+    }
+
+    // --- формации из двух свечей ---
+    if (i > 0) {
+      const prevCandle = candles[i - 1];
+      const hist = candles.slice(0, i - 1);
+      push(PatternDetector.isBullishEngulfing(prevCandle, patternCandle, hist), 'long');
+      push(PatternDetector.isBearishEngulfing(prevCandle, patternCandle, hist), 'short');
+      push(PatternDetector.isPiercingPattern(prevCandle, patternCandle, hist), 'long');
+      push(PatternDetector.isDarkCloudCover(prevCandle, patternCandle, hist), 'short');
+      push(PatternDetector.isLastEngulfing(prevCandle, patternCandle, hist), hist.length && prevCandle.isBullish ? 'long' : 'short');
+      push(PatternDetector.isHarami(prevCandle, patternCandle, hist), prevCandle.isBearish ? 'long' : 'short');
+      push(PatternDetector.isHaramiCross(prevCandle, patternCandle, hist), prevCandle.isBearish ? 'long' : 'short');
+      push(PatternDetector.isCounterattack(prevCandle, patternCandle, hist), prevCandle.isBearish ? 'long' : 'short');
+      push(PatternDetector.isSeparatingLines(prevCandle, patternCandle, hist), patternCandle.isBullish ? 'long' : 'short');
+      push(PatternDetector.isNeckFamily(prevCandle, patternCandle, hist), 'short');
+      push(PatternDetector.isBullishBelt(patternCandle, candles.slice(0, i)), 'long');
+      push(PatternDetector.isBearishBelt(patternCandle, candles.slice(0, i)), 'short');
+      push(PatternDetector.isTweezerBottom(candles, i), 'long');
+      push(PatternDetector.isTweezerTop(candles, i), 'short');
+    }
+
+    // --- одиночные свечи ---
+    const prior = candles.slice(0, i);
+    push(PatternDetector.isHammer(patternCandle, prior), 'long');
+    push(PatternDetector.isImperfectHammer(patternCandle, prior), 'long');
+    push(PatternDetector.isInvertedHammer(patternCandle, prior), 'long');
+    push(PatternDetector.isHangingMan(patternCandle, prior), 'short');
+    push(PatternDetector.isShootingStar(patternCandle, prior), 'short');
+    push(PatternDetector.isTrendPullbackCandle(closed), patternCandle.isBullish ? 'long' : 'short');
+
+    // --- нейтральные (предупреждения, не точки входа) ---
+    const doji = PatternDetector.classifyDoji(patternCandle);
+    if (doji.found) out.push({ check: doji, direction: 'short', candle: patternCandle, i, closed });
+    const highWave = PatternDetector.isHighWave(patternCandle, prior);
+    if (highWave.found) out.push({ check: highWave, direction: 'short', candle: patternCandle, i, closed });
+    const volSpin = PatternDetector.isVolSpin(patternCandle, prior);
+    if (volSpin.found) {
+      out.push({ check: volSpin, direction: volSpin.name === 'НАКОПЛЕНИЕ' ? 'long' : 'short', candle: patternCandle, i, closed });
+    }
+    const levelTest = PatternDetector.isLevelTest(closed);
+    if (levelTest.found) out.push({ check: levelTest, direction: levelTest.name.includes('БЫЧИЙ') ? 'long' : 'short', candle: patternCandle, i, closed });
+
+    return out;
+  }
+
   findSignals(
     candles: Candle[],
     tf: string = 'D',
-    opts?: { context?: MarketContext },
+    opts?: { context?: MarketContext; minRR?: number; maxRiskPct?: number; maxRewardPct?: number },
   ): Signal[] {
     if (candles.length < 6) return [];
-
     const ctx = opts?.context ?? null;
-    // Фаза Вайкоффа вычисляется один раз на полном массиве (контекст «здесь и сейчас»)
+    const limits = {
+      minRR: opts?.minRR ?? DEFAULT_MIN_RR,
+      maxRiskPct: opts?.maxRiskPct ?? DEFAULT_MAX_RISK_PCT,
+      maxRewardPct: opts?.maxRewardPct ?? DEFAULT_MAX_REWARD_PCT,
+    };
     const phase: PhaseInfo | null = ctx ? detectPhase(candles) : null;
 
-    // Аудит №11: live-последняя свеча Bybit формируется — не учитывать её
-    // как подтверждающую. Исторический прогон (все свечи закрыты) передаёт
-    // весь массив; здесь conservative-правило: последняя свеча считается
-    // незакрытой только если она помечена формирующейся (isForming).
-    const closedCount = (() => {
-      const last = candles[candles.length - 1];
-      const forming = (last as unknown as { isForming?: boolean }).isForming === true;
-      return forming ? candles.length - 1 : candles.length;
-    })();
+    // Последняя свеча считается незакрытой только если она помечена формирующейся.
+    const last = candles[candles.length - 1];
+    const forming = (last as unknown as { isForming?: boolean }).isForming === true;
+    const closedCount = forming ? candles.length - 1 : candles.length;
 
     const signals: Signal[] = [];
-
-    // FIX бэктест-аудита: дедупликация по (паттерн|направление|endIdx).
-    // findSignals сканирует окно последних 20 баров и возвращает живые сигналы
-    // (pending/confirmed) повторно на каждом последующем баре. В one-at-a-time
-    // прогонах (страница «Бэктест», computeEdgeReport) это раздувало выборку, а
-    // фильтр «свежих» событий `patternEndIdx === i` не совпадал ни с одним
-    // сигналом из-за переиндексации границ формации коротким срезом closed в
-    // makeSignal. Итог — пустая таблица бэктеста. Дедуп + корректный endIdx
-    // решают обе проблемы.
     const seen = new Set<string>();
     const pushUnique = (s: Signal): void => {
       const key = `${s.pattern}|${s.direction}|${s.meta.patternEndIdx}`;
@@ -326,185 +362,54 @@ export class SignalGenerator {
       signals.push(s);
     };
 
-    
-    // Определяем текущий тренд для контекстной фильтрации
-    const currentTrend = getTrendMacro(candles, candles[candles.length - 1].close);
-    
-    // Проверяем последние 20 свечей на наличие паттернов
-    for (let i = candles.length - 2; i >= Math.max(0, candles.length - 20); i--) {
+    // Старт с последней ЗАКРЫТОЙ свечи: для live-счёта (формирующаяся свеча) это length-2,
+    // для полностью закрытой истории — length-1 (прежняя версия теряла самый свежий сигнал).
+    const startIdx = Math.max(1, closedCount - 1);
+    const stopIdx = Math.max(0, candles.length - SCAN_BARS);
+
+    for (let i = startIdx; i >= stopIdx; i--) {
       const patternCandle = candles[i];
       const closed = candles.slice(0, i + 1);
-      
-      // Определяем тренд в момент паттерна
       const patternTrend = getTrendMacro(closed, patternCandle.close);
-      
-      // Проверяем все типы паттернов с проверкой минимального количества свечей
-      const patterns = [
-        // Высокоприоритетные (3+ свечи)
-        { check: closed.length >= 3 ? PatternDetector.isMorningStar(closed) : { found: false, name: '' }, direction: 'long' as const },
-        { check: closed.length >= 3 ? PatternDetector.isEveningStar(closed) : { found: false, name: '' }, direction: 'short' as const },
-        { check: closed.length >= 3 ? PatternDetector.isAbandonedBaby(closed) : { found: false, name: '' }, direction: closed[closed.length - 1].isBullish ? 'long' as const : 'short' as const },
-        { check: closed.length >= 6 ? PatternDetector.isTowerTop(closed) : { found: false, name: '' }, direction: 'short' as const },
-        { check: closed.length >= 6 ? PatternDetector.isTowerBottom(closed) : { found: false, name: '' }, direction: 'long' as const },
-        { check: closed.length >= 12 ? PatternDetector.isThreeMountains(closed) : { found: false, name: '' }, direction: 'short' as const },
-        { check: closed.length >= 12 ? PatternDetector.isThreeRivers(closed) : { found: false, name: '' }, direction: 'long' as const },
-        { check: closed.length >= 5 ? PatternDetector.isRisingThree(closed) : { found: false, name: '' }, direction: 'long' as const },
-        { check: closed.length >= 5 ? PatternDetector.isFallingThree(closed) : { found: false, name: '' }, direction: 'short' as const },
-        { check: closed.length >= 5 ? PatternDetector.isMatHold(closed) : { found: false, name: '' }, direction: 'long' as const },
-        { check: closed.length >= 4 ? PatternDetector.isDoubleThrustingBull(closed) : { found: false, name: '' }, direction: 'long' as const },
-        { check: closed.length >= 3 ? PatternDetector.isThreeWhiteSoldiers(closed) : { found: false, name: '' }, direction: 'long' as const },
-        { check: closed.length >= 3 ? PatternDetector.isThreeBlackCrows(closed) : { found: false, name: '' }, direction: 'short' as const },
-        { check: closed.length >= 5 ? PatternDetector.isLadderBottom(closed) : { found: false, name: '' }, direction: 'long' as const },
-        { check: closed.length >= 3 ? PatternDetector.isTwoCrows(closed) : { found: false, name: '' }, direction: 'short' as const },
-        { check: closed.length >= 3 ? PatternDetector.isTasuki(closed) : { found: false, name: '' }, direction: closed[closed.length - 1].isBullish ? 'long' as const : 'short' as const },
-      ];
 
-      for (const { check, direction } of patterns) {
-        if (check.found) {
-          // Контекстная фильтрация СТРОГО по книгам Нисона:
-          //  • разворотные модели легитимны только ПОСЛЕ выраженного предшествующего
-          //    тренда ПРОТИВ направления сигнала («after a downtrend/uptrend» — часть
-          //    определений гл. 5–6; в боковике разворачивать нечего);
-          //  • модели продолжения имеют силу только ПОПУТНО тренду (гл. 9–10).
-          // П.7: сверка по стабильным ID моделей; единый канонический классификатор.
-          const isReversalPattern = isReversalPatternName(check.name);
-          
-          if (patternTrend === 'БОКОВИК') continue; // нет ни того, что продолжать, ни того, что разворачивать
-          if (isReversalPattern) {
-            // Разворот требует предшествующего тренда против сигнала
-            if (direction === 'long' && patternTrend !== 'НИСХОДЯЩИЙ') continue;
-            if (direction === 'short' && patternTrend !== 'ВОСХОДЯЩИЙ') continue;
-          } else {
-            // Для продолжительных паттернов проверяем соответствие тренду
-            if (direction === 'long' && patternTrend === 'НИСХОДЯЩИЙ') continue;
-            if (direction === 'short' && patternTrend === 'ВОСХОДЯЩИЙ') continue;
-          }
+      for (const cand of this.collectCandidates(candles, i)) {
+        const canon = this.canon(cand.check.name);
+        // ЯС гл. 8: дожи, «высокая волна», «отбитое наступление», «торможение» —
+        // предупреждения, а не сигналы к сделке.
+        if (canon.kind === 'neutral') continue;
 
-          // FIX аудита №4/№5: границы формации считаем ОДИН раз — на полном массиве
-          // candles со смещением endIdx=i (для многокомпонентных паттернов это срез
-          // closed, поэтому endIdx = i корректно только при вызове на candles).
-          const bounds = PatternDetector.getFormationBounds(check.name, candles, i);
-          
-          const signal = this.makeSignal(direction, check.name, patternCandle, closed, tf, 1.0, bounds);
-          
-          // Пропускаем если сигнал нереалистичен
-          if (!signal) continue;
-          
-          // Аудит №11: жизненный цикл по ЗАКРЫТЫМ свечам (pending/confirmed/invalidated/expired)
-          this.applyLifecycle(signal, direction, patternCandle, bounds, candles, i, closedCount, ctx, phase);
-          
-          // FIX аудита №7: раньше неподтверждённые сигналы молча выбрасывались —
-          // пользователь не видел «почти-сигналов». Теперь они возвращаются с confirmed=false.
-          // Запрос «контекст рынка»: порог RR считается по СКОРРЕКТИРОВАННОМУ пути
-          // adjustedRR (если передан контекст) — формальный RR больше не самоцель.
-          if ((signal.path?.adjustedRR ?? signal.rr) >= 2) {
-            pushUnique(signal);
-          }
+        // Контекстная фильтрация строго по книге: разворот легитимен только ПОСЛЕ тренда
+        // против сигнала (гл. 4–6), продолжение — только попутно тренду (гл. 7).
+        if (patternTrend === 'БОКОВИК') continue;
+        if (canon.isReversal) {
+          if (cand.direction === 'long' && patternTrend !== 'НИСХОДЯЩИЙ') continue;
+          if (cand.direction === 'short' && patternTrend !== 'ВОСХОДЯЩИЙ') continue;
+        } else {
+          if (cand.direction === 'long' && patternTrend === 'НИСХОДЯЩИЙ') continue;
+          if (cand.direction === 'short' && patternTrend === 'ВОСХОДЯЩИЙ') continue;
         }
-      }
 
-      // Двухсвечные паттерны
-      if (i > 0) {
-        const prevCandle = candles[i - 1];
-        const twoCandlePatterns = [
-          { check: PatternDetector.isBullishEngulfing(prevCandle, patternCandle, candles.slice(0, i - 1)), direction: 'long' as const },
-          { check: PatternDetector.isBearishEngulfing(prevCandle, patternCandle, candles.slice(0, i - 1)), direction: 'short' as const },
-          { check: PatternDetector.isPiercingPattern(prevCandle, patternCandle, candles.slice(0, i - 1)), direction: 'long' as const },
-          { check: PatternDetector.isDarkCloudCover(prevCandle, patternCandle, candles.slice(0, i - 1)), direction: 'short' as const },
-          { check: PatternDetector.isTweezerBottom(prevCandle, patternCandle, candles.slice(0, i - 1)), direction: 'long' as const },
-          { check: PatternDetector.isTweezerTop(prevCandle, patternCandle, candles.slice(0, i - 1)), direction: 'short' as const },
-        ];
+        const bounds = PatternDetector.getFormationBounds(cand.check.name, candles, i);
+        const signal = this.makeSignal(
+          cand.direction,
+          cand.check.name,
+          cand.candle,
+          cand.closed,
+          tf,
+          1.0,
+          bounds,
+          limits,
+        );
+        if (!signal) continue;
 
-        for (const { check, direction } of twoCandlePatterns) {
-          if (check.found) {
-            // Контекстная фильтрация для двухсвечных паттернов
-            // Поглощение, завеса и просвет - РАЗВОРОТНЫЕ паттерны
-            // Они должны идти ПРОТИВ текущего тренда
-            // П.7: сверка по стабильным ID моделей
-            // FIX противоречий: единый канонический классификатор разворотов
-            const isReversalPattern = isReversalPatternName(check.name);
-            
-            if (patternTrend === 'БОКОВИК') continue;
-            if (isReversalPattern) {
-              // Строго по Нисону (гл. 4): разворот легитимен только ПОСЛЕ выраженного
-              // предшествующего тренда ПРОТИВ сигнала — в боковике разворачивать нечего
-              if (direction === 'long' && patternTrend !== 'НИСХОДЯЩИЙ') continue;
-              if (direction === 'short' && patternTrend !== 'ВОСХОДЯЩИЙ') continue;
-            } else {
-              // Продолжительные паттерны должны соответствовать тренду
-              if (direction === 'long' && patternTrend === 'НИСХОДЯЩИЙ') continue;
-              if (direction === 'short' && patternTrend === 'ВОСХОДЯЩИЙ') continue;
-            }
+        this.applyLifecycle(signal, cand.direction, patternCandle, bounds, candles, i, closedCount, ctx, phase);
 
-            // FIX аудита №4/№5: единые границы формации для стопа, мета и подтверждения
-            const bounds = PatternDetector.getFormationBounds(check.name, candles, i);
-            
-            const signal = this.makeSignal(direction, check.name, patternCandle, closed, tf, 1.0, bounds);
-            
-            // Пропускаем если сигнал нереалистичен
-            if (!signal) continue;
-            
-            // Аудит №11: жизненный цикл по закрытым свечам
-            this.applyLifecycle(signal, direction, patternCandle, bounds, candles, i, closedCount, ctx, phase);
-            
-            // FIX аудита №7: неподтверждённые сигналы возвращаются с confirmed=false
-            // Порог — по path-aware adjustedRR при наличии рыночного контекста.
-            if ((signal.path?.adjustedRR ?? signal.rr) >= 2) {
-              pushUnique(signal);
-            }
-          }
-        }
-      }
-
-      // Односвечные паттерны
-      const oneCandlePatterns = [
-        { check: PatternDetector.isHammer(patternCandle, candles.slice(0, i)), direction: 'long' as const },
-        { check: PatternDetector.isShootingStar(patternCandle, candles.slice(0, i)), direction: 'short' as const },
-        { check: PatternDetector.isHangingMan(patternCandle, candles.slice(0, i)), direction: 'short' as const },
-        { check: PatternDetector.isInvertedHammer(patternCandle, candles.slice(0, i)), direction: 'long' as const },
-      ];
-
-      for (const { check, direction } of oneCandlePatterns) {
-        if (check.found) {
-          // Контекстная фильтрация односвечных паттернов.
-          // FIX противоречий: раньше молот считался разворотом, а повешенный/
-          // падающая звезда — продолжением; в signal_quality они же числились
-          // разворотами → двойная трактовка контекста и взаимоисключающие
-          // сценарии long+short в одном отчёте. По Нисону (гл. 3) ВСЕ теневые
-          // модели — попытки разворота: валидны только после предшествующего
-          // тренда ПРОТИВ направления сигнала (молот — после снижения,
-          // повешенный/падающая звезда — после роста). В боковике модель не
-          // имеет разворотной силы (нет того, что разворачивать).
-          if (patternTrend === 'БОКОВИК') continue;
-          if (direction === 'long' && patternTrend !== 'НИСХОДЯЩИЙ') continue;
-          if (direction === 'short' && patternTrend !== 'ВОСХОДЯЩИЙ') continue;
-
-          // FIX аудита №4/№5: единые границы формации (для односвечных = high/low самой свечи)
-          const bounds = PatternDetector.getFormationBounds(check.name, candles, i, check.candlesCount);
-          
-          const signal = this.makeSignal(direction, check.name, patternCandle, closed, tf, 1.0, bounds);
-          
-          // Пропускаем если сигнал нереалистичен
-          if (!signal) continue;
-          
-          // Аудит №11: жизненный цикл по ЗАКРЫТЫМ свечам (pending/confirmed/invalidated/expired)
-          this.applyLifecycle(signal, direction, patternCandle, bounds, candles, i, closedCount, ctx, phase);
-          
-          // FIX аудита №7: неподтверждённые сигналы возвращаются с confirmed=false
-          // Порог — по path-aware adjustedRR при наличии рыночного контекста.
-          if ((signal.path?.adjustedRR ?? signal.rr) >= 2) {
-            pushUnique(signal);
-          }
-        }
+        // Неподтверждённые сигналы возвращаются с confirmed = false (жизненный цикл решает).
+        if ((signal.path?.adjustedRR ?? signal.rr) >= limits.minRR) pushUnique(signal);
       }
     }
 
-    // FIX аудита №8: детерминированная сортировка.
-    // Строго по Нисону (гл. 4–6): взаимоисключающие сигналы на одном и том же
-    // завершении формации (long+short, например бычье и медвежье поглощение)
-    // не сосуществуют — остаётся только реально подтверждённый закрытой свечой;
-    // если подтверждены оба или ни одного — предпочтительнее неподтверждённый
-    // «первый» сигнал модели (бычий/медвежий задаётся направлением тренда).
+    // Взаимоисключающие сигналы на одном завершении формации (ЯС гл. 4–6).
     const byEnd = new Map<number, Signal[]>();
     for (const sig of signals) {
       const arr = byEnd.get(sig.meta.patternEndIdx) ?? [];
@@ -514,41 +419,80 @@ export class SignalGenerator {
     const dropKeys = new Set<string>();
     for (const [, group] of byEnd) {
       if (group.length < 2) continue;
-      const dirs = new Set(group.map(g => g.direction));
+      const dirs = new Set(group.map((g) => g.direction));
       if (dirs.size < 2) continue;
-      const confirmeds = group.filter(g => g.status === 'confirmed');
+      const confirmeds = group.filter((g) => g.status === 'confirmed');
       let keep: Signal | undefined;
-      if (confirmeds.length === 1) {
-        keep = confirmeds[0];
-      } else if (confirmeds.length >= 2) {
-        keep = confirmeds.find(g => g.direction === 'long') ?? confirmeds[0];
-      } else {
-        keep = group.find(g => g.direction === 'long') ?? group[0];
-      }
+      if (confirmeds.length === 1) keep = confirmeds[0];
+      else if (confirmeds.length >= 2) keep = confirmeds.find((g) => g.direction === 'long') ?? confirmeds[0];
+      else keep = group.find((g) => g.direction === 'long') ?? group[0];
       for (const g of group) {
         if (g !== keep) dropKeys.add(`${g.pattern}|${g.direction}|${g.meta.patternEndIdx}`);
       }
     }
-    const deduped = dropKeys.size ? signals.filter(sg => !dropKeys.has(`${sg.pattern}|${sg.direction}|${sg.meta.patternEndIdx}`)) : signals;
+    const deduped = dropKeys.size
+      ? signals.filter((sg) => !dropKeys.has(`${sg.pattern}|${sg.direction}|${sg.meta.patternEndIdx}`))
+      : signals;
 
-    // Аудит №11: приоритет жизненного цикла — подтверждённые > ожидает > истёк > отменён.
     const RANK: Record<string, number> = { confirmed: 3, pending: 2, expired: 1, invalidated: 0 };
-    // FIX бэктест-аудита №2: сортировка ДО среза лимита — иначе «свежие» события
-    // (первое появление формации) могли вылетать из top-5 по quality и бэктест
-    // терял их навсегда. Первыми идут свежие события этого прогона.
-    deduped.sort((a, b) =>
-      (Number(Boolean((b as Signal & { isFreshEvent?: boolean }).isFreshEvent)) -
-        Number(Boolean((a as Signal & { isFreshEvent?: boolean }).isFreshEvent))) ||
-      (RANK[b.status ?? 'pending'] - RANK[a.status ?? 'pending']) ||
-      Number(b.confirmed) - Number(a.confirmed) ||
-      b.quality - a.quality ||
-      b.rr - a.rr
+    deduped.sort(
+      (a, b) =>
+        Number(Boolean((b as Signal & { isFreshEvent?: boolean }).isFreshEvent)) -
+          Number(Boolean((a as Signal & { isFreshEvent?: boolean }).isFreshEvent)) ||
+        RANK[b.status ?? 'pending'] - RANK[a.status ?? 'pending'] ||
+        Number(b.confirmed) - Number(a.confirmed) ||
+        b.quality - a.quality ||
+        b.rr - a.rr,
     );
     this.markFresh(deduped, candles.length);
-    return deduped.slice(0, 8);
+    return deduped.slice(0, MAX_SIGNALS);
   }
 
-  // Для обратной совместимости
+  /**
+   * Предупреждения, не являющиеся точками входа (ЯС гл. 7–8):
+   * дожи на вершине/в основании, «высокая волна», «отбитое наступление», «торможение»,
+   * тест уровня. Используются дашбордом для фиксации риска по открытым позициям
+   * (закрыть часть, поднять стоп, продать покрытый колл — гл. 7/19).
+   */
+  findCautionSignals(candles: Candle[], _tf: string = 'D'): CautionSignal[] {
+    if (candles.length < 6) return [];
+    const last = candles[candles.length - 1];
+    const forming = (last as unknown as { isForming?: boolean }).isForming === true;
+    const closedCount = forming ? candles.length - 1 : candles.length;
+    const startIdx = Math.max(1, closedCount - 1);
+    const out: CautionSignal[] = [];
+    const seen = new Set<string>();
+
+    for (let i = startIdx; i >= Math.max(0, candles.length - SCAN_BARS); i--) {
+      const closed = candles.slice(0, i + 1);
+      const trend = getTrendMacro(closed, candles[i].close);
+      for (const cand of this.collectCandidates(candles, i)) {
+        const canon = this.canon(cand.check.name);
+        if (canon.kind !== 'neutral') continue;
+        const key = `${cand.check.name}|${i}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const base = basePatternName(cand.check.name);
+        let note = 'Неопределённость: сигнал требует подтверждения следующей закрытой свечой';
+        if (base === 'НАДГРОБИЕ' || base === 'ДЛИННОНОГАЯ ДОДЖИ' || base === 'ДОДЖИ') {
+          note =
+            trend === 'ВОСХОДЯЩИЙ'
+              ? 'Доджи после роста: прежняя тенденция, вероятно, завершается (гл. 8). Вход — только после подтверждения.'
+              : 'Доджи в основании требует более сильного подтверждения, чем на вершине (гл. 8).';
+        } else if (base === 'ВЫСОКАЯ ВОЛНА') {
+          note = 'Рынок «потерял ощущение направления» (гл. 2, 8): тренд под угрозой.';
+        } else if (base === 'ОТБИТОЕ НАСТУПЛЕНИЕ' || base === 'ТОРМОЖЕНИЕ') {
+          note = 'Ослабление подъёма (гл. 7): фиксировать прибыль/защищать длинные позиции, короткие НЕ открывать.';
+        } else if (base.startsWith('ТЕСТ')) {
+          note = 'Проверка уровня поддержки/сопротивления (гл. 11, 13) — контекст, а не точка входа.';
+        }
+        out.push({ index: i, pattern: cand.check.name, note, severity: canon.weight });
+      }
+    }
+    return out.sort((a, b) => b.index - a.index || b.severity - a.severity).slice(0, MAX_SIGNALS);
+  }
+
+  /** Обратная совместимость. */
   findSignal(candles: Candle[], tf: string = 'D'): Signal | null {
     const signals = this.findSignals(candles, tf);
     return signals.length > 0 ? signals[0] : null;
