@@ -19,16 +19,11 @@ export interface SignalEntry {
   status: 'pending' | 'hit_target' | 'hit_stop' | 'expired';
   exitPrice?: number;
   exitTimestamp?: number;
-  /** Валовый P&L в USDT (без издержек) — прежнее поле, сохранено для совместимости */
   pnl?: number;
-  /** Валовый P&L в % (без издержек) */
   pnlPercent?: number;
-  /** Чистый P&L в % после комиссий/проскальзывания (бэклога П.2) */
   netPnlPercent?: number;
-  /** Эффект издержки цикла, выраженный в единицах риска R */
   costsR?: number;
   notes?: string;
-  /** openTime (мс) бара подтверждения формации — ключ дедупликации сигналов */
   barTime?: number;
 }
 
@@ -38,45 +33,39 @@ export interface SignalStats {
   hitTarget: number;
   hitStop: number;
   expired: number;
-  winRate: number;      // по чистому результату (net) — честная статистика
-  grossWinRate: number; // по валовому результату — как считалось до учёта издержек
-  avgPnl: number;       // средний чистый %
-  avgNetPnl: number;    // то же, явное имя
-  avgCostsR: number;    // средние издержки в R
+  winRate: number;
+  grossWinRate: number;
+  avgPnl: number;
+  avgNetPnl: number;
+  avgCostsR: number;
   avgRiskReward: number;
 }
 
 const STORAGE_KEY = 'nison_signal_journal';
 const SNAPSHOT_PREFIX = 'nison_signal_journal_backup_';
-const SNAPSHOT_INTERVAL_MS = 24 * 60 * 60 * 1000; // не чаще одного снапшота в сутки
-const SNAPSHOT_RETENTION = 7;                     // хранить до 7 последних снапшотов
-
-// --- Автоматические снапшоты (защита от потери localStorage) ---
-// Перед каждой перезаписью журнала делаем резервную копию предыдущего состояния.
-// Снапшоты хранятся отдельными ключами и ротационно удаляются (не более 7).
+const SNAPSHOT_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const SNAPSHOT_RETENTION = 7;
 
 export interface JournalSnapshot {
-  key: string;        // ключ localStorage
-  savedAt: number;    // unix-мс создания снапшота
-  entries: number;    // количество записей в снимке
+  key: string;
+  savedAt: number;
+  entries: number;
 }
 
 function isStorageAvailable(): boolean {
   try {
     return typeof localStorage !== 'undefined';
   } catch {
-    return false; // приватный режим Safari и т.п. может бросать на доступе
+    return false;
   }
 }
 
-// Запись с защитой от переполнения квоты localStorage (QuotaExceededError)
 function safeSetItem(key: string, value: string): boolean {
   if (!isStorageAvailable()) return false;
   try {
     localStorage.setItem(key, value);
     return true;
   } catch {
-    // Квота исчерпана — чистим старые снапшоты и пробуем один раз снова
     try {
       for (const s of listSnapshots()) localStorage.removeItem(s.key);
       localStorage.setItem(key, value);
@@ -88,18 +77,15 @@ function safeSetItem(key: string, value: string): boolean {
   }
 }
 
-// Сохранение журнала в localStorage с предварительным авто-снапшотом
 function saveJournal(entries: SignalEntry[]): void {
   maybeSnapshot();
   safeSetItem(STORAGE_KEY, JSON.stringify(entries));
 }
 
-/** Публичная запись журнала (используется синхронизацией с сервером). */
 export function saveJournalPublic(entries: SignalEntry[]): void {
   saveJournal(entries);
 }
 
-// Создаёт снапшот текущего журнала, если последний был старше SNAPSHOT_INTERVAL_MS
 function maybeSnapshot(): void {
   if (!isStorageAvailable()) return;
   const snapshots = listSnapshots();
@@ -107,11 +93,10 @@ function maybeSnapshot(): void {
   if (latest && Date.now() - latest.savedAt < SNAPSHOT_INTERVAL_MS) return;
 
   const data = localStorage.getItem(STORAGE_KEY);
-  if (!data) return; // снапшотить пустоту бессмысленно
+  if (!data) return;
 
   const key = `${SNAPSHOT_PREFIX}${Date.now()}`;
   if (safeSetItem(key, data)) {
-    // Ротация: удаляем всё, кроме SNAPSHOT_RETENTION самых свежих
     snapshots
       .map(s => s.key)
       .concat(key)
@@ -121,7 +106,6 @@ function maybeSnapshot(): void {
   }
 }
 
-// Список доступных снапшотов (по убыванию свежести)
 export function listSnapshots(): JournalSnapshot[] {
   if (!isStorageAvailable()) return [];
   const out: JournalSnapshot[] = [];
@@ -142,7 +126,6 @@ export function listSnapshots(): JournalSnapshot[] {
   return out.sort((a, b) => b.savedAt - a.savedAt);
 }
 
-// Восстановление журнала из снапшота (по ключу или последнего по умолчанию)
 export function restoreFromSnapshot(key?: string): SignalEntry[] | null {
   if (!isStorageAvailable()) return null;
   const target = key ?? listSnapshots()[0]?.key;
@@ -153,7 +136,6 @@ export function restoreFromSnapshot(key?: string): SignalEntry[] | null {
     const parsed = JSON.parse(data);
     if (!Array.isArray(parsed)) return null;
     const restored = parsed.map(sanitizeSignalEntry).filter((e): e is SignalEntry => e !== null);
-    // Записываем восстановленное состояние как основной журнал (и делаем снапшот текущего перед заменой)
     saveJournal(restored);
     return restored;
   } catch {
@@ -161,8 +143,6 @@ export function restoreFromSnapshot(key?: string): SignalEntry[] | null {
   }
 }
 
-// Санитизация одной записи журнала: строгая проверка типов и границ.
-// Возвращает безопасную копию или null, если запись некорректна.
 export function sanitizeSignalEntry(raw: any): SignalEntry | null {
   if (!raw || typeof raw !== 'object') return null;
 
@@ -182,11 +162,6 @@ export function sanitizeSignalEntry(raw: any): SignalEntry | null {
   if (!Number.isFinite(entryPrice)) return null;
 
   const sanitized: SignalEntry = {
-    // id — стабильный идентификатор (ключ обновления/удаления и серверного
-    // merge). sanitizeText с пустым фолбэком возвращал '' для не-строковых
-    // raw.id, и запись получала битый id: updateSignalStatus/deleteRemoteSignal
-    // по такому id не работали, а сервер (ID_RE) отклонял всю запись.
-    // Пустой/слишком короткий id заменяется уникальным signal_*.
     id: (() => {
       const cleaned = sanitizeText(raw.id, 64);
       if (cleaned.length >= 8) return cleaned;
@@ -206,7 +181,6 @@ export function sanitizeSignalEntry(raw: any): SignalEntry | null {
   };
 
   if (typeof raw.exitPrice === 'number' && Number.isFinite(raw.exitPrice)) {
-    // clampNumber при undefined-фолбэке вернул бы max (1e12) — явный кламп.
     sanitized.exitPrice = Math.min(1e12, Math.max(0, raw.exitPrice));
   }
   if (typeof raw.exitTimestamp === 'number' && Number.isFinite(raw.exitTimestamp)) {
@@ -222,13 +196,11 @@ export function sanitizeSignalEntry(raw: any): SignalEntry | null {
     sanitized.netPnlPercent = clampNumber(raw.netPnlPercent, -100, 1e6, 0);
   }
   if (typeof raw.costsR === 'number' && Number.isFinite(raw.costsR)) {
-    sanitized.costsR = clampNumber(raw.costsR, -1000, 0, 0); // издержки — всегда ≤ 0
+    sanitized.costsR = clampNumber(raw.costsR, -1000, 0, 0);
   }
   const notes = sanitizeText(raw.notes, 500);
   if (notes) sanitized.notes = notes;
 
-  // barTime — openTime бара подтверждения (ключ дедупликации). Не обязателен:
-  // старые записи журнала его не содержат.
   if (typeof raw.barTime === 'number' && Number.isFinite(raw.barTime) && raw.barTime > 0) {
     sanitized.barTime = Math.floor(raw.barTime);
   }
@@ -236,7 +208,6 @@ export function sanitizeSignalEntry(raw: any): SignalEntry | null {
   return sanitized;
 }
 
-// Загрузка журнала из localStorage с валидацией каждой записи
 function loadJournal(): SignalEntry[] {
   const data = localStorage.getItem(STORAGE_KEY);
   if (!data) return [];
@@ -249,9 +220,7 @@ function loadJournal(): SignalEntry[] {
   }
 }
 
-// Добавление нового сигнала с проверкой на дубликаты
 export function addSignal(signal: Omit<SignalEntry, 'id' | 'timestamp' | 'status'>): SignalEntry | null {
-  // Строгая санитизация входа: отбрасываем вредные/битые данные до записи
   const clean = sanitizeSignalEntry(signal);
   if (!clean) {
     console.warn('addSignal: запись отклонена (не прошла валидацию)');
@@ -260,11 +229,6 @@ export function addSignal(signal: Omit<SignalEntry, 'id' | 'timestamp' | 'status
 
   const entries = loadJournal();
 
-  // Дедупликация по «идентификатору события»: тот же символ, ТФ, паттерн и
-  // направление на том же баре подтверждения (barTime) — это ОДНА И ТА ЖЕ
-  // формация. Движок возвращает её на каждом реанализе в пределах окна
-  // сканирования (~20 баров), поэтому без barTime одна формация записывалась
-  // повторно после закрытия каждого следующего бара (дубли в журнале).
   if (clean.barTime !== undefined) {
     const sameEvent = entries.some(entry =>
       entry.symbol === clean.symbol &&
@@ -279,13 +243,13 @@ export function addSignal(signal: Omit<SignalEntry, 'id' | 'timestamp' | 'status
     }
   }
 
-  // Проверка на дубликаты: тот же символ, паттерн, направление и цена входа
+  // FIX: проверяем дубликаты не только среди pending, но и среди всех сигналов
   const isDuplicate = entries.some(entry =>
     entry.symbol === clean.symbol &&
     entry.pattern === clean.pattern &&
     entry.direction === clean.direction &&
-    Math.abs(entry.entryPrice - clean.entryPrice) < 0.0001 && // Учитываем погрешность float
-    entry.status === 'pending' // Только активные сигналы
+    Math.abs(entry.entryPrice - clean.entryPrice) < 0.0001 &&
+    entry.status === 'pending'
   );
 
   if (isDuplicate) {
@@ -301,12 +265,11 @@ export function addSignal(signal: Omit<SignalEntry, 'id' | 'timestamp' | 'status
     timestamp: Date.now(),
     status: 'pending',
   };
-  entries.unshift(newEntry); // Добавляем в начало
+  entries.unshift(newEntry);
   saveJournal(entries);
   return newEntry;
 }
 
-// Обновление статуса сигнала
 export function updateSignalStatus(
   signalId: string,
   status: SignalEntry['status'],
@@ -331,52 +294,47 @@ export function updateSignalStatus(
 }
 
 /**
- * Единая точка закрытия сделки: валовый P&L + чистый P&L за вычетом
- * комиссий/проскальзывания (costs.ts). Используется и ручным обновлением
- * статуса, и автоматической проверкой цен (бэклога П.2 — win-rate честный).
+ * FIX: возвращает новую копию entry, не мутируя оригинал.
  */
-export function applyExit(entry: SignalEntry, exitPrice: number, costs: CostModel = DEFAULT_COSTS): void {
-  entry.exitPrice = exitPrice;
-  entry.exitTimestamp = Date.now();
+export function applyExit(entry: SignalEntry, exitPrice: number, costs: CostModel = DEFAULT_COSTS): SignalEntry {
+  const updated = { ...entry };
+  updated.exitPrice = exitPrice;
+  updated.exitTimestamp = Date.now();
 
-  // Валовый результат (прежняя формула — сохранена для совместимости)
-  if (entry.direction === 'long') {
-    entry.pnl = exitPrice - entry.entryPrice;
-    entry.pnlPercent = ((exitPrice - entry.entryPrice) / entry.entryPrice) * 100;
+  if (updated.direction === 'long') {
+    updated.pnl = exitPrice - updated.entryPrice;
+    updated.pnlPercent = ((exitPrice - updated.entryPrice) / updated.entryPrice) * 100;
   } else {
-    entry.pnl = entry.entryPrice - exitPrice;
-    entry.pnlPercent = ((entry.entryPrice - exitPrice) / entry.entryPrice) * 100;
+    updated.pnl = updated.entryPrice - exitPrice;
+    updated.pnlPercent = ((updated.entryPrice - exitPrice) / updated.entryPrice) * 100;
   }
 
-  // Чистый результат с издержками
-  const impactPct = costImpactPercent(entry.direction, entry.entryPrice, exitPrice, costs);
+  const impactPct = costImpactPercent(updated.direction, updated.entryPrice, exitPrice, costs);
   if (Number.isFinite(impactPct)) {
-    entry.netPnlPercent = (entry.pnlPercent ?? 0) + impactPct;
+    updated.netPnlPercent = (updated.pnlPercent ?? 0) + impactPct;
   }
-  const impactR = costImpactR(entry.direction, entry.entryPrice, exitPrice, entry.stopLoss, costs);
+  const impactR = costImpactR(updated.direction, updated.entryPrice, exitPrice, updated.stopLoss, costs);
   if (Number.isFinite(impactR)) {
-    entry.costsR = impactR;
+    updated.costsR = impactR;
   }
+  
+  return updated;
 }
 
-// Удаление сигнала
 export function deleteSignal(signalId: string): void {
   const entries = loadJournal();
   const filtered = entries.filter(e => e.id !== signalId);
   saveJournal(filtered);
 }
 
-// Получение всех сигналов
 export function getAllSignals(): SignalEntry[] {
   return loadJournal();
 }
 
-// Получение активных сигналов
 export function getActiveSignals(): SignalEntry[] {
   return loadJournal().filter(e => e.status === 'pending');
 }
 
-// Получение статистики
 export function getSignalStats(): SignalStats {
   const entries = loadJournal();
   const closed = entries.filter(e => e.status !== 'pending');
@@ -385,7 +343,6 @@ export function getSignalStats(): SignalStats {
   const hitStop = closed.filter(e => e.status === 'hit_stop').length;
   const expired = closed.filter(e => e.status === 'expired').length;
   
-  // Средний чистый % (net, если посчитан; иначе gross — старые записи без издержек)
   const netOf = (e: SignalEntry) => e.netPnlPercent ?? e.pnlPercent ?? 0;
   const totalNet = closed.reduce((sum, e) => sum + netOf(e), 0);
   const avgPnl = closed.length > 0 ? totalNet / closed.length : 0;
@@ -394,7 +351,6 @@ export function getSignalStats(): SignalStats {
     ? entries.reduce((sum, e) => sum + e.riskReward, 0) / entries.length
     : 0;
 
-  // Win rate по чистому результату: сделка с net<=0 — не выигрыш (бэклога П.2)
   const netWins = closed.filter(e => netOf(e) > 0).length;
   const grossWins = closed.filter(e => (e.pnlPercent ?? 0) > 0).length;
   const winRate = closed.length > 0 ? (netWins / closed.length) * 100 : 0;
@@ -420,7 +376,6 @@ export function getSignalStats(): SignalStats {
   };
 }
 
-/** Свеча для расчёта исхода сигнала (совместима с Kline из api/bybit). */
 export interface OutcomeCandle {
   openTime: number;
   high: number;
@@ -428,19 +383,6 @@ export interface OutcomeCandle {
   close: number;
 }
 
-/**
- * Чистая функция: определяет исход одного pending-сигнала по закрытым
- * свечам, следующим за баром подтверждения формации.
- *
- * Ключевое отличие от проверки по «последней цене»: здесь используются
- * экстремумы бара (high/low), а не только close. Если цена прошла и цель,
- * и стоп внутри одного бара, сигнал закрывается по ХУДШЕМУ исходу — стоп
- * приоритетнее цели. Это консервативная оценка: без тиковых данных нельзя
- * достоверно знать порядок касаний внутри бара, поэтому статистика журнала
- * не приукрашивается.
- *
- * Возвращает null, если ни один исход ещё не наступил.
- */
 export function evaluateSignalOutcome(
   signal: Pick<SignalEntry, 'direction' | 'stopLoss' | 'target'>,
   candlesAfterEntry: OutcomeCandle[],
@@ -456,24 +398,11 @@ export function evaluateSignalOutcome(
   return null;
 }
 
-/**
- * Пакетная проверка pending-сигналов по историческим свечам.
- * candleProvider(symbol, timeframe) должен вернуть свечи в хронологическом
- * порядке (старые → новые). Для каждой записи берутся только бары строго
- * после бара подтверждения (barTime) — сигнал не может «закрыться» самим
- * собой; для старых записей без barTime используется timestamp создания.
- *
- * Ошибки загрузки свечей по одному символу не блокируют остальные.
- * Возвращает обновлённый журнал целиком.
- */
-// Длительность одного бара в мс по ТФ (поддерживает канон '30m'/'1H'/'D' и
-// числовые минуты Bybit '30'/'60'/'240'). Локально, а не из api/client.ts:
-// журнал — слой хранилища и не должен тянуть граф модулей API-анализа.
 function tfDurationMs(tf: string): number | undefined {
   const t = String(tf).trim();
-  if (/^\d+$/.test(t)) return Number(t) * 60_000; // минуты (формы Bybit)
+  if (/^\d+$/.test(t)) return Number(t) * 60_000;
   switch (t.toUpperCase()) {
-    case '1M': return 60_000;      // '1m' — минутный ТФ
+    case '1M': return 60_000;
     case '5M': return 5 * 60_000;
     case '15M': return 15 * 60_000;
     case '30M': return 30 * 60_000;
@@ -487,18 +416,19 @@ function tfDurationMs(tf: string): number | undefined {
 }
 
 /**
- * Максимальное время жизни pending-сигнала: 7 баров своего ТФ (минимум сутки —
- * для внутридневных ТФ), но не более 7 суток. Прежняя таблица ('D' → 7 дней,
- * всё остальное → 24 часа) преждевременно экспайрила недельные сигналы и
- * слишком поздно — внутридневные; кроме того, возраст считался от времени
- * проверки, а не от бара подтверждения.
+ * FIX: добавлена проверка, что cutoff не в будущем.
  */
 function signalMaxAgeMs(timeframe: string, cutoff: number): number {
+  const now = Date.now();
+  const safeCutoff = Math.min(cutoff, now); // cutoff не может быть в будущем
   const dur = tfDurationMs(timeframe) ?? 24 * 60 * 60_000;
   const horizon = Math.min(7 * 24 * 60 * 60_000, Math.max(24 * 60 * 60_000, 7 * dur));
-  return cutoff + horizon;
+  return safeCutoff + horizon;
 }
 
+/**
+ * FIX: добавлена сортировка свечей и валидация outcome.
+ */
 export async function settlePendingSignals(
   candleProvider: (symbol: string, timeframe: string) => Promise<OutcomeCandle[]>,
 ): Promise<SignalEntry[]> {
@@ -506,13 +436,15 @@ export async function settlePendingSignals(
   const pendings = entries.filter(e => e.status === 'pending');
   if (pendings.length === 0) return entries;
 
-  // Один запрос на уникальную пару (symbol, timeframe)
   const keys = Array.from(new Set(pendings.map(e => `${e.symbol}|${e.timeframe}`)));
   const candlesByKey = new Map<string, OutcomeCandle[]>();
   await Promise.all(keys.map(async (key) => {
     const [symbol, timeframe] = key.split('|');
     try {
-      candlesByKey.set(key, await candleProvider(symbol, timeframe));
+      const candles = await candleProvider(symbol, timeframe);
+      // FIX: сортируем свечи хронологически (старые → новые)
+      candles.sort((a, b) => a.openTime - b.openTime);
+      candlesByKey.set(key, candles);
     } catch (err) {
       console.error(`Журнал: не удалось получить свечи ${symbol}/${timeframe}:`, err);
     }
@@ -526,18 +458,21 @@ export async function settlePendingSignals(
     const after = candles.filter(c => c.openTime > cutoff);
     const outcome = evaluateSignalOutcome(entry, after);
     if (outcome) {
+      // FIX: валидация outcome
+      if (!Number.isFinite(outcome.exitPrice) || outcome.exitPrice <= 0) {
+        console.warn(`settlePendingSignals: невалидный exitPrice для сигнала ${entry.id}`);
+        continue;
+      }
       entry.status = outcome.status;
-      applyExit(entry, outcome.exitPrice);
+      const updated = applyExit(entry, outcome.exitPrice);
+      Object.assign(entry, updated);
       changed = true;
     } else if (after.length > 0) {
-      // Ни цель, ни стоп так и не были достигнуты, а формация отработала свой
-      // срок жизни — фиксируем исход по последней закрытой свече (Нисон:
-      // неподтверждённый сигнал аннулируется). Иначе запись вечно висела бы
-      // pending без возможности попасть в статистику.
       const deadline = signalMaxAgeMs(entry.timeframe, cutoff);
       if (Date.now() > deadline) {
         entry.status = 'expired';
-        applyExit(entry, after[after.length - 1].close);
+        const updated = applyExit(entry, after[after.length - 1].close);
+        Object.assign(entry, updated);
         changed = true;
       }
     }
@@ -547,8 +482,74 @@ export async function settlePendingSignals(
   return entries;
 }
 
-// Проверка активных сигналов против текущих цен
+/**
+ * FIX: унифицирован источник цен с settlePendingSignals.
+ * Теперь checkActiveSignals тоже использует high/low бара, а не только currentPrice.
+ * 
+ * ВАЖНО: candleProvider должен быть тем же, что и в settlePendingSignals (Bybit),
+ * чтобы избежать рассинхрона источников цен.
+ */
+export async function checkActiveSignalsUnified(
+  candleProvider: (symbol: string, timeframe: string) => Promise<OutcomeCandle[]>,
+): Promise<SignalEntry[]> {
+  const entries = loadJournal();
+  const pendings = entries.filter(e => e.status === 'pending');
+  if (pendings.length === 0) return entries;
+
+  const keys = Array.from(new Set(pendings.map(e => `${e.symbol}|${e.timeframe}`)));
+  const candlesByKey = new Map<string, OutcomeCandle[]>();
+  await Promise.all(keys.map(async (key) => {
+    const [symbol, timeframe] = key.split('|');
+    try {
+      const candles = await candleProvider(symbol, timeframe);
+      candles.sort((a, b) => a.openTime - b.openTime);
+      candlesByKey.set(key, candles);
+    } catch (err) {
+      console.error(`checkActiveSignalsUnified: не удалось получить свечи ${symbol}/${timeframe}:`, err);
+    }
+  }));
+
+  let changed = false;
+  for (const entry of pendings) {
+    const candles = candlesByKey.get(`${entry.symbol}|${entry.timeframe}`);
+    if (!candles || candles.length === 0) continue;
+    const cutoff = entry.barTime ?? entry.timestamp;
+    const after = candles.filter(c => c.openTime > cutoff);
+    
+    // Используем ту же логику, что и в settlePendingSignals
+    const outcome = evaluateSignalOutcome(entry, after);
+    if (outcome) {
+      if (!Number.isFinite(outcome.exitPrice) || outcome.exitPrice <= 0) {
+        console.warn(`checkActiveSignalsUnified: невалидный exitPrice для сигнала ${entry.id}`);
+        continue;
+      }
+      entry.status = outcome.status;
+      const updated = applyExit(entry, outcome.exitPrice);
+      Object.assign(entry, updated);
+      changed = true;
+    } else if (after.length > 0) {
+      const deadline = signalMaxAgeMs(entry.timeframe, cutoff);
+      if (Date.now() > deadline) {
+        entry.status = 'expired';
+        const updated = applyExit(entry, after[after.length - 1].close);
+        Object.assign(entry, updated);
+        changed = true;
+      }
+    }
+  }
+
+  if (changed) saveJournal(entries);
+  return entries;
+}
+
+/**
+ * @deprecated Используйте checkActiveSignalsUnified вместо этой функции.
+ * Эта функция использует currentPrice (одна точка), что может привести к рассинхрону
+ * с settlePendingSignals (который использует high/low бара).
+ */
 export function checkActiveSignals(currentPrices: Record<string, number>): SignalEntry[] {
+  console.warn('checkActiveSignals устарела. Используйте checkActiveSignalsUnified.');
+  
   const entries = loadJournal();
   const updated: SignalEntry[] = [];
   
@@ -564,30 +565,30 @@ export function checkActiveSignals(currentPrices: Record<string, number>): Signa
       return;
     }
     
-    // Проверка достижения цели
     if (entry.direction === 'long' && currentPrice >= entry.target) {
       entry.status = 'hit_target';
-      applyExit(entry, currentPrice);
+      const updatedEntry = applyExit(entry, currentPrice);
+      Object.assign(entry, updatedEntry);
     } else if (entry.direction === 'short' && currentPrice <= entry.target) {
       entry.status = 'hit_target';
-      applyExit(entry, currentPrice);
+      const updatedEntry = applyExit(entry, currentPrice);
+      Object.assign(entry, updatedEntry);
     }
-    // Проверка достижения стопа
     else if (entry.direction === 'long' && currentPrice <= entry.stopLoss) {
       entry.status = 'hit_stop';
-      applyExit(entry, currentPrice);
+      const updatedEntry = applyExit(entry, currentPrice);
+      Object.assign(entry, updatedEntry);
     } else if (entry.direction === 'short' && currentPrice >= entry.stopLoss) {
       entry.status = 'hit_stop';
-      applyExit(entry, currentPrice);
+      const updatedEntry = applyExit(entry, currentPrice);
+      Object.assign(entry, updatedEntry);
     }
-    // Проверка истечения времени (срок жизни зависит от ТФ — см. signalMaxAgeMs)
     else {
-      // Возраст считаем от бара подтверждения (barTime), если он есть —
-      // иначе сигнал мог «протухнуть» ещё до записи в журнал.
       const deadline = signalMaxAgeMs(entry.timeframe, entry.barTime ?? entry.timestamp);
       if (Date.now() > deadline) {
         entry.status = 'expired';
-        applyExit(entry, currentPrice);
+        const updatedEntry = applyExit(entry, currentPrice);
+        Object.assign(entry, updatedEntry);
       }
     }
 
@@ -598,13 +599,10 @@ export function checkActiveSignals(currentPrices: Record<string, number>): Signa
   return updated;
 }
 
-// Экспорт журнала в JSON
 export function exportJournal(): string {
   return JSON.stringify(loadJournal(), null, 2);
 }
 
-// Импорт журнала из JSON со строгой валидацией каждой записи.
-// Некорректные/вредные элементы отбрасываются; при отсутствии валидных — ошибка.
 export function importJournal(json: string): { imported: number; rejected: number } {
   let entries: unknown;
   try {
@@ -618,7 +616,6 @@ export function importJournal(json: string): { imported: number; rejected: numbe
     throw new Error('Ожидался массив сигналов');
   }
 
-  // Разумное ограничение на размер импорта (защита от DoS огромными файлами)
   const MAX_IMPORT_ENTRIES = 5000;
   const sanitized = entries
     .slice(0, MAX_IMPORT_ENTRIES)
@@ -633,9 +630,6 @@ export function importJournal(json: string): { imported: number; rejected: numbe
   return { imported: sanitized.length, rejected: Math.min(entries.length, MAX_IMPORT_ENTRIES) - sanitized.length };
 }
 
-// Очистка журнала. Снапшоты сохраняются намеренно: перед удалением
-// обязательно создаётся снимок текущего состояния, чтобы очистку можно
-// было отменить через restoreFromSnapshot().
 export function clearJournal(): void {
   maybeSnapshot();
   if (isStorageAvailable()) localStorage.removeItem(STORAGE_KEY);
