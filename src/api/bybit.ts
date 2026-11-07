@@ -411,7 +411,7 @@ export async function fetchInstrumentInfo(rawSymbol: string): Promise<Instrument
 }
 
 /**
- * FIX: точный расчет priceChange из процентного изменения.
+ * FIX: точный расчёт priceChange из процентного изменения.
  * Если цена выросла на pct (в долях) до lastPrice, то:
  *   previousPrice = lastPrice / (1 + pct)
  *   priceChange = lastPrice - previousPrice = lastPrice * pct / (1 + pct)
@@ -436,7 +436,7 @@ export async function fetch24hTicker(rawSymbol: string): Promise<Ticker24h> {
   const lastPrice = parseFloat(ticker.lastPrice);
   const pct = parseFloat(ticker.price24hPcnt);
   
-  // FIX: точный расчет вместо приближения pct * lastPrice
+  // FIX: точный расчёт вместо приближения pct * lastPrice
   const priceChange = Number.isFinite(pct) && Number.isFinite(lastPrice) && pct !== -1
     ? (lastPrice * pct) / (1 + pct)
     : 0;
