@@ -1,4 +1,4 @@
-// Аудит №11: жизненный цикл сигнала по Нисону (pending → confirmed/invalidated/expired)
+// Жизненный цикл торгового сценария: pending → confirmed/invalidated/expired.
 import { describe, it, expect } from 'vitest';
 import { stepSignal, resolveSignalStatus } from '../../utils/signal_lifecycle';
 import { c, flat } from '../helpers/candles';

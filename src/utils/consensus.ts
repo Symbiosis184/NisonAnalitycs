@@ -1,7 +1,6 @@
-// Consensus Score по канону Стива Нисона: консенсус — это СОГЛАСИЕ факторов
-// (подтверждённых свечных сценариев, усиленных объёмом и уровнями S/R) вокруг
-// одной идеи, а не сумма голосов. Противоречивые сигналы (long+short) — шум,
-// они не должны поднимать оценку.
+// Consensus Score — эвристика проекта по мотивам правила множества технических
+// приёмов: оценивается согласие сценариев, а не простое количество сигналов.
+// Веса и пороги не взяты из книг; confidence не является вероятностью прибыли.
 export interface ConsensusInput {
   direction: 'long' | 'short';
   quality: number; // 0..1 — качество сигнала (объём/уровень/форма)
@@ -9,7 +8,7 @@ export interface ConsensusInput {
 
 export interface ConsensusResult {
   score: number;        // 0..5
-  confidence: number;   // 0..95 %
+  confidence: number;   // эвристический балл согласия 0..95, не вероятность
   direction: 'buy' | 'sell' | 'neutral';
 }
 
@@ -50,7 +49,7 @@ export function aggregateConsensus(signals: ConsensusInput[]): ConsensusResult {
   // Базовый балл за силу согласия (max 4) + небольшой бонус за «широту
   // консенсуса» (несколько независимых сигналов в одну сторону, max 1).
   const score = Math.min(5, ratio * 4 + Math.min(1, (agreeCount - 1) * 0.25));
-  // Уверенность начинается с нуля: нет согласия → 0%, а не «40% ни за что».
+  // Балл согласия начинается с нуля; это не оценка вероятности исхода сделки.
   const confidence = Math.min(95, Math.round(ratio * 70 + Math.min(25, agreeCount * 5)));
   const direction: ConsensusResult['direction'] = bullW > bearW ? 'buy' : 'sell';
 

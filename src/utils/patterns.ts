@@ -1,8 +1,9 @@
 import { Candle } from './candle';
-import { PatternDetector, setPatternTimeframe } from './pattern_engine';
+import type { PatternContext } from './pattern_engine';
 import { ZoneVoter, timeframeKey } from './zone_voter';
 import { requiresNextCandleConfirmation } from './pattern_ids';
-import { getPatternCandleCount } from './pattern_ids';
+import { resolveSignalLifecycle } from './signal_lifecycle';
+import { scanPatternCandidates } from './pattern_scanner';
 
 export type PatternStatus = 'pending' | 'confirmed' | 'cancelled';
 
@@ -16,6 +17,8 @@ export interface PatternResult {
   hasVolume: boolean;
   atLevel: boolean;
   confirmedTime: number | null;
+  /** Абсолютный индекс закрытого бара, подтвердившего модель. */
+  confirmationIndex: number | null;
 }
 
 /**
@@ -58,204 +61,96 @@ export function sortPatternsForDisplay<T extends { candleIndex: number; confirme
       b.confidence - a.confidence);
 }
 
-/** Тип модели по имени (бычий/медвежий/нейтральный). */
-function patternType(name: string): 'бычий' | 'медвежий' | 'нейтральный' {
-  const n = name.toUpperCase();
-  if (['ДОДЖИ', 'ДОДЖИ-СТРЕКОЗА', 'НАДГРОБИЕ', 'ДЛИННОНОГАЯ ДОДЖИ', 'ВЫСОКАЯ ВОЛНА',
-    'ОТБИТОЕ НАСТУПЛЕНИЕ', 'ТОРМОЖЕНИЕ', 'ТЕСТ ПОДДЕРЖКИ', 'ТЕСТ СОПРОТИВЛЕНИЯ'].some(k => n.startsWith(k))) {
-    return 'нейтральный';
-  }
-  if (n.includes('ДОДЖИ')) return 'нейтральный';
-  if (['МОЛОТ', 'ПЕРЕВЁРНУТЫЙ МОЛОТ', 'БЫЧЬЕ ПОГЛОЩЕНИЕ', 'ПРОСВЕТ В ОБЛАКАХ',
-    'УТРЕННЯЯ ЗВЕЗДА', 'УТРЕННЯЯ ДОДЖИ-ЗВЕЗДА', 'ТРИ БЕЛЫХ СОЛДАТА',
-    'БЫЧИЙ ХАРАМИ', 'БЫЧИЙ ХАРАМИ-КРЕСТ', 'ПИНЦЕТ (НИЗ)', 'ЛИНИЯ ПОЯСА (БЫЧЬЯ)',
-    'КОНТРАТАКА (БЫЧЬЯ)', 'РАЗДЕЛЕНИЕ (БЫЧЬЕ)', 'БАШЕННОЕ ДНО', 'ТРИ РЕКИ',
-    'ВОСХОДЯЩИЕ ТРИ МЕТОДА', 'УДЕРЖАНИЕ НА ТАТАМИ', 'ЛЕСТНИЧНОЕ ДНО',
-    'ПОКИНУТЫЙ МЛАДЕНЕЦ (НИЗ)', 'ТАСУКИ ВОСХОДЯЩЕГО ГЭПА', 'ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ',
-    'ГЭП НА МАКСИМУМАХ', 'ПРОРЫВ КОНСОЛИДАЦИИ (БЫЧИЙ)', 'КЛЮЧЕВОЙ РАЗВОРОТ (БЫЧИЙ)',
-    'ПОСЛЕДНЕЕ ПОГЛОЩЕНИЕ (ОСНОВАНИЕ)', 'НАКОПЛЕНИЕ', 'СПРУЖИНИВАНИЕ',
-    'ДВОЙНОЙ ТОЛЧОК (БЫЧИЙ)', 'ДЛИННАЯ БЕЛАЯ НА ОТКАТЕ',
-  ].some(k => n.startsWith(k))) return 'бычий';
-  if (['ПОВЕШЕННЫЙ', 'ПАДАЮЩАЯ ЗВЕЗДА', 'МЕДВЕЖЬЕ ПОГЛОЩЕНИЕ', 'ЗАВЕСА ИЗ ТЁМНЫХ ОБЛАКОВ',
-    'ВЕЧЕРНЯЯ ЗВЕЗДА', 'ВЕЧЕРНЯЯ ДОДЖИ-ЗВЕЗДА', 'ТРИ ЧЁРНЫХ ВОРОНЫ', 'ТРИ ОДИНАКОВЫЕ ВОРОНЫ',
-    'ДВЕ ВЗЛЕТЁВШИЕ ВОРОНЫ', 'МЕДВЕЖИЙ ХАРАМИ', 'МЕДВЕЖИЙ ХАРАМИ-КРЕСТ', 'ПИНЦЕТ (ВЕРХ)',
-    'ЛИНИЯ ПОЯСА (МЕДВЕЖЬЯ)', 'КОНТРАТАКА (МЕДВЕЖЬЯ)', 'РАЗДЕЛЕНИЕ (МЕДВЕЖЬЕ)',
-    'БАШЕННАЯ ВЕРШИНА', 'ТРИ ГОРЫ', 'НИСХОДЯЩИЕ ТРИ МЕТОДА',
-    'ПОКИНУТЫЙ МЛАДЕНЕЦ (ВЕРХ)', 'ТАСУКИ НИСХОДЯЩЕГО ГЭПА', 'ГЭП НА МИНИМУМАХ',
-    'ПРОРЫВ КОНСОЛИДАЦИИ (МЕДВЕЖИЙ)', 'КЛЮЧЕВОЙ РАЗВОРОТ (МЕДВЕЖИЙ)',
-    'ПОСЛЕДНЕЕ ПОГЛОЩЕНИЕ (ВЕРШИНА)', 'РАСПРЕДЕЛЕНИЕ', 'ВЕРХНЕЕ СПРУЖИНИВАНИЕ',
-    'НИЖЕ ШЕИ', 'НА ШЕЕ', 'ТОЛЧОК', 'ДЛИННАЯ ЧЁРНАЯ НА ОТКАТЕ',
-  ].some(k => n.startsWith(k))) return 'медвежий';
-  if (n.includes('БЫЧИЙ') || n.includes('БЫЧЬЕ') || n.includes('ОСНОВАНИЕ')) return 'бычий';
-  if (n.includes('МЕДВЕЖИЙ') || n.includes('МЕДВЕЖЬЕ') || n.includes('ВЕРШИНА')) return 'медвежий';
-  return 'нейтральный';
-}
+export function detectPatterns(
+  candles: Candle[],
+  timeframe: string = 'D',
+  context: PatternContext = {},
+): PatternResult[] {
+  const patterns: PatternResult[] = [];
+  const tfMs = tfDurationMs(timeframe);
+  const candidates = scanPatternCandidates(candles, {
+    context: { ...context, timeframe },
+  });
 
-export function detectPatterns(candles: Candle[], timeframe: string = 'D'): PatternResult[] {
-  try {
-    setPatternTimeframe(timeframe);
-    const patterns: PatternResult[] = [];
-    const tfMs = tfDurationMs(timeframe);
+  for (const candidate of candidates) {
+    const i = candidate.patternEndIdx;
+    const candle = candles[i];
+    const prior = candles.slice(0, candidate.patternStartIdx);
+    const zonePrev = prior.length > 130 ? prior.slice(-120) : prior;
+    const type = candidate.direction === 'long'
+      ? 'бычий'
+      : candidate.direction === 'short' ? 'медвежий' : 'нейтральный';
 
-    for (let i = 1; i < candles.length; i++) {
-      const candle = candles[i];
-      const prev = candles.slice(0, i);
-      const next = candles[i + 1];
-      const zonePrev = prev.length > 130 ? prev.slice(-120) : prev;
-
-      const checks: Array<{ found: boolean; name: string }> = [];
-
-      // Односвечные.
-      checks.push(PatternDetector.isHammer(candle, prev));
-      checks.push(PatternDetector.isImperfectHammer(candle, prev));
-      checks.push(PatternDetector.isInvertedHammer(candle, prev));
-      checks.push(PatternDetector.isHangingMan(candle, prev));
-      checks.push(PatternDetector.isShootingStar(candle, prev));
-      checks.push(PatternDetector.classifyDoji(candle));
-      checks.push(PatternDetector.isHighWave(candle, prev));
-      checks.push(PatternDetector.isSpring(candles.slice(0, i + 1)));
-      checks.push(PatternDetector.isUpthrust(candles.slice(0, i + 1)));
-      checks.push(PatternDetector.isVolSpin(candle, candles.slice(0, i + 1)));
-      checks.push(PatternDetector.isLevelTest(candles.slice(0, i + 1)));
-      checks.push(PatternDetector.isTrendPullbackCandle(candles.slice(0, i + 1)));
-      checks.push(PatternDetector.isKeyReversal(candles.slice(0, i + 1)));
-      checks.push(PatternDetector.isConsolidationBreakout(candles.slice(0, i + 1)));
-
-      // Двухсвечные.
-      if (i > 0) {
-        const c1 = candles[i - 1];
-        const hist = candles.slice(0, i - 1);
-        checks.push(PatternDetector.isBullishEngulfing(c1, candle, prev));
-        checks.push(PatternDetector.isBearishEngulfing(c1, candle, prev));
-        checks.push(PatternDetector.isHarami(c1, candle, prev));
-        checks.push(PatternDetector.isHaramiCross(c1, candle, prev));
-        checks.push(PatternDetector.isTweezerBottom(c1, candle, prev));
-        checks.push(PatternDetector.isTweezerTop(c1, candle, prev));
-        checks.push(PatternDetector.isDarkCloudCover(c1, candle, prev));
-        checks.push(PatternDetector.isPiercingPattern(c1, candle, prev));
-        checks.push(PatternDetector.isBullishBelt(c1, candle, prev));
-        checks.push(PatternDetector.isBearishBelt(c1, candle, prev));
-        checks.push(PatternDetector.isCounterattack(c1, candle, prev));
-        checks.push(PatternDetector.isSeparatingLines(c1, candle, prev));
-        checks.push(PatternDetector.isNeckFamily(c1, candle, prev));
-        checks.push(PatternDetector.isLastEngulfing(c1, candle, prev));
-      }
-
-      // Трёхсвечные и более.
-      if (i >= 2) {
-        checks.push(PatternDetector.isMorningStar(candles.slice(0, i + 1)));
-        checks.push(PatternDetector.isEveningStar(candles.slice(0, i + 1)));
-        checks.push(PatternDetector.isThreeWhiteSoldiers(candles.slice(0, i + 1)));
-        checks.push(PatternDetector.isThreeBlackCrows(candles.slice(0, i + 1)));
-        checks.push(PatternDetector.isAdvanceBlock(candles.slice(0, i + 1)));
-        checks.push(PatternDetector.isStalled(candles.slice(0, i + 1)));
-        checks.push(PatternDetector.isTwoCrows(candles.slice(0, i + 1)));
-        checks.push(PatternDetector.isAbandonedBaby(candles.slice(0, i + 1)));
-        checks.push(PatternDetector.isTasuki(candles.slice(0, i + 1)));
-        checks.push(PatternDetector.isDoubleThrustingBull(candles.slice(0, i + 1)));
-        checks.push(PatternDetector.isGappingSideBySide(candles.slice(0, i + 1)));
-        checks.push(PatternDetector.isTowerTop(candles.slice(0, i + 1)));
-        checks.push(PatternDetector.isTowerBottom(candles.slice(0, i + 1)));
-        checks.push(PatternDetector.isThreeMountains(candles.slice(0, i + 1)));
-        checks.push(PatternDetector.isThreeRivers(candles.slice(0, i + 1)));
-      }
-      if (i >= 4) {
-        checks.push(PatternDetector.isRisingThree(candles.slice(0, i + 1)));
-        checks.push(PatternDetector.isFallingThree(candles.slice(0, i + 1)));
-        checks.push(PatternDetector.isMatHold(candles.slice(0, i + 1)));
-        checks.push(PatternDetector.isLadderBottom(candles.slice(0, i + 1)));
-      }
-      if (i >= 5) {
-        checks.push(PatternDetector.isGappingPlay(candles.slice(0, i + 1)));
-      }
-
-      for (const check of checks) {
-        if (!check.found) continue;
-
-        // ИСПРАВЛЕНО: размерность берётся из канонического справочника.
-        const patternCandles = getPatternCandleCount(check.name);
-        const type = patternType(check.name);
-        const patternStartIdx = Math.max(0, i - patternCandles + 1);
-        const patternEndIdx = i;
-        const lastPatternCandle = candles[patternEndIdx];
-
-        const patternHigh = Math.max(...candles.slice(patternStartIdx, patternEndIdx + 1).map(c => c.high));
-        const patternLow = Math.min(...candles.slice(patternStartIdx, patternEndIdx + 1).map(c => c.low));
-
-        const noNeedNext = !requiresNextCandleConfirmation(check.name);
-        const inFormationOk =
-          type === 'бычий' ? lastPatternCandle.isBullish :
-            type === 'медвежий' ? lastPatternCandle.isBearish :
-              false;
-
-        let status: PatternStatus;
-        let confirmBar: Candle | null = null;
-        if (!next) {
-          status = noNeedNext && inFormationOk ? 'confirmed' : 'pending';
-          if (status === 'confirmed') confirmBar = lastPatternCandle;
-        } else {
-          const ok =
-            type === 'бычий' ? next.isBullish && next.close > patternHigh :
-              type === 'медвежий' ? next.isBearish && next.close < patternLow :
-                false;
-          if (ok) {
-            status = 'confirmed';
-            confirmBar = next;
-          } else if (noNeedNext && inFormationOk) {
-            status = 'confirmed';
-            confirmBar = lastPatternCandle;
-          } else {
-            status = 'cancelled';
-          }
-        }
-        const confirmed = status === 'confirmed';
-        const confirmedTime = confirmed && confirmBar ? barCloseTime(confirmBar, tfMs) : null;
-
-        const volumePeriod = Math.min(20, prev.length);
-        const hasVolume = volumePeriod > 0 &&
-          candle.volume > (prev.slice(-volumePeriod).reduce((s, c) => s + c.volume, 0) / volumePeriod) * 1.3;
-
-        let confidence = 50;
-        if (patternCandles >= 3) confidence = 65;
-        else if (patternCandles === 2 && check.name.includes('ПОГЛОЩЕНИЕ')) confidence = 62;
-        else if (check.name.includes('ЗВЕЗДА')) confidence = 63;
-
-        const atLevel = type === 'бычий'
-          ? ZoneVoter.isNearSupport(candle.close, zonePrev, 0.015, timeframeKey(timeframe), candle.low)
-          : type === 'медвежий'
-            ? ZoneVoter.isNearResistance(candle.close, zonePrev, 0.015, timeframeKey(timeframe), candle.high)
-            : false;
-
-        if (confirmed) confidence += 15;
-        if (hasVolume) confidence += 8;
-        if (atLevel) confidence += 7;
-        if (check.name.includes('ОБЪЁМ')) confidence += 5;
-        if (check.name.includes('ПОДДЕРЖКИ') || check.name.includes('СОПРОТИВЛЕНИЯ')) confidence += 5;
-        // Нейтральные модели не конкурируют с направленными сигналами.
-        if (type === 'нейтральный') confidence = Math.min(confidence, 45);
-        confidence = Math.min(92, confidence);
-
-        patterns.push({
-          name: check.name,
-          type,
-          candleIndex: i,
-          confidence,
-          confirmed,
-          status,
-          hasVolume,
-          atLevel,
-          confirmedTime,
-        });
+    let status: PatternStatus = 'pending';
+    let confirmationIndex: number | null = null;
+    if (type === 'нейтральный') {
+      // Доджи и предупреждения — наблюдения, а не направленные сделки.
+      status = 'confirmed';
+      confirmationIndex = i;
+    } else if (!requiresNextCandleConfirmation(candidate.name)) {
+      status = 'confirmed';
+      confirmationIndex = i;
+    } else {
+      const direction = candidate.direction === 'short' ? 'short' : 'long';
+      const lifecycle = resolveSignalLifecycle(
+        candles,
+        i,
+        direction,
+        candle.close,
+        candidate,
+        candles.length,
+      );
+      if (lifecycle.status === 'confirmed') {
+        status = 'confirmed';
+        confirmationIndex = lifecycle.confirmationIndex;
+      } else if (lifecycle.status === 'invalidated' || lifecycle.status === 'expired') {
+        status = 'cancelled';
       }
     }
 
-    const unique = patterns.filter((p, idx, arr) =>
-      arr.findIndex(x => x.name === p.name && x.candleIndex === p.candleIndex) === idx);
-    const filtered = unique.filter(p => p.confidence >= 55 && p.status !== 'cancelled');
-    return sortPatternsForDisplay(filtered, candles.length).slice(0, 24);
-  } finally {
-    setPatternTimeframe('D');
+    const confirmed = status === 'confirmed';
+    const confirmBar = confirmationIndex === null ? null : candles[confirmationIndex];
+    const confirmedTime = confirmBar ? barCloseTime(confirmBar, tfMs) : null;
+    const volumePeriod = Math.min(20, prior.length);
+    const hasVolume = volumePeriod > 0 && candle.volume >
+      (prior.slice(-volumePeriod).reduce((sum, c) => sum + c.volume, 0) / volumePeriod) * 1.3;
+
+    // Эвристический балл ранжирования, а не вероятность прибыли.
+    let confidence = 50;
+    if (candidate.formationSize >= 3) confidence = 65;
+    else if (candidate.formationSize === 2 && candidate.name.includes('ПОГЛОЩЕНИЕ')) confidence = 62;
+    else if (candidate.name.includes('ЗВЕЗДА')) confidence = 63;
+
+    const atLevel = type === 'бычий'
+      ? ZoneVoter.isNearSupport(candle.close, zonePrev, 0.015, timeframeKey(timeframe), candle.low)
+      : type === 'медвежий'
+        ? ZoneVoter.isNearResistance(candle.close, zonePrev, 0.015, timeframeKey(timeframe), candle.high)
+        : false;
+
+    if (confirmed) confidence += 15;
+    if (hasVolume) confidence += 8;
+    if (atLevel) confidence += 7;
+    if (candidate.name.includes('ОБЪЁМ')) confidence += 5;
+    if (candidate.name.includes('ПОДДЕРЖКИ') || candidate.name.includes('СОПРОТИВЛЕНИЯ')) confidence += 5;
+    if (type === 'нейтральный') confidence = Math.min(confidence, 45);
+    confidence = Math.min(92, confidence);
+
+    patterns.push({
+      name: candidate.name,
+      type,
+      candleIndex: i,
+      confidence,
+      confirmed,
+      status,
+      hasVolume,
+      atLevel,
+      confirmedTime,
+      confirmationIndex,
+    });
   }
+
+  const filtered = patterns.filter(p => p.confidence >= 55 && p.status !== 'cancelled');
+  return sortPatternsForDisplay(filtered, candles.length).slice(0, 24);
 }
 
 export function patternStory(pattern: string): string {

@@ -442,8 +442,8 @@ export default function SignalJournal() {
                   <div className="font-mono text-white">1:{signal.riskReward.toFixed(2)}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-gray-400 mb-1">{t('Уверенность')}</div>
-                  <div className="font-mono text-white">{signal.confidence.toFixed(0)}%</div>
+                  <div className="text-xs text-gray-400 mb-1">{t('Эвристический балл')}</div>
+                  <div className="font-mono text-white">{signal.confidence.toFixed(0)}/100</div>
                 </div>
               </div>
 

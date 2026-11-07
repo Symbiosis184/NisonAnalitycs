@@ -14,6 +14,7 @@ import { MarketContextSection } from '../components/analysis/MarketContextSectio
 import { VolumeContextSection, PHASE_SHORT } from '../components/analysis/VolumeContextSection';
 import { ZonesGrid } from '../components/analysis/ZonesSection';
 import { ConfirmedPatternsList, IndicatorsSection } from '../components/analysis/PatternsAndIndicators';
+import { BeyondCandlesticksPanel } from '../components/analysis/BeyondCandlesticksPanel';
 import { SignalsSection, lifecycleOf } from '../components/analysis/SignalsSection';
 import { Collapsible } from '../components/Collapsible';
 import Seo from '../components/ui/Seo';
@@ -205,7 +206,7 @@ export default function Analysis() {
 
         {/* Переключатель таймфреймов */}
         <div className="flex gap-1 p-1 rounded-lg bg-gray-800/50 self-start overflow-x-auto max-w-full">
-          {/* Нисон: 30m — минимальный разрешённый ТФ (гл. 8), W — макро-тренд (недельные уровни и MA13/26W) */}
+          {/* Набор интервалов — настройка приложения и доступных источников данных. */}
           {['30m', '1H', '4H', 'D', 'W'].map((tf) => (
             <button
               key={tf}
@@ -268,7 +269,7 @@ export default function Analysis() {
             <>
               {report.wyckoff && (
                 <span className="text-xs text-gray-400">
-                  {t('Вайкофф:')} {t(PHASE_SHORT[report.wyckoff.phase] ?? report.wyckoff.phase)} · {(num(report.wyckoff.confidence) * 100).toFixed(0)}%
+                  {t('Вайкофф:')} {t(PHASE_SHORT[report.wyckoff.phase] ?? report.wyckoff.phase)} · {t('балл')} {(num(report.wyckoff.confidence) * 100).toFixed(0)}/100
                 </span>
               )}
               {report.delta_summary && (
@@ -298,7 +299,7 @@ export default function Analysis() {
           <>
             <span className="text-xs text-green-400">↓ {report.support.length}</span>
             <span className="text-xs text-red-400">↑ {report.resistance.length}</span>
-            <span className="text-xs text-gray-400">{t('кластеризация + сила по касаниям (Нисон)')}</span>
+            <span className="text-xs text-gray-400">{t('кластеризация + эвристическая сила по касаниям')}</span>
           </>
         }
       >
@@ -311,7 +312,7 @@ export default function Analysis() {
           storageKey="patterns"
           icon={<ChartIcon className="w-5 h-5 text-amber-400" />}
           title={t('Подтверждённые паттерны')}
-          badge={<span className="text-xs text-gray-400">{confirmedPatterns.length}{t(' из ')}{report.patterns.length} {t('· подтверждены объёмом/уровнем')}</span>}
+          badge={<span className="text-xs text-gray-400">{confirmedPatterns.length}{t(' из ')}{report.patterns.length} {t('· подтверждены закрытыми свечами')}</span>}
         >
           <ConfirmedPatternsList patterns={confirmedPatterns} total={report.patterns.length} timeframe={report.timeframe} />
         </Collapsible>
@@ -357,6 +358,15 @@ export default function Analysis() {
         }
       >
         <IndicatorsSection report={report} />
+      </Collapsible>
+
+      <Collapsible
+        storageKey="beyond-candlesticks"
+        icon={<BarChart2 className="w-5 h-5 text-violet-400" />}
+        title={t('За гранью японских свечей')}
+        badge={<span className="text-xs text-gray-400">{t('Индекс разницы · Three-line break · Renko · Kagi')}</span>}
+      >
+        <BeyondCandlesticksPanel candles={report.candles} />
       </Collapsible>
 
       {/* Дисклеймер */}

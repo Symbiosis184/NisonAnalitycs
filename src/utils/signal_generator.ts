@@ -1,18 +1,18 @@
-// Signal Generator — генерация торговых сигналов по канону Нисона.
-// ИСПРАВЛЕНО: устранение противоречий, защита от NaN, новые детекторы.
+// Торговые сценарии поверх единого сканера свечных формаций.
+// Числовые фильтры риска, RR, качества и окна ожидания — эвристики проекта.
 
 import { Candle } from './candle';
-import { PatternDetector } from './pattern_engine';
-import { getTrendMacro } from './trend_detection';
+import type { PatternMarket } from './pattern_engine';
 import { atr } from './indicators';
 import { patternStory } from './patterns';
-import { isReversalPatternName, requiresNextCandleConfirmation } from './pattern_ids';
+import { requiresNextCandleConfirmation } from './pattern_ids';
 import { nearestStructuralTarget } from './nison_targets';
-import { resolveSignalStatus, SignalStatus } from './signal_lifecycle';
+import { resolveSignalLifecycle, type SignalStatus } from './signal_lifecycle';
 import { computeSignalQuality } from './signal_quality';
 import type { Zone } from './zone_voter';
 import { evaluatePricePath, type PricePathInfo } from './price_path';
-import { detectPhase, phaseMultiplier, type PhaseInfo } from './wyckoff';
+import { detectPhase, type PhaseInfo } from './wyckoff';
+import { scanPatternCandidates, type PatternCandidate } from './pattern_scanner';
 
 export interface MarketContext {
   zones: { support: Zone[]; resistance: Zone[] };
@@ -22,329 +22,231 @@ export interface MarketContext {
 export interface Signal {
   direction: 'long' | 'short';
   pattern: string;
+  /** Для pending — оценка сценария; для confirmed — фактический close входа. */
   entryPrice: number;
   stopLoss: number;
   target: number;
   risk: number;
   rr: number;
+  /** Эвристическая оценка в [0, 1], не статистическая вероятность. */
   quality: number;
   timestamp: number;
   confirmed: boolean;
-  status?: SignalStatus;
+  status: SignalStatus;
   story: string;
   path?: PricePathInfo;
   phase?: PhaseInfo;
+  isFreshEvent?: boolean;
   meta: {
     patternCandlesCount: number;
     patternStartIdx: number;
     patternEndIdx: number;
     patternLow: number;
     patternHigh: number;
+    confirmationIndex: number | null;
+    /** null у pending: фактического входа ещё не было. */
+    entryIndex: number | null;
+    entryTime: number | null;
+    entryEstimated: boolean;
   };
 }
 
 export class SignalGenerator {
-  private firstSeen = new Map<string, number>();
-  private lastRunLen = -1;
-
-  private markFresh(arr: Signal[], len: number): void {
-    if (len < this.lastRunLen) this.firstSeen.clear();
-    this.lastRunLen = len;
-    for (const s of arr) {
-      const key = `${s.pattern}|${s.direction}|${s.meta.patternEndIdx}`;
-      if (!this.firstSeen.has(key)) {
-        this.firstSeen.set(key, len);
-        (s as Signal & { isFreshEvent?: boolean }).isFreshEvent = true;
-      }
+  private markFresh(signals: Signal[], closedCount: number): void {
+    for (const signal of signals) {
+      // Свежесть выводится только из переданной истории: событие произошло на
+      // последнем закрытом баре. Скрытый кэш здесь мог переносить состояние
+      // между инструментами и подавлять одинаковые формации разных прогонов.
+      const eventIndex = signal.meta.entryIndex ?? signal.meta.patternEndIdx;
+      signal.isFreshEvent = eventIndex === closedCount - 1;
     }
-  }
-
-  resetRun(): void {
-    this.firstSeen.clear();
-    this.lastRunLen = -1;
   }
 
   private makeSignal(
-    direction: 'long' | 'short',
-    pattern: string,
-    candle: Candle,
-    closedCandles: Candle[],
-    tf: string,
-    quality: number = 1.0,
-    boundsOverride?: { patternLow: number; patternHigh: number; patternCandlesCount?: number; patternStartIdx?: number; patternEndIdx?: number },
+    candidate: PatternCandidate,
+    candles: Candle[],
+    closedCount: number,
+    timeframe: string,
+    context: MarketContext | null,
   ): Signal | null {
-    const endIdx = closedCandles.length - 1;
-    type Bounds = ReturnType<typeof PatternDetector.getFormationBounds>;
-    let bounds: Bounds;
-    if (boundsOverride && boundsOverride.patternEndIdx !== undefined) {
-      const eIdx = boundsOverride.patternEndIdx;
-      const cnt = boundsOverride.patternCandlesCount ?? 1;
-      bounds = {
-        patternLow: boundsOverride.patternLow,
-        patternHigh: boundsOverride.patternHigh,
-        patternCandlesCount: cnt,
-        patternStartIdx: boundsOverride.patternStartIdx ?? eIdx - (cnt - 1),
-        patternEndIdx: eIdx,
-      };
+    const direction = candidate.direction;
+    if (direction !== 'long' && direction !== 'short') return null;
+
+    const patternEndIdx = candidate.patternEndIdx;
+    const patternCandle = candles[patternEndIdx];
+    let status: SignalStatus;
+    let confirmationIndex: number | null;
+    let entryIndex: number | null;
+
+    if (requiresNextCandleConfirmation(candidate.name)) {
+      const lifecycle = resolveSignalLifecycle(
+        candles,
+        patternEndIdx,
+        direction,
+        patternCandle.close,
+        candidate,
+        closedCount,
+      );
+      if (lifecycle.status === 'invalidated' || lifecycle.status === 'expired') return null;
+      status = lifecycle.status;
+      confirmationIndex = lifecycle.confirmationIndex;
+      entryIndex = status === 'confirmed' ? confirmationIndex : null;
     } else {
-      bounds = PatternDetector.getFormationBounds(pattern, closedCandles, endIdx);
-      if (boundsOverride) {
-        bounds.patternLow = boundsOverride.patternLow;
-        bounds.patternHigh = boundsOverride.patternHigh;
-        if (boundsOverride.patternCandlesCount !== undefined) bounds.patternCandlesCount = boundsOverride.patternCandlesCount;
-        if (boundsOverride.patternStartIdx !== undefined) bounds.patternStartIdx = boundsOverride.patternStartIdx;
-      }
+      // Завершённая модель подтверждена своим последним закрытым баром.
+      status = 'confirmed';
+      confirmationIndex = patternEndIdx;
+      entryIndex = patternEndIdx;
     }
 
-    const bookStop = direction === 'long' ? bounds.patternLow : bounds.patternHigh;
-    // ИСПРАВЛЕНО: защита от NaN/бесконечности.
-    if (!Number.isFinite(bookStop) || !Number.isFinite(candle.close)) return null;
+    const referenceIndex = entryIndex ?? patternEndIdx;
+    const entryCandle = candles[referenceIndex];
+    const history = candles.slice(0, referenceIndex + 1);
+    const entryPrice = entryCandle.close;
+    const stopLoss = direction === 'long' ? candidate.patternLow : candidate.patternHigh;
+    if (!Number.isFinite(stopLoss) || !Number.isFinite(entryPrice) || entryPrice <= 0) return null;
 
-    const risk = Math.abs(candle.close - bookStop);
-    if (risk === 0) return null;
-    const riskPercent = risk / candle.close;
-    if (riskPercent > 0.10) return null;
+    const riskDistance = direction === 'long' ? entryPrice - stopLoss : stopLoss - entryPrice;
+    if (!Number.isFinite(riskDistance) || riskDistance <= 0) return null;
+    const risk = riskDistance / entryPrice;
+    if (risk > 0.10) return null;
 
-    const noiseFloor = Math.max(candle.close * 0.01, atr(closedCandles, 14));
-    const maxReward = candle.close * 0.20;
-    const structural = nearestStructuralTarget(candle.close, direction, closedCandles, { noiseFloor, maxReward });
+    // ATR, лимиты 10%/20% и RR≥2 — настройки риска проекта, не правила книг.
+    const noiseFloor = Math.max(entryPrice * 0.01, atr(history, 14));
+    const maxReward = entryPrice * 0.20;
+    const structural = nearestStructuralTarget(entryPrice, direction, history, {
+      noiseFloor,
+      maxReward,
+      timeframe,
+    });
     if (!structural || !Number.isFinite(structural.level) || structural.level <= 0) return null;
 
-    const target = structural.level;
-    const reward = Math.abs(target - candle.close);
+    const reward = direction === 'long'
+      ? structural.level - entryPrice
+      : entryPrice - structural.level;
     if (!Number.isFinite(reward) || reward < noiseFloor || reward > maxReward) return null;
+    const rr = reward / riskDistance;
+    if (!Number.isFinite(rr) || rr < 2) return null;
 
-    const rr = reward / risk;
-    if (!Number.isFinite(rr)) return null;
-
-    return {
+    const quality = computeSignalQuality({
       direction,
-      pattern,
-      entryPrice: candle.close,
-      stopLoss: bookStop,
-      target,
-      risk: riskPercent,
-      rr,
-      quality,
-      timestamp: Date.now(),
-      confirmed: false,
-      story: patternStory(pattern) + ` | цель: ${structural.detail} (${structural.kind === 'zone' ? 'S/R-зона' : 'свинг'})`,
-      meta: bounds,
-    };
-  }
-
-  private applyLifecycle(
-    signal: Signal,
-    direction: 'long' | 'short',
-    patternCandle: Candle,
-    bounds: { patternLow: number; patternHigh: number },
-    candles: Candle[],
-    i: number,
-    closedCount: number,
-    ctx?: MarketContext | null,
-    phase?: PhaseInfo | null,
-  ): void {
-    let status = resolveSignalStatus(candles, i, direction, patternCandle.close, bounds, closedCount);
-
-    if (status === 'pending' && !requiresNextCandleConfirmation(signal.pattern)) {
-      const formationClosed = i < closedCount;
-      const base = signal.pattern.toUpperCase();
-      // «Последнее поглощение»: подтверждение — закрытие за уровнем поглощающей свечи (ЗГ гл. 3).
-      const selfConfirming = base.includes('ПОСЛЕДНЕЕ ПОГЛОЩЕНИЕ')
-        ? true
-        : direction === 'long' ? patternCandle.isBullish : patternCandle.isBearish;
-      if (formationClosed && selfConfirming) status = 'confirmed';
-    }
-
-    signal.status = status;
-    signal.confirmed = status === 'confirmed';
-
-    signal.quality = computeSignalQuality({
-      direction,
-      pattern: signal.pattern,
-      confirmCandle: patternCandle,
-      priorCandles: candles.slice(0, i),
+      pattern: candidate.name,
+      confirmCandle: entryCandle,
+      priorCandles: candles.slice(0, referenceIndex),
       status,
     });
+    const phase = detectPhase(history);
 
-    if (phase) {
-      signal.phase = phase;
-      signal.quality = Math.min(1, Math.round(signal.quality * phaseMultiplier(direction, phase) * 100) / 100);
-    }
-    if (ctx) {
+    const signal: Signal = {
+      direction,
+      pattern: candidate.name,
+      entryPrice,
+      stopLoss,
+      target: structural.level,
+      risk,
+      rr,
+      quality,
+      timestamp: entryCandle.time,
+      confirmed: status === 'confirmed',
+      status,
+      story: patternStory(candidate.name)
+        + ` | ${status === 'confirmed' ? 'фактический вход по закрытию бара подтверждения' : 'оценочный сценарий до подтверждения'}`
+        + ` | цель: ${structural.detail} (${structural.kind === 'zone' ? 'S/R-зона' : 'свинг'})`,
+      phase,
+      meta: {
+        patternCandlesCount: candidate.formationSize,
+        patternStartIdx: candidate.patternStartIdx,
+        patternEndIdx,
+        patternLow: candidate.patternLow,
+        patternHigh: candidate.patternHigh,
+        confirmationIndex,
+        entryIndex,
+        entryTime: entryIndex === null ? null : candles[entryIndex].time,
+        entryEstimated: status === 'pending',
+      },
+    };
+
+    if (context) {
       const path = evaluatePricePath({
         direction,
-        entry: signal.entryPrice,
+        entry: entryPrice,
         target: signal.target,
-        stop: signal.stopLoss,
-        zones: ctx.zones,
-        volumeBands: ctx.volumeBands,
+        stop: stopLoss,
+        zones: context.zones,
+        volumeBands: context.volumeBands,
       });
       signal.path = path;
       signal.story += ` | путь: ${path.description}`;
     }
+    return signal;
   }
 
   findSignals(
     candles: Candle[],
-    tf: string = 'D',
-    opts?: { context?: MarketContext },
+    timeframe: string = 'D',
+    opts?: { context?: MarketContext; market?: PatternMarket },
   ): Signal[] {
     if (candles.length < 6) return [];
-    const ctx = opts?.context ?? null;
-    const phase: PhaseInfo | null = ctx ? detectPhase(candles) : null;
-    const closedCount = (() => {
-      const last = candles[candles.length - 1];
-      const forming = (last as unknown as { isForming?: boolean }).isForming === true;
-      return forming ? candles.length - 1 : candles.length;
-    })();
+    const context = opts?.context ?? null;
+    const last = candles[candles.length - 1];
+    const forming = (last as unknown as { isForming?: boolean }).isForming === true;
+    const closedCount = forming ? candles.length - 1 : candles.length;
+    if (closedCount < 6) return [];
 
+    const candidates = scanPatternCandidates(candles, {
+      context: { timeframe, market: opts?.market ?? 'crypto' },
+      fromIndex: Math.max(1, closedCount - 20),
+      toIndex: closedCount - 1,
+    });
     const signals: Signal[] = [];
     const seen = new Set<string>();
-    const pushUnique = (s: Signal): void => {
-      const key = `${s.pattern}|${s.direction}|${s.meta.patternEndIdx}`;
-      if (seen.has(key)) return;
+    for (const candidate of candidates) {
+      if (!candidate.tradeable) continue;
+      const signal = this.makeSignal(candidate, candles, closedCount, timeframe, context);
+      if (!signal) continue;
+      const key = `${signal.pattern}|${signal.direction}|${signal.meta.patternEndIdx}`;
+      if (seen.has(key)) continue;
       seen.add(key);
-      signals.push(s);
-    };
-
-    // Обработка одной найденной формации (единый путь вместо трёх дублей).
-    const emit = (
-      check: { found: boolean; name: string },
-      direction: 'long' | 'short',
-      i: number,
-    ): void => {
-      if (!check.found) return;
-      const patternCandle = candles[i];
-      const closed = candles.slice(0, i + 1);
-      const patternTrend = getTrendMacro(closed, patternCandle.close);
-      const isReversalPattern = isReversalPatternName(check.name);
-
-      if (patternTrend === 'БОКОВИК') return;
-      if (isReversalPattern) {
-        if (direction === 'long' && patternTrend !== 'НИСХОДЯЩИЙ') return;
-        if (direction === 'short' && patternTrend !== 'ВОСХОДЯЩИЙ') return;
-      } else {
-        if (direction === 'long' && patternTrend === 'НИСХОДЯЩИЙ') return;
-        if (direction === 'short' && patternTrend === 'ВОСХОДЯЩИЙ') return;
-      }
-
-      const bounds = PatternDetector.getFormationBounds(check.name, candles, i);
-      const signal = this.makeSignal(direction, check.name, patternCandle, closed, tf, 1.0, bounds);
-      if (!signal) return;
-      this.applyLifecycle(signal, direction, patternCandle, bounds, candles, i, closedCount, ctx, phase);
-      if ((signal.path?.adjustedRR ?? signal.rr) >= 2) pushUnique(signal);
-    };
-
-    // Последняя ЗАКРЫТАЯ свеча тоже участвует в сканировании. Если последний
-    // элемент формируется, closedCount уже указывает на предыдущий бар.
-    for (let i = closedCount - 1; i >= Math.max(0, closedCount - 20); i--) {
-      const patternCandle = candles[i];
-      const closed = candles.slice(0, i + 1);
-
-      // Трёхсвечные и более.
-      emit(closed.length >= 3 ? PatternDetector.isMorningStar(closed) : { found: false, name: '' }, 'long', i);
-      emit(closed.length >= 3 ? PatternDetector.isEveningStar(closed) : { found: false, name: '' }, 'short', i);
-      emit(closed.length >= 3 ? PatternDetector.isAbandonedBaby(closed) : { found: false, name: '' },
-        closed.length > 0 && closed[closed.length - 1].isBullish ? 'long' : 'short', i);
-      emit(closed.length >= 6 ? PatternDetector.isTowerTop(closed) : { found: false, name: '' }, 'short', i);
-      emit(closed.length >= 6 ? PatternDetector.isTowerBottom(closed) : { found: false, name: '' }, 'long', i);
-      emit(closed.length >= 12 ? PatternDetector.isThreeMountains(closed) : { found: false, name: '' }, 'short', i);
-      emit(closed.length >= 12 ? PatternDetector.isThreeRivers(closed) : { found: false, name: '' }, 'long', i);
-      emit(closed.length >= 5 ? PatternDetector.isRisingThree(closed) : { found: false, name: '' }, 'long', i);
-      emit(closed.length >= 5 ? PatternDetector.isFallingThree(closed) : { found: false, name: '' }, 'short', i);
-      emit(closed.length >= 5 ? PatternDetector.isMatHold(closed) : { found: false, name: '' }, 'long', i);
-      emit(closed.length >= 4 ? PatternDetector.isDoubleThrustingBull(closed) : { found: false, name: '' }, 'long', i);
-      emit(closed.length >= 3 ? PatternDetector.isThreeWhiteSoldiers(closed) : { found: false, name: '' }, 'long', i);
-      emit(closed.length >= 3 ? PatternDetector.isThreeBlackCrows(closed) : { found: false, name: '' }, 'short', i);
-      emit(closed.length >= 5 ? PatternDetector.isLadderBottom(closed) : { found: false, name: '' }, 'long', i);
-      emit(closed.length >= 3 ? PatternDetector.isTwoCrows(closed) : { found: false, name: '' }, 'short', i);
-      emit(closed.length >= 3 ? PatternDetector.isTasuki(closed) : { found: false, name: '' },
-        closed.length > 0 && closed[closed.length - 1].isBullish ? 'long' : 'short', i);
-      // НОВЫЕ: ослабленные формы (нейтральные предупреждения) — не генерируют сделки,
-      // но фиксируются в журнале как «осторожность» через качество и статус.
-      emit(closed.length >= 3 ? PatternDetector.isAdvanceBlock(closed) : { found: false, name: '' }, 'short', i);
-      emit(closed.length >= 2 ? PatternDetector.isStalled(closed) : { found: false, name: '' }, 'short', i);
-
-      // Двухсвечные.
-      if (i > 0) {
-        const prevCandle = candles[i - 1];
-        const hist = candles.slice(0, i - 1);
-        emit(PatternDetector.isBullishEngulfing(prevCandle, patternCandle, hist), 'long', i);
-        emit(PatternDetector.isBearishEngulfing(prevCandle, patternCandle, hist), 'short', i);
-        emit(PatternDetector.isPiercingPattern(prevCandle, patternCandle, hist), 'long', i);
-        emit(PatternDetector.isDarkCloudCover(prevCandle, patternCandle, hist), 'short', i);
-        emit(PatternDetector.isTweezerBottom(prevCandle, patternCandle, hist), 'long', i);
-        emit(PatternDetector.isTweezerTop(prevCandle, patternCandle, hist), 'short', i);
-        emit(PatternDetector.isHarami(prevCandle, patternCandle, hist),
-          prevCandle.isBearish ? 'long' : 'short', i);
-        emit(PatternDetector.isHaramiCross(prevCandle, patternCandle, hist),
-          prevCandle.isBearish ? 'long' : 'short', i);
-        emit(PatternDetector.isLastEngulfing(prevCandle, patternCandle, hist),
-          prevCandle.isBullish ? 'long' : 'short', i);
-        emit(PatternDetector.isBullishBelt(prevCandle, patternCandle, hist), 'long', i);
-        emit(PatternDetector.isBearishBelt(prevCandle, patternCandle, hist), 'short', i);
-        emit(PatternDetector.isCounterattack(prevCandle, patternCandle, hist),
-          prevCandle.isBearish ? 'long' : 'short', i);
-        emit(PatternDetector.isSeparatingLines(prevCandle, patternCandle, hist),
-          patternCandle.isBullish ? 'long' : 'short', i);
-        emit(PatternDetector.isNeckFamily(prevCandle, patternCandle, hist), 'short', i);
-      }
-
-      // Односвечные.
-      const prior = candles.slice(0, i);
-      emit(PatternDetector.isHammer(patternCandle, prior), 'long', i);
-      emit(PatternDetector.isShootingStar(patternCandle, prior), 'short', i);
-      emit(PatternDetector.isHangingMan(patternCandle, prior), 'short', i);
-      emit(PatternDetector.isInvertedHammer(patternCandle, prior), 'long', i);
-      // НОВОЕ: верхнее спружинивание (гл. 11 ЯС).
-      emit(closed.length >= 25 ? PatternDetector.isUpthrust(closed) : { found: false, name: '' }, 'short', i);
-      emit(closed.length >= 25 ? PatternDetector.isSpring(closed) : { found: false, name: '' }, 'long', i);
+      signals.push(signal);
     }
 
-    // ИСПРАВЛЕНО: устранение противоречий по канону Нисона.
-    // Если на одном завершении формации есть разнонаправленные сигналы и
-    // НИ ОДИН не подтверждён закрытой свечой — отклоняем ВСЕ (не угадываем).
+    // При разнонаправленных сценариях сохраняется только одно фактически
+    // подтверждённое направление. Если подтверждены обе стороны (или ни одной),
+    // вся группа отклоняется: произвольный приоритет long/short недопустим.
     const byEnd = new Map<number, Signal[]>();
-    for (const sig of signals) {
-      const arr = byEnd.get(sig.meta.patternEndIdx) ?? [];
-      arr.push(sig);
-      byEnd.set(sig.meta.patternEndIdx, arr);
+    for (const signal of signals) {
+      const group = byEnd.get(signal.meta.patternEndIdx) ?? [];
+      group.push(signal);
+      byEnd.set(signal.meta.patternEndIdx, group);
     }
-    const dropKeys = new Set<string>();
-    for (const [, group] of byEnd) {
-      if (group.length < 2) continue;
-      const dirs = new Set(group.map(g => g.direction));
-      if (dirs.size < 2) continue;
-      const confirmeds = group.filter(g => g.status === 'confirmed');
-      let keep: Signal | undefined;
-      if (confirmeds.length === 1) keep = confirmeds[0];
-      else if (confirmeds.length >= 2) keep = confirmeds.find(g => g.direction === 'long') ?? confirmeds[0];
-      else keep = undefined; // ни один не подтверждён → отклоняем все
-      for (const g of group) {
-        if (g !== keep) dropKeys.add(`${g.pattern}|${g.direction}|${g.meta.patternEndIdx}`);
-      }
-    }
-    const deduped = dropKeys.size
-      ? signals.filter(sg => !dropKeys.has(`${sg.pattern}|${sg.direction}|${sg.meta.patternEndIdx}`))
-      : signals;
+    const deduped = signals.filter(signal => {
+      const group = byEnd.get(signal.meta.patternEndIdx) ?? [];
+      if (new Set(group.map(item => item.direction)).size < 2) return true;
+      const confirmedDirections = new Set(
+        group.filter(item => item.status === 'confirmed').map(item => item.direction),
+      );
+      return confirmedDirections.size === 1
+        && signal.status === 'confirmed'
+        && confirmedDirections.has(signal.direction);
+    });
 
-    const RANK: Record<string, number> = { confirmed: 3, pending: 2, expired: 1, invalidated: 0 };
+    this.markFresh(deduped, closedCount);
+    const rank: Record<SignalStatus, number> = {
+      confirmed: 3,
+      pending: 2,
+      expired: 1,
+      invalidated: 0,
+    };
     deduped.sort((a, b) =>
-      (Number(Boolean((b as Signal & { isFreshEvent?: boolean }).isFreshEvent)) -
-        Number(Boolean((a as Signal & { isFreshEvent?: boolean }).isFreshEvent))) ||
-      (RANK[b.status ?? 'pending'] - RANK[a.status ?? 'pending']) ||
-      Number(b.confirmed) - Number(a.confirmed) ||
-      b.quality - a.quality ||
-      b.rr - a.rr,
-    );
-    this.markFresh(deduped, candles.length);
+      Number(Boolean(b.isFreshEvent)) - Number(Boolean(a.isFreshEvent))
+      || rank[b.status] - rank[a.status]
+      || Number(b.confirmed) - Number(a.confirmed)
+      || b.quality - a.quality
+      || b.rr - a.rr);
     return deduped.slice(0, 8);
   }
 
-  findSignal(candles: Candle[], tf: string = 'D'): Signal | null {
-    const signals = this.findSignals(candles, tf);
-    return signals.length > 0 ? signals[0] : null;
+  findSignal(candles: Candle[], timeframe: string = 'D'): Signal | null {
+    return this.findSignals(candles, timeframe)[0] ?? null;
   }
 }
 

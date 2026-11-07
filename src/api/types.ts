@@ -14,7 +14,7 @@ export interface CandleDTO {
   volume: number;
 }
 
-/** Гэп (гл. 7 Нисона): разрыв между закрытием предыдущей сессии и открытием текущей */
+/** Окно (гл. 7 Нисона): разрыв между диапазонами соседних свечей. */
 export interface GapDTO {
   /** openTime (мс) бара, который ОТКРЫЛ гэп */
   time: number;
@@ -29,8 +29,12 @@ export interface GapDTO {
   direction: 'up' | 'down';
   /** размер гэпа в % от prevClose */
   pct: number;
-  /** true — гэп ещё не закрыт (ни одна последующая свеча не пересекла весь диапазон разрыва) */
+  /** true — последующий диапазон ещё не достиг дальней границы окна. */
   unfilled: boolean;
+  /** Окно заполнено: для up low ≤ bottom, для down high ≥ top. */
+  filled: boolean;
+  /** Закрытие прошло за дальнюю границу: для up close < bottom, для down close > top. */
+  broken: boolean;
 }
 
 /** Тип паттерна для UI (маппинг русской классификации Нисона) */
@@ -65,8 +69,14 @@ export interface SignalDTO {
   rr: number;
   quality: number;
   timestamp: number;
-  /** openTime (мс) бара, на котором сигнал был впервые обнаружен — маркер на графике */
+  /** openTime бара входа; у pending — последнего бара формации. */
   bar_time?: number;
+  /** Фактические абсолютные индексы; null у ещё не подтверждённого сценария. */
+  confirmation_index: number | null;
+  entry_index: number | null;
+  entry_time: number | null;
+  /** true — entry_price является оценкой pending-сценария, а не фактическим входом. */
+  entry_estimated: boolean;
   confirmed: boolean;
   /** Жизненный цикл по Нисону (аудит №11): pending/confirmed/invalidated/expired */
   lifecycle_status?: 'pending' | 'confirmed' | 'invalidated' | 'expired';

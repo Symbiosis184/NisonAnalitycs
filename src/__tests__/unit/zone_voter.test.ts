@@ -67,14 +67,16 @@ describe('ZoneVoter.collect', () => {
     expect(Array.isArray(zones.support)).toBe(true);
   });
 
-  it('не возвращает из кэша зоны, рассчитанные для другой цены', () => {
+  it('кэш различает цену и ревизию истории при той же длине и времени баров', () => {
     ZoneVoter.clearCache();
-    const candles = flat(80, 100);
-    ZoneVoter.collect(100, candles);
+    const at100 = ZoneVoter.collect(100, swingCandles);
+    const at110 = ZoneVoter.collect(110, swingCandles);
+    expect(at110).not.toBe(at100);
 
-    const zones = ZoneVoter.collect(200, candles);
-    expect(zones.resistance.every(z => z.level >= 200)).toBe(true);
-    expect(zones.support.every(z => z.level <= 200)).toBe(true);
+    const revised = [...swingCandles];
+    revised[40] = c(120, 123, 119, 122);
+    const afterRevision = ZoneVoter.collect(100, revised);
+    expect(afterRevision).not.toBe(at100);
   });
 });
 

@@ -63,7 +63,6 @@ export interface FetchWithRetryOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   headers?: Record<string, string>;
-  maxRetriesForRateLimit?: number;
   logger?: (message: string) => void;
 }
 
@@ -113,7 +112,6 @@ export async function fetchWithRetry(url: string, opts: FetchWithRetryOptions = 
     timeoutMs = 10_000,
     signal,
     headers,
-    maxRetriesForRateLimit = 5,
     logger,
   } = opts;
 
@@ -121,10 +119,10 @@ export async function fetchWithRetry(url: string, opts: FetchWithRetryOptions = 
   const startTime = Date.now();
 
   let attempt = 0;
-  let rateLimitAttempts = 0;
   let lastError: unknown;
 
-  while (attempt <= retries || (lastError instanceof RateLimitError && rateLimitAttempts < maxRetriesForRateLimit)) {
+  // retries — общий верхний предел повторов, включая 429 и Retry-After.
+  while (attempt <= retries) {
     if (signal?.aborted) {
       throw new DOMException('Request aborted by user', 'AbortError');
     }
@@ -163,7 +161,6 @@ export async function fetchWithRetry(url: string, opts: FetchWithRetryOptions = 
 
       const rateLimitInfo = checkRateLimit(response.status, response.headers, payload);
       if (rateLimitInfo.isLimited) {
-        rateLimitAttempts++;
         throw new RateLimitError(undefined, rateLimitInfo.retryAfterMs);
       }
 
@@ -195,7 +192,7 @@ export async function fetchWithRetry(url: string, opts: FetchWithRetryOptions = 
     }
 
     attempt++;
-    if (attempt > retries && !(lastError instanceof RateLimitError)) break;
+    if (attempt > retries) break;
 
     const delay = Math.min(baseDelayMs * 2 ** (attempt - 1), maxDelayMs);
     const jitter = delay * (0.5 + Math.random() * 0.5);

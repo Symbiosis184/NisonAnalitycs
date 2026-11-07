@@ -11,18 +11,17 @@
 // считала «gap от закрытия» (open vs prevClose ≥ 1%) и превращала график
 // акций в кашу из горизонтальных полос — теперь используется строгий канон.
 //
-// Размер гэпа (% от цены) считается по ширине самого разрыва
-// (gap_top - gap_bottom) — это то, что Нисон измеряет при классификации
-// common / breakaway / runaway / exhaustion гэпов.
+// Размер окна (% от цены) считается по ширине самого разрыва
+// (gap_top - gap_bottom). Числовой фильтр ширины относится к проекту.
 //
-// Закрытие гэпа (fill) по Нисону: гэп считается закрытым, если цена ПОСЛЕ
-// бара-гэпа прошла весь диапазон разрыва bottom..top (низ и верх зоны
-// побывали в торговом диапазоне одной последующей свечи).
+// Заполнение окна (fill): последующий диапазон достиг дальней границы зоны.
+// Окончательный прорыв (break) — отдельное событие: закрытие ниже основания
+// восходящего окна либо выше вершины нисходящего. Внутрисессионный прокол сам
+// по себе не означает окончательного прорыва.
 //
-// Рыночный контекст: криптовалюты торгуются 24/7 — гэпов у них нет, поэтому
-// на крипте всегда [] (см. также GAP_PATTERNS_ENABLED в pattern_engine.ts).
-// Порог MIN_GAP_PCT отсекает микрогэпы: пользователь явно указал, что
-// микрогэпы не интересны — они зашумляют график и не несут информации.
+// Рыночный контекст: на непрерывном криптовалютном рынке отображение окон
+// отключено правилом проекта (см. также GAP_PATTERNS_ENABLED в pattern_engine.ts).
+// Порог MIN_GAP_PCT — проектный фильтр микрогэпов, а не книжный числовой закон.
 
 import type { CandleDTO, GapDTO } from '../api/types';
 
@@ -40,7 +39,7 @@ export function detectGaps(
   candles: Array<Pick<CandleDTO, 'time' | 'open' | 'high' | 'low' | 'close'>>,
   market: 'stock' | 'crypto',
 ): GapDTO[] {
-  if (market !== 'stock') return []; // 24/7 рынок: гэпов нет
+  if (market !== 'stock') return []; // проектное отключение окон для криптовалют
   const gaps: GapDTO[] = [];
   for (let i = 1; i < candles.length; i++) {
     const prev = candles[i - 1];
@@ -59,12 +58,15 @@ export function detectGaps(
       if (pct >= MIN_GAP_PCT) gaps.push(mkGap(cur, bottom, top, 'down', pct));
     }
   }
-  // Статус fill: гэп закрыт, если ЛЮБАЯ свеча после бара-гэпа пересекла
-  // весь диапазон [bottom..top] разрыва.
   for (const g of gaps) {
-    g.unfilled = !candles.some(
-      (c) => c.time > g.time && c.high >= g.top && c.low <= g.bottom,
-    );
+    const later = candles.filter((c) => c.time > g.time);
+    g.filled = later.some((c) => g.direction === 'up'
+      ? c.low <= g.bottom
+      : c.high >= g.top);
+    g.broken = later.some((c) => g.direction === 'up'
+      ? c.close < g.bottom
+      : c.close > g.top);
+    g.unfilled = !g.filled;
   }
   return gaps.slice(-MAX_DISPLAY_GAPS);
 }
@@ -84,6 +86,8 @@ function mkGap(
     bottom,
     direction,
     pct,
-    unfilled: true, // пересчитывается выше
+    unfilled: true,
+    filled: false,
+    broken: false,
   };
 }

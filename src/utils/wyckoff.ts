@@ -22,7 +22,7 @@ export type WyckoffPhase = 'accumulation' | 'markup' | 'distribution' | 'markdow
 
 export interface PhaseInfo {
   phase: WyckoffPhase;
-  /** Уверенность классификации 0..1 */
+  /** Эвристический балл классификации 0..1, не вероятность */
   confidence: number;
   /** Нижняя граница последнего выраженного диапазона */
   rangeLow: number;
@@ -188,19 +188,14 @@ export function detectPhase(candles: Candle[], lookback = 90): PhaseInfo {
 /**
  * Множитель доверия к сигналу в зависимости от фазы и направления сделки.
  *
- * ВАЖНО (аудит совместимости с методом Стива Нисона): фаза по умолчанию НЕ
- * влияет на качество сигнала (нейтральна, 1.0). В каноне Нисона решение
- * принимает паттерн + объём + уровень S/R, а не «ярлык» фазы цикла.
- * Корректировка включается только при УВЕРЕННОЙ классификации фазы
- * (confidence >= 0.55) и ограничена ±10% — чтобы контекст мог лишь слегка
- * подсвечивать/ослаблять сигнал, но не переопределять его суть.
- * При низкой уверенности или фазе «переход» множитель строго 1.0 —
- * анализ остаётся чисто нисоновским.
+ * Это отдельная эвристика проекта, а не правило из книг Нисона или Вайкоффа.
+ * При низком балле классификации и фазе «переход» множитель равен 1.0.
+ * Порог 0.55 и ограничение корректировки ±10% выбраны проектом.
  */
 export const PHASE_CONFIDENCE_THRESHOLD = 0.55;
 
 export function phaseMultiplier(direction: 'long' | 'short', info: PhaseInfo): number {
-  // Низкая уверенность классификации → фаза не имеет права искажать сигнал.
+  // Низкий балл классификации → фаза не корректирует сигнал.
   if (info.confidence < PHASE_CONFIDENCE_THRESHOLD) return 1.0;
   let m: number;
   switch (info.phase) {
@@ -234,5 +229,5 @@ export function phaseLabel(info: PhaseInfo): string {
     markdown: 'Падение',
     transition: 'Переход',
   };
-  return `${labels[info.phase]} · ${(info.confidence * 100).toFixed(0)}%`;
+  return `${labels[info.phase]} · балл ${(info.confidence * 100).toFixed(0)}/100`;
 }

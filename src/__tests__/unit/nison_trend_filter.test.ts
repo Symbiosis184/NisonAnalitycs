@@ -76,17 +76,16 @@ describe('Нисон-фильтр предшествующего тренда (�
     expect(PatternDetector.isBullishEngulfing(c1, c2, prev).found).toBe(true);
   });
 
-  it('боковик/пила не трактуется как тренд: разворот не блокируется «выдуманным» направлением', () => {
-    // Ключевое отличие от прежней эвристики: на пиле фильтр НЕ определяет
-    // направление ('up'/'down'), поэтому обе стороны разворота остаются
-    // доступны — ровно как при нейтральном контексте.
+  it('боковик/пила не подменяет предшествующий тренд для разворотной модели', () => {
+    // Геометрия поглощения сама по себе недостаточна: у Нисона бычье и
+    // медвежье поглощения являются разворотами после спада и роста соответственно.
     const prev = sawtoothFlat(80);
     const d1 = c(98, 102.5, 97.5, 102);   // bullish
     const d2 = c(102.2, 102.4, 97.8, 97.9); // bearish engulfing
-    expect(PatternDetector.isBearishEngulfing(d1, d2, prev).found).toBe(true);
+    expect(PatternDetector.isBearishEngulfing(d1, d2, prev).found).toBe(false);
     const u1 = c(102, 102.5, 98, 98.5);   // bearish
     const u2 = c(98.3, 103, 98.2, 102.2); // bullish engulfing
-    expect(PatternDetector.isBullishEngulfing(u1, u2, prev).found).toBe(true);
+    expect(PatternDetector.isBullishEngulfing(u1, u2, prev).found).toBe(false);
   });
 
   it('короткая история (<SMA65) ведёт себя как прежде: выраженный тренд блокирует', () => {

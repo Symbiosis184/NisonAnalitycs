@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { fetchKlines, fetch24hTicker, toQuoteProxyInterval } from '../../api/bybit';
+import { fetchKlines, fetch24hTicker } from '../../api/bybit';
 
 const klinesResponse = (n = 3) => ({
   retCode: 0,
@@ -71,39 +71,6 @@ describe('fetchKlines — валидация и защита от инъекци
   });
 });
 
-describe('Котировочный прокси — формат интервалов', () => {
-  it('переводит прямой формат Bybit в формат прокси', () => {
-    expect(toQuoteProxyInterval('30')).toBe('30m');
-    expect(toQuoteProxyInterval('60')).toBe('1h');
-    expect(toQuoteProxyInterval('240')).toBe('4h');
-    expect(toQuoteProxyInterval('D')).toBe('1d');
-    expect(toQuoteProxyInterval('W')).toBe('1w');
-  });
-
-  it('не уходит во внешний fallback после успешного ответа прокси на D', async () => {
-    document.head.insertAdjacentHTML(
-      'beforeend', '<meta name="kairi-api-token" content="test-token">',
-    );
-    const proxied = [{
-      openTime: 1700000000000, open: 100, high: 105, low: 98, close: 104, volume: 12.5,
-    }];
-    const fetchMock = vi.fn(async (_url: string) => mkBybitResponse({ data: proxied }));
-    vi.stubGlobal('fetch', fetchMock);
-
-    try {
-      const candles = await fetchKlines('BTCUSDT', 'D', 1);
-      expect(candles).toEqual(proxied);
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      const url = String(fetchMock.mock.calls[0][0]);
-      expect(new URL(url, 'https://kairi.pro').searchParams.get('interval')).toBe('1d');
-      expect(url).not.toContain('api.bybit.com');
-    } finally {
-      vi.unstubAllGlobals();
-      document.querySelector('meta[name="kairi-api-token"]')?.remove();
-    }
-  });
-});
-
 describe('fetch24hTicker', () => {
   it('валидирует symbol до запроса', async () => {
     const spy = vi.spyOn(globalThis, 'fetch');
@@ -119,8 +86,8 @@ describe('fetch24hTicker', () => {
     const t = await fetch24hTicker('XRPUSDT');
     expect(t.lastPrice).toBe(50000);
     expect(t.priceChangePercent).toBeCloseTo(2.5);
-    // previousPrice = 50000 / 1.025; абсолютное изменение считается от неё.
-    expect(t.priceChange).toBeCloseTo(50000 * 0.025 / 1.025);
+    // price24hPcnt задан относительно цены 24 часа назад, а не lastPrice.
+    expect(t.priceChange).toBeCloseTo(50000 - 50000 / 1.025);
     vi.unstubAllGlobals();
   });
 

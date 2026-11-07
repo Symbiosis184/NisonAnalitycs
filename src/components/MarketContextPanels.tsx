@@ -95,7 +95,7 @@ export function WyckoffPhasePanel({ wyckoff }: WProps) {
           className="ml-auto px-2 py-0.5 rounded text-xs font-semibold"
           style={{ backgroundColor: `${meta.color}20`, color: meta.color }}
         >
-          {t(meta.label)} · {(wyckoff.confidence * 100).toFixed(0)}%
+          {t(meta.label)} · {t('балл')} {(wyckoff.confidence * 100).toFixed(0)}/100
         </span>
       </h3>
 

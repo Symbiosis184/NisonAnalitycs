@@ -115,7 +115,7 @@ export function runBacktest(candles: Candle[], config: BacktestConfig): Backtest
     if (direction === 'short' && !(stop > entry)) continue;
 
     // Сигнальный режим: цель = структурный уровень из живой стратегии.
-    // Вход дополнительно отсекается порогом minRR (в генераторе — adjustedRR >= 2).
+    // Вход дополнительно отсекается проектным порогом исходного minRR >= 2.
     let target: number;
     const sm = signalManagement ? bounds.target : undefined;
     if (sm) {
