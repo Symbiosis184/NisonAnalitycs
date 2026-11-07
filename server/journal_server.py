@@ -310,6 +310,8 @@ class Handler(BaseHTTPRequestHandler):
 
         with conn() as c:
             if self.path.startswith("/api/journal/replace"):
+                if not self._is_master_key():
+                    return self._send(403, {"error": "master key required"})
                 incoming = data.get("signals") if isinstance(data, dict) else None
                 if not isinstance(incoming, list):
                     return self._send(400, {"error": "expected {signals:[...]}"})
