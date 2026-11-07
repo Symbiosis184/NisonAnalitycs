@@ -2,7 +2,7 @@ import { Candle } from './candle';
 import { ema } from './indicators';
 import { ZoneVoter, timeframeKey, type TimeframeKey } from './zone_voter';
 import { findSwings } from './levels';
-import { getSwingTrend } from './trend_detection';
+import { getSwingTrend, nisonSma } from './trend_detection';
 import { getPatternCandleCount } from './pattern_ids';
 
 const SWING_SPAN_BY_TF: Record<TimeframeKey, number> = {
@@ -102,22 +102,46 @@ export class PatternDetector {
     return bodyAtPriorTop && bodyInLowerHalf;
   }
 
+  /**
+   * Подтверждённый контекст по Нисону (гл. 13): структура HH/HL или LH/LL,
+   * положение закрытия относительно SMA65 и наклон SMA65 должны совпасть.
+   * nisonSma сохраняет тот же SMA65-канон на короткой истории через EMA-fallback.
+   */
+  private static confirmedPrecedingTrend(prev: Candle[]): 'up' | 'down' | null {
+    if (prev.length < 4) return null;
+    const swing = getSwingTrend(prev, 3);
+    if (swing === 'БОКОВИК') return null;
+
+    const ma65 = nisonSma(prev.map(c => c.close), 65);
+    const lastMa = ma65[ma65.length - 1];
+    const priorMa = ma65[Math.max(0, ma65.length - 11)];
+    const lastClose = prev[prev.length - 1].close;
+    if (![lastMa, priorMa, lastClose].every(Number.isFinite)) return null;
+
+    if (swing === 'ВОСХОДЯЩИЙ' && lastClose > lastMa && lastMa > priorMa) return 'up';
+    if (swing === 'НИСХОДЯЩИЙ' && lastClose < lastMa && lastMa < priorMa) return 'down';
+    return null;
+  }
+
+  // Для разворота недостаточно произвольного движения за несколько баров:
+  // блокируем только подтверждённый противоположный тренд. Нейтральный контекст
+  // не запрещает модель, но и не считается доказательством разворота сам по себе.
   private static precededByDecline(prev: Candle[]): boolean {
-    const seg = prev.slice(-8);
-    if (seg.length < 4) return false;
-    const first = seg[0].close, last = seg[seg.length - 1].close;
-    const lo = Math.min(...seg.map(c => c.low));
-    const avgRange = seg.reduce((s, c) => s + (c.high - c.low), 0) / seg.length;
-    return last <= first * 0.997 || last <= first - avgRange * 0.5 || last <= lo * 1.02;
+    return prev.length >= 4 && this.confirmedPrecedingTrend(prev) !== 'up';
   }
 
   private static precededByRally(prev: Candle[]): boolean {
-    const seg = prev.slice(-8);
-    if (seg.length < 4) return false;
-    const first = seg[0].close, last = seg[seg.length - 1].close;
-    const hi = Math.max(...seg.map(c => c.high));
-    const avgRange = seg.reduce((s, c) => s + (c.high - c.low), 0) / seg.length;
-    return last >= first * 1.003 || last >= first + avgRange * 0.5 || last >= hi * 0.98;
+    return prev.length >= 4 && this.confirmedPrecedingTrend(prev) !== 'down';
+  }
+
+  // Модели ПРОДОЛЖЕНИЯ, в отличие от разворотов, требуют подтверждённого
+  // тренда в собственном направлении; нейтральный контекст для них недостаточен.
+  private static inConfirmedDecline(prev: Candle[]): boolean {
+    return this.confirmedPrecedingTrend(prev) === 'down';
+  }
+
+  private static inConfirmedRally(prev: Candle[]): boolean {
+    return this.confirmedPrecedingTrend(prev) === 'up';
   }
 
   private static makesNewExtreme(value: number, window: Candle[], isLow: boolean): boolean {
@@ -670,11 +694,11 @@ export class PatternDetector {
     }
 
     // Бычье разделение: чёрная → белая (контраст), продолжение РОСТА.
-    if (c1.isBearish && c2.isBullish && c2.open <= c2.low + c2.totalRange * 0.05 && this.precededByRally(prev)) {
+    if (c1.isBearish && c2.isBullish && c2.open <= c2.low + c2.totalRange * 0.05 && this.inConfirmedRally(prev)) {
       return { found: true, name: 'РАЗДЕЛЕНИЕ (БЫЧЬЕ)' };
     }
     // Медвежье разделение: белая → чёрная (контраст), продолжение СПАДА.
-    if (c1.isBullish && c2.isBearish && c2.open >= c2.high - c2.totalRange * 0.05 && this.precededByDecline(prev)) {
+    if (c1.isBullish && c2.isBearish && c2.open >= c2.high - c2.totalRange * 0.05 && this.inConfirmedDecline(prev)) {
       return { found: true, name: 'РАЗДЕЛЕНИЕ (МЕДВЕЖЬЕ)' };
     }
     return { found: false, name: '' };
@@ -685,7 +709,7 @@ export class PatternDetector {
    * продолжения спада, не бычьи.
    */
   static isNeckFamily(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
-    if (!this.precededByDecline(prev)) return { found: false, name: '' };
+    if (!this.inConfirmedDecline(prev)) return { found: false, name: '' };
     if (!(c1.isBearish && c1.isLongCandle)) return { found: false, name: '' };
     if (!(c2.isBullish && c2.body <= c1.body * 0.5)) return { found: false, name: '' };
 
@@ -845,7 +869,7 @@ export class PatternDetector {
     }
     if (!(c4.isBullish && c4.isLongCandle)) return { found: false, name: '' };
     if (c4.close <= Math.max(...small.map(s => s.high))) return { found: false, name: '' };
-    if (!this.precededByRally(candles.slice(0, -5))) return { found: false, name: '' };
+    if (!this.inConfirmedRally(candles.slice(0, -5))) return { found: false, name: '' };
 
     let name = 'УДЕРЖАНИЕ НА ТАТАМИ';
     if (small[0].bodyBottom > c0.bodyTop) name += ' (ГЭП ВВЕРХ)';
