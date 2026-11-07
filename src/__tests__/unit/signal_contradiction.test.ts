@@ -21,10 +21,12 @@ describe('единый классификатор разворотов (нет �
       expect(isReversalModel(n)).toBe(isReversalPatternName(n));
     }
   });
-  it('молот/звёзда — разворот; солдаты/прорыв — продолжение', () => {
+  it('молот/звёзда/солдаты — разворот; прорыв — продолжение', () => {
     expect(isReversalPatternName('МОЛОТ')).toBe(true);
     expect(isReversalPatternName('ПАДАЮЩАЯ ЗВЕЗДА')).toBe(true);
-    expect(isReversalPatternName('ТРИ БЕЛЫХ СОЛДАТА')).toBe(false);
+    // Три белых солдата — бычья разворотная модель в основании (гл. 6 ЯС).
+    expect(isReversalPatternName('ТРИ БЕЛЫХ СОЛДАТА')).toBe(true);
+    expect(isReversalPatternName('ПРОРЫВ КОНСОЛИДАЦИИ (БЫЧИЙ)')).toBe(false);
   });
 });
 

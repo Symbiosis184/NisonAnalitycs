@@ -23,7 +23,7 @@ describe('isReversalModel', () => {
   it('разворотные модели распознаны по стабильным ID (включая имя с бейджем объёма)', () => {
     expect(isReversalModel('БЫЧЬЕ ПОГЛОЩЕНИЕ')).toBe(true);
     expect(isReversalModel('ПАДАЮЩАЯ ЗВЕЗДА (ОБЪЁМ)')).toBe(true);
-    expect(isReversalModel('ТРИ БЕЛЫХ СОЛДАТА')).toBe(false); // продолжение
+    expect(isReversalModel('ТРИ БЕЛЫХ СОЛДАТА')).toBe(true); // разворот в основании
   });
 });
 

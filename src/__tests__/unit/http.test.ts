@@ -61,7 +61,9 @@ describe('fetchWithRetry', () => {
     const fetchMock = vi.fn(async () => mkResponse(429, {}, '1'));
     vi.stubGlobal('fetch', fetchMock);
     await expect(
-      fetchWithRetry('https://x.test/d', { retries: 1, baseDelayMs: 1, maxDelayMs: 2 })
+      fetchWithRetry('https://x.test/d', {
+        retries: 1, maxRetriesForRateLimit: 1, baseDelayMs: 1, maxDelayMs: 2,
+      })
     ).rejects.toBeInstanceOf(RateLimitError);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
@@ -97,7 +99,7 @@ describe('fetchWithRetry', () => {
 describe('describeNetworkError', () => {
   it('даёт разные сообщения для разных классов ошибок', () => {
     expect(describeNetworkError(new RateLimitError())).toMatch(/ограничила частоту/i);
-    expect(describeNetworkError(new Error('HTTP 404'))).toMatch(/данные|бирж/i);
+    expect(describeNetworkError(new Error('HTTP 404'))).toMatch(/API endpoint|разработчик/i);
     expect(describeNetworkError(new Error('Сетевая ошибка'))).toMatch(/соединени/i);
     expect(describeNetworkError(new Error('Таймаут запроса'))).toMatch(/вовремя/i);
     expect(describeNetworkError('что-то')).toMatch(/Не удалось получить данные/);
