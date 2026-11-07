@@ -194,6 +194,26 @@ describe('PatternDetector.getFormationBounds', () => {
     const b = PatternDetector.getFormationBounds('НЕСУЩЕСТВУЮЩИЙ', candles, 2);
     expect(b.patternCandlesCount).toBe(1);
   });
+
+  it('линия пояса — односвечная модель, c1 задаёт только контекст', () => {
+    const b = PatternDetector.getFormationBounds('ЛИНИЯ ПОЯСА (БЫЧЬЯ)', candles, 2);
+    expect(b.patternCandlesCount).toBe(1);
+    expect(b.patternStartIdx).toBe(2);
+  });
+
+  it('гэп на максимумах — пять свечей консолидации и сигнальная', () => {
+    const history = Array.from({ length: 8 }, (_, i) => c(100 + i, 102 + i, 99 + i, 101 + i));
+    const b = PatternDetector.getFormationBounds('ГЭП НА МАКСИМУМАХ', history, 7);
+    expect(b.patternCandlesCount).toBe(6);
+    expect(b.patternStartIdx).toBe(2);
+  });
+
+  it('прорыв консолидации — четыре свечи диапазона и сигнальная', () => {
+    const history = Array.from({ length: 8 }, (_, i) => c(100 + i, 102 + i, 99 + i, 101 + i));
+    const b = PatternDetector.getFormationBounds('ПРОРЫВ КОНСОЛИДАЦИИ (БЫЧИЙ)', history, 7);
+    expect(b.patternCandlesCount).toBe(5);
+    expect(b.patternStartIdx).toBe(3);
+  });
 });
 
 describe('VolumeAnalyzer', () => {
