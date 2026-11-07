@@ -445,6 +445,12 @@ BINANCE_INTERVAL = {
 # 1min, 5min, 15min, 30min, 45min, 1h, 2h, 4h, 8h, 1day, 1week, 1month.
 # '1hour' и т.п. — НЕ поддерживаются (400 Bad Request).
 TD_INTERVAL = {
+    "5min": ("5min", 300), "5": ("5min", 300),
+    "15min": ("15min", 900), "15": ("15min", 900),
+    "30min": ("30min", 1800), "30": ("30min", 1800),
+    "1h": ("1h", 3600), "60": ("1h", 3600),
+    "2h": ("2h", 7200), "120": ("2h", 7200),
+    "4h": ("4h", 14400), "240": ("4h", 14400),
     "8h": ("8h", 28800), "480": ("8h", 28800),
     "1d": ("1day", 86400), "d": ("1day", 86400), "D": ("1day", 86400),
     "1w": ("1week", 604800), "w": ("1week", 604800), "W": ("1week", 604800),
@@ -652,7 +658,7 @@ def quotes_klines(
     def fetch():
         if exchange == "twelvedata":
             base = symbol.split(":")[0]
-            tv = iv  # уже wire-форма Twelvedata ('1h', '30min', '1day', ...)
+            tv = td_iv  # wire-форма Twelvedata; iv остаётся каноном для кэша
             # time_series отдаёт последние outputsize баров — окно не нужно;
             # запас +10 на случай отброшенных битых строк, режем по limit ниже.
             body = _td_get("/time_series", {
@@ -730,9 +736,11 @@ def quotes_ticker(
                 raise HTTPException(status_code=404, detail="unknown symbol")
             r = rows[0]
             last = float(r["lastPrice"])
-            pct = float(r["price24hPcnt"]) * 100
+            pct_ratio = float(r["price24hPcnt"])
+            pct = pct_ratio * 100
+            change = last * pct_ratio / (1 + pct_ratio) if pct_ratio != -1 else 0.0
             return {"lastPrice": last, "priceChangePercent": round(pct, 2),
-                    "priceChange": round(last * float(r["price24hPcnt"]), 8)}
+                    "priceChange": round(change, 8)}
         rows = _http_get(f"{ALLOWED_EXCHANGES[exchange]}/api/v3/ticker/24hr",
                          {"symbol": symbol})
         return {"lastPrice": float(rows["lastPrice"]),
