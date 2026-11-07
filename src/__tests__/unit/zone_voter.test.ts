@@ -66,6 +66,16 @@ describe('ZoneVoter.collect', () => {
     const zones = ZoneVoter.collect(100, flat(3));
     expect(Array.isArray(zones.support)).toBe(true);
   });
+
+  it('не возвращает из кэша зоны, рассчитанные для другой цены', () => {
+    ZoneVoter.clearCache();
+    const candles = flat(80, 100);
+    ZoneVoter.collect(100, candles);
+
+    const zones = ZoneVoter.collect(200, candles);
+    expect(zones.resistance.every(z => z.level >= 200)).toBe(true);
+    expect(zones.support.every(z => z.level <= 200)).toBe(true);
+  });
 });
 
 describe('ZoneVoter.isNearSupport / isNearResistance', () => {

@@ -106,7 +106,7 @@ export class ZoneVoter {
 
   /**
    * Кэш результатов collect() для избежания повторных вычислений.
-   * Ключ: `${candles.length}_${lastCandleTime}_${tfKey}`
+   * Ключ: `${candles.length}_${lastCandleTime}_${tfKey}_${price}`
    */
   private static collectCache = new Map<string, { support: Zone[]; resistance: Zone[] }>();
   private static readonly CACHE_MAX_SIZE = 10;
@@ -122,7 +122,9 @@ export class ZoneVoter {
   ): { support: Zone[]; resistance: Zone[] } {
     // Проверяем кэш
     const lastCandle = candles[candles.length - 1];
-    const cacheKey = `${candles.length}_${lastCandle?.time ?? 0}_${tfKey}`;
+    // Цена участвует в построении и фильтрации зон: без неё в ключе повторный
+    // вызов с той же историей, но другой ценой возвращал чужие S/R-наборы.
+    const cacheKey = `${candles.length}_${lastCandle?.time ?? 0}_${tfKey}_${price}`;
     const cached = this.collectCache.get(cacheKey);
     if (cached) return cached;
 
