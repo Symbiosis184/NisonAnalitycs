@@ -2,18 +2,12 @@ import { assertValidSymbol, isValidTimeframe, clampNumber } from '../utils/valid
 import { fetchWithRetry } from '../utils/http';
 import { parseMarket } from './market';
 
-const BASE_URL = 'https://api.bybit.com'; // только fallback (dev без backend-прокси)
+const BASE_URL = 'https://api.bybit.com';
 
-// --- Серверный котировочный прокси (/api/quotes/*) ---------------------------
-// Коммерческий контур: браузер не ходит на api.bybit.com напрямую — запросы
-// идут через nginx на quotes_server.py (FastAPI), где стоит серверный кэш,
-// дедупликация и защита от abuse. Токен доступа — тот же X-Kairi-Key, что и
-// для журнала (meta kairi-journal-token / kairi-api-token в index.html).
 import { getJournalToken } from '../utils/journalSync';
 
-let quotesMode: 'proxy' | 'fallback' | null = null; // определяется по первому ответу
+// --- Серверный котировочный прокси (/api/quotes/*) ---------------------------
 
-/** true, если страница открыта на боевом домене (есть наш backend за nginx). */
 function hasBackend(): boolean {
   try {
     return typeof document !== 'undefined' &&
@@ -24,7 +18,6 @@ function hasBackend(): boolean {
   }
 }
 
-/** Токен котировочного API: расширенный JSON-токен (role=user), fallback — journal-токен. */
 function getApiToken(): string {
   try {
     const meta = document.querySelector('meta[name="kairi-api-token"]');
@@ -34,11 +27,6 @@ function getApiToken(): string {
   return getJournalToken();
 }
 
-/**
- * Ответ серверного кэша QuoteCache — {'data': ..., 'cached': bool}.
- * Разворачиваем обёртку, если она есть; иначе считаем ответ «сырым» и
- * возвращаем как есть (обратная совместимость с прежними формами).
- */
 function unwrapProxy(body: any): any {
   if (body && typeof body === 'object' && !Array.isArray(body) && 'data' in body) {
     return (body as { data: unknown }).data ?? null;
@@ -46,7 +34,6 @@ function unwrapProxy(body: any): any {
   return body ?? null;
 }
 
-/** Тело ошибки прокси (FastAPI отдаёт {'detail': ...}) — для понятных сообщений. */
 async function readErrorDetail(res: Response): Promise<string> {
   try {
     const body = await res.json();
@@ -58,7 +45,7 @@ async function readErrorDetail(res: Response): Promise<string> {
 }
 
 async function proxyFetch(path: string, params: Record<string, string | number>, force = false): Promise<any | null> {
-  if (!hasBackend()) return null; // dev/vitest — сразу fallback на Bybit
+  if (!hasBackend()) return null;
   const qs = Object.entries(params).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&');
   const token = getApiToken();
   try {
@@ -66,21 +53,15 @@ async function proxyFetch(path: string, params: Record<string, string | number>,
       headers: token ? { 'X-Kairi-Key': token } : {},
       signal: (AbortSignal as any)?.timeout ? AbortSignal.timeout(10_000) : undefined,
     });
-    if (res.status === 401 || res.status === 403) return null; // токен просрочен -> деградация
+    if (res.status === 401 || res.status === 403) return null;
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    quotesMode = 'proxy';
     const body = await res.json();
     return unwrapProxy(body);
   } catch {
-    return null; // сеть/5xx -> fallback напрямую (как до коммерческого контура)
+    return null;
   }
 }
 
-/**
- * То же, что proxyFetch, но ошибки сервера НЕ глотаются: бросаем Error с
- * detail из ответа. Нужно для источников без browser-fallback (акции/Twelvedata):
- * раньше любая ошибка прокси превращалась в запутанное «прокси не отвечает».
- */
 async function proxyFetchStrict(path: string, params: Record<string, string | number>, force = false): Promise<any> {
   if (!hasBackend()) {
     throw new Error('Источник данных по акциям недоступен: нет серверного прокси (Twelvedata работает только на боевом домене).');
@@ -113,37 +94,66 @@ async function proxyFetchStrict(path: string, params: Record<string, string | nu
     throw new Error(detail ? `Ошибка источника данных (${res.status}): ${detail}`
                            : `Источник данных по акциям недоступен (HTTP ${res.status}). Попробуйте позже.`);
   }
-  quotesMode = 'proxy';
   const body = await res.json();
   return unwrapProxy(body);
 }
 
 // --- Кэш и троттлинг обращений к Bybit -------------------------------------
-// Dashboard запрашивает 8 символов × 2 эндпоинта при каждой загрузке и
-// периодически автообновляется. Без кэша это быстро упирается в rate-limit
-// биржи (бан по IP). Кэшируем ответы на короткое время и дедуплицируем
-// параллельные одинаковые запросы (in-flight coalescing).
 interface CacheEntry<T> { value: T; expires: number }
 const cache = new Map<string, CacheEntry<any>>();
 const inflight = new Map<string, Promise<any>>();
 
+/** Метрики кэша для мониторинга */
+export interface CacheMetrics {
+  hits: number;
+  misses: number;
+  errors: number;
+}
+
+const cacheMetrics: CacheMetrics = { hits: 0, misses: 0, errors: 0 };
+
+export function getCacheMetrics(): CacheMetrics {
+  return { ...cacheMetrics };
+}
+
+export function resetCacheMetrics(): void {
+  cacheMetrics.hits = 0;
+  cacheMetrics.misses = 0;
+  cacheMetrics.errors = 0;
+}
+
+/**
+ * Кэшированный fetch с in-flight coalescing.
+ * FIX: кэшируются ТОЛЬКО успешные ответы (retCode === 0).
+ * Ошибки API (retCode !== 0) НЕ кэшируются — иначе при rate-limit
+ * система "замораживается" на TTL кэша.
+ */
 async function cachedFetchJson(key: string, url: string, ttlMs: number): Promise<any> {
   const now = Date.now();
   const hit = cache.get(key);
-  if (hit && hit.expires > now) return hit.value;
+  if (hit && hit.expires > now) {
+    cacheMetrics.hits++;
+    return hit.value;
+  }
+  cacheMetrics.misses++;
 
-  // Если такой запрос уже выполняется — ждём его результат вместо дубля
   const pending = inflight.get(key);
   if (pending) return pending;
 
   const p = (async () => {
     try {
-      // fetchWithRetry: экспоненциальный backoff при 5xx/таймаутах,
-      // уважение Retry-After / распознавание rate-limit (429, retCode 10006)
       const response = await fetchWithRetry(url);
       const data = await response.json();
-      // Ошибки реткода проверяются в самих fetchKlines/fetch24hTicker;
-      // здесь не бросаем, чтобы не ломать семантику «кэшируем сырой ответ».
+      
+      // FIX: кэшируем только успешные ответы
+      if (data && typeof data === 'object' && 'retCode' in data) {
+        if (data.retCode !== 0) {
+          cacheMetrics.errors++;
+          // НЕ кэшируем ошибку — пусть следующая попытка попробует снова
+          return data;
+        }
+      }
+      
       cache.set(key, { value: data, expires: Date.now() + ttlMs });
       return data;
     } finally {
@@ -154,58 +164,36 @@ async function cachedFetchJson(key: string, url: string, ttlMs: number): Promise
   return p;
 }
 
-const KLINES_TTL_MS = 30_000;   // свечи переиспользуем 30 секунд
-const TICKER_TTL_MS = 10_000;   // тикер — 10 секунд
+const KLINES_TTL_MS = 30_000;
+const TICKER_TTL_MS = 10_000;
 
-// --- TradFi: американские акции через Twelvedata (бесплатный тариф, ключ на сервере) ---
-// Особенности источника учитаны здесь же:
-//  • история D/W/M — годы, внутридневные интервалы — месяцы (хватает для ТФ);
-//  • API-ключ живёт ТОЛЬКО на серверном прокси (env KAIRI_TWELVEDATA_API_KEY),
-//    в браузер он не попадает никогда;
-//  • прямые обращения из браузера к api.twelvedata.com невозможны (CORS +
-//    утечка ключа), поэтому котировки акций идут ТОЛЬКО через /api/quotes/*.
-// Поддерживаются ВСЕ торговые ТФ приложения (30m/1H/2H/4H/D/W) и базовые
-// минутные (1m/5m/15m). Раньше здесь были только 30/60/120/240/D/W/M, и любой
-// ТФ вне списка падал с «Таймфрейм недоступен для акций»: на дашборде все
-// карточки акций работали только на D. Значения — канон серверного прокси
-// (TD_INTERVAL в server/quotes_server.py), где они переводятся в wire-формы
-// Twelvedata ('30min','1h','1day',...).
+// --- TradFi: американские акции через Twelvedata ---
 const STOCK_INTERVAL_MAP: Record<string, string> = {
   '1': '1', '3': '5', '5': '5', '15': '15',
   '30': '30', '60': '60', '120': '120', '240': '240', '480': '480',
   'D': 'd', 'W': 'w', 'M': 'm',
 };
 
-/**
- * ТФ приложения -> интервал прокси ('30','60','120','240','d','w'); null — недоступен.
- * Фолбэк на дневной канон ('d') для неизвестных форм (например, сырой '1M' до
- * нормализации): раньше неизвестный ТФ бросал «Таймфрейм недоступен для акций»,
- * и на боевом домене карточки акций работали только на D. Дневная история у
- * Twelvedata deepest и есть гарантированно; серверный прокси дополнительно
- * фолбэчит неподдерживаемые внутридневные формы на ближайший больший ТФ.
- */
 export function toStockResolution(tf: unknown): string | null {
   const bybitForm = toBybitInterval(tf);
   if (!bybitForm) return 'd';
   return STOCK_INTERVAL_MAP[bybitForm] ?? 'd';
 }
 
-// Глобальный троттлер исходящих запросов к прокси (min interval между стартами).
-// 250 мс ≈ 4 req/s — с запасом под лимит Twelvedata (8 req/s на бесплатном
-// тарифе, 800/мин) и быстрее для последовательной загрузки обзора рынка.
-const STOCK_MIN_INTERVAL_MS = Number(
-  (typeof import.meta !== 'undefined' ? (import.meta as any).env?.VITE_STOCK_MIN_INTERVAL_MS : undefined) ?? 250,
-);
+/**
+ * FIX троттлера: проверка Number.isFinite() вместо ?? 250.
+ * Number(undefined) возвращает NaN, а NaN ?? 250 возвращает NaN.
+ */
+const rawInterval = typeof import.meta !== 'undefined' 
+  ? Number((import.meta as any).env?.VITE_STOCK_MIN_INTERVAL_MS) 
+  : NaN;
+const STOCK_MIN_INTERVAL_MS = Number.isFinite(rawInterval) && rawInterval > 0 
+  ? rawInterval 
+  : 250;
+
 let lastStockReqAt = 0;
 let stockQueue: Promise<unknown> = Promise.resolve();
 
-/**
- * Очередь с паузой МЕЖДУ запросами. Важно: `lastStockReqAt` обновляется
- * ПОСЛЕ ожидания, а не до — иначе N задач, вставших в очередь за одну
- * тик-секунду, все просчитывали одинаковый короткий wait и стартовали
- * синхронно одним пакетом (троттлер превращался в фикцию именно при
- * параллельном вызове из getMarketOverview — волна ~40 запросов на 429).
- */
 function throttledStockFetch<T>(fn: () => Promise<T>): Promise<T> {
   const run = stockQueue.then(async () => {
     const wait = STOCK_MIN_INTERVAL_MS - (Date.now() - lastStockReqAt);
@@ -213,21 +201,10 @@ function throttledStockFetch<T>(fn: () => Promise<T>): Promise<T> {
     lastStockReqAt = Date.now();
     return fn();
   });
-  // Очередь не должна «ломаться» из-за ошибки одного запроса
   stockQueue = run.catch(() => undefined);
   return run;
 }
 
-/**
- * Свечи акции через котировочный прокси (Twelvedata — на стороне сервера).
- * Общий путь с fetchKlines: глобальный троттлер + короткий клиентский кэш
- * (in-flight coalescing), чтобы не спровоцировать троттлинг источника при
- * каскаде ТФ и мульти-ТФ зонах (несколько параллельных запросов).
- */
-// Одинаковый дневной запрос переиспользуется всеми тикерами: AAPL:STOCK D,
-// AAPL:STOCK d, AAPL:STOCK 1d и т.п. — это одна и та же выборка ('d').
-// Без нормализации ключа кэш не совпадал, и дашборд акций генерировал в
-// разы больше обращений к прокси -> 429 от Twelvedata -> «Ошибка загрузки».
 const stockCacheKey = (base: string, resolution: string, limit: number) =>
   `klines:twelvedata:${base}:${String(resolution).toLowerCase()}:${limit}`;
 
@@ -245,17 +222,18 @@ async function fetchStockKlines(base: string, resolution: string, limit: number,
         proxyFetchStrict('/api/quotes/klines',
           { symbol: `${base}:STOCK`, interval: resolution, limit, exchange: 'twelvedata' }, force));
       if (!Array.isArray(proxied)) {
-        // Twelvedata работает только через серверный прокси — browser-fallback нет (CORS+ключ).
         throw new Error('Источник данных по акциям недоступен: котировочный прокси (Twelvedata) вернул неожиданный ответ. Попробуйте позже.');
       }
       const klines = proxied as Kline[];
+      
+      // FIX: проверяем пустой ответ
+      if (klines.length === 0) {
+        console.warn(`fetchStockKlines: пустой ответ для ${base}:${resolution}`);
+      }
+      
       cache.set(cacheKey, { value: klines, expires: Date.now() + KLINES_TTL_MS });
       return klines;
     } catch (err) {
-      // serving-stale на клиенте: источник (Twelvedata) временно недоступен или
-      // ограничил частоту запросов — отдаём последние успешные свечи, даже
-      // если их TTL истёк. Дашборд показывает карточки с прошлыми ценами
-      // вместо «Ошибка загрузки».
       if (Array.isArray(hit?.value) && hit!.value.length > 0) {
         return hit!.value as Kline[];
       }
@@ -268,22 +246,6 @@ async function fetchStockKlines(base: string, resolution: string, limit: number,
   return p;
 }
 
-/**
- * Пакетная загрузка обзора рынка (дефолтные тикеры Dashboard'а).
- *
- * Проблема, которую это решает: getMarketOverview запускал полный getAnalysis
- * для каждого из 8 тикеров ПАРАЛЛЕЛЬНО. Каждый getAnalysis делает ~5 запросов
- * свечей (текущий ТФ + каскад W/D/4H) + тикер; для акций всё это проходит
- * через троттлер (~350 мс между стартами), но параллельные очереди разных
- * тикеров перемешиваются: волна из ~40 обращений к прокси каждые 60 с
- * автообновления упиралась в лимиты Twelvedata (429), а без кэша-истории при
- * первом открытии все 8 карточек падали одновременно -> «Ошибка загрузки».
- *
- * Решение: пакет обрабатывается ПОСЛЕДОВАТЕЛЬНО по тикерам (в пределах одного
- * анализа ступени каскада остаются параллельными — они коалесцируются кэшем),
- * плюс общий троттлер для всех обращений к прокси. Результат частичный лучше
- * пустого: если часть тикеров не загрузилась, возвращаем загрузившиеся.
- */
 export async function fetchMarketOverviewBatch<T>(
   jobs: Array<() => Promise<T>>,
   onItemError?: (index: number, err: unknown) => void,
@@ -299,7 +261,6 @@ export async function fetchMarketOverviewBatch<T>(
   return out;
 }
 
-/** Текущая цена акции: котировка прокси -> фолбэк по последним дневным свечам. */
 async function fetchStockQuote(base: string): Promise<Ticker24h> {
   try {
     const proxied = await throttledStockFetch(() =>
@@ -324,7 +285,6 @@ async function fetchStockQuote(base: string): Promise<Ticker24h> {
   };
 }
 
-/** Одна свеча (K-line) в нормализованном виде */
 export interface Kline {
   openTime: number;
   open: number;
@@ -332,20 +292,16 @@ export interface Kline {
   low: number;
   close: number;
   volume: number;
+  /** Признак формирующейся (незакрытой) свечи для live-режима */
+  isForming?: boolean;
 }
 
-/** Тикер за 24 часа в нормализованном виде */
 export interface Ticker24h {
   lastPrice: number;
   priceChange: number;
   priceChangePercent: number;
 }
 
-// Маппинг таймфреймов для Bybit API.
-// Ключи — ВСЕ формы, которые ходят по коду: канон приложения ('15m', '1H', 'D'),
-// сырые числа секунд/минут из строк URL и мульти-ТФ списков ('15', '60', '240')
-// и Bybit-формы ('1', '5', ...). Раньше числовые формы отсутствовали, и
-// getMultiTimeframeZones(['15','60',...]) падал с «Invalid interval: 15».
 const INTERVAL_MAP: Record<string, string> = {
   '1m': '1', '1': '1',
   '3m': '3', '3': '3',
@@ -357,31 +313,18 @@ const INTERVAL_MAP: Record<string, string> = {
   '4H': '240', '240': '240', '4h': '240',
   '1D': 'D', 'D': 'D', 'd': 'D', '1d': 'D',
   '1W': 'W', 'W': 'W', 'w': 'W', '1w': 'W',
-  // Месячный ТФ: канон UI '1M' и Bybit-форма 'M'. Раньше ни одной формы
-  // месячного интервала в словаре не было — toBybitInterval('1M') возвращал
-  // null, и акции падали с «Таймфрейм недоступен» (для D канон случайно совпадал).
-  // '1m' остаётся минутой ('1'): ключи словаря чувствительны к регистру.
   '1M': 'M', 'M': 'M', '1mo': 'M',
 };
 
-/** Нормализация произвольной записи ТФ в канон Bybit REST/WS ('15', '60', 'D'...). */
 export function toBybitInterval(tf: unknown): string | null {
   if (typeof tf !== 'string') return null;
   const t = tf.trim();
-  // Только точное совпадение: верхний регистр всей строки превращал бы '1m'
-  // (минута) в '1M' (месяц), а нижний — 'D'/'W' в часовые/неверные формы.
-  // Все ходящие по коду варианты перечислены ключами словаря явно.
   return INTERVAL_MAP[t] ?? null;
 }
 
 export async function fetchKlines(rawSymbol: string, interval: string, rawLimit: number, opts: { force?: boolean } = {}): Promise<Kline[]> {
-  // Валидация ввода: symbol — whitelist-символы тикера (крипто и 'ТИКЕР:STOCK'),
-  // interval — из разрешённого списка, limit — безопасный диапазон.
-  // Это исключает инъекцию параметров в URL запроса к API.
   const symbol = assertValidSymbol(rawSymbol);
   const mapped = toBybitInterval(interval);
-  // Крипто требует whitelist-валидный ТФ; для акций фильтр ниже (все формы
-  // уходят в прокси, а неподдерживаемые фолбэчатся на ближайший больший ТФ).
   if (!mapped && !isValidTimeframe(interval) && parseMarket(symbol).market !== 'stock') {
     throw new Error(`Invalid interval: ${String(interval).slice(0, 32)}`);
   }
@@ -389,27 +332,19 @@ export async function fetchKlines(rawSymbol: string, interval: string, rawLimit:
 
   const bybitInterval = mapped || interval;
 
-  // ── TradFi: американские акции (Twelvedata через серверный прокси) ─────────
   const { base: stockBase, market } = parseMarket(symbol);
   if (market === 'stock') {
-    // toStockResolution никогда не возвращает null для строки (неизвестные
-    // формы фолбэчатся на дневной канон) — «Таймфрейм недоступен для акций»
-    // больше не может быть причиной ошибки на внутридневных ТФ.
     const resolution = toStockResolution(bybitInterval) ?? 'd';
     return fetchStockKlines(stockBase, resolution, limit, opts.force === true);
   }
 
-  // force: обход короткого кэша (закрытие бара по WS) — иначе реанализ
-  // получит тот же кэшированный ответ и последний бар не обновится
   const cacheKey = `klines:${symbol}:${bybitInterval}:${limit}`;
   if (opts.force) { cache.delete(cacheKey); inflight.delete(cacheKey); }
 
-  // 1) серверный прокси (боевой домен): /api/quotes/klines
   const proxied = await proxyFetch('/api/quotes/klines',
     { symbol, interval: bybitInterval, limit });
   if (Array.isArray(proxied)) return proxied as Kline[];
 
-  // 2) fallback напрямую (dev-режим / backend недоступен)
   const url = `${BASE_URL}/v5/market/kline?category=spot&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(bybitInterval)}&limit=${limit}${opts.force ? `&_t=${Date.now()}` : ''}`;
   const data = await cachedFetchJson(cacheKey, url, KLINES_TTL_MS);
   
@@ -417,17 +352,21 @@ export async function fetchKlines(rawSymbol: string, interval: string, rawLimit:
     throw new Error(`Bybit API error: ${data.retMsg}`);
   }
   
-  return data.result.list.map((item: any) => ({
+  const klines = data.result.list.map((item: any, index: number, arr: any[]) => ({
     openTime: parseInt(item[0]),
     open: parseFloat(item[1]),
     high: parseFloat(item[2]),
     low: parseFloat(item[3]),
     close: parseFloat(item[4]),
     volume: parseFloat(item[5]),
+    // FIX: помечаем последнюю свечу как формирующуюся в live-режиме
+    // (если запрос не force и это первая свеча в ответе — она ещё не закрыта)
+    isForming: !opts.force && index === 0,
   })).reverse();
+  
+  return klines;
 }
 
-/** Информация об инструменте Bybit (спот) — для проверки существования пары. */
 export interface InstrumentInfo {
   symbol: string;
   status: string;
@@ -436,8 +375,6 @@ export interface InstrumentInfo {
 
 export async function fetchInstrumentInfo(rawSymbol: string): Promise<InstrumentInfo | null> {
   const symbol = assertValidSymbol(rawSymbol);
-  // Акции: проверка существования тикера — по ответу /quote на сервере
-  // (Twelvedata отдаёт error-тело для неизвестного тикера).
   const { base, market } = parseMarket(symbol);
   if (market === 'stock') {
     try {
@@ -448,7 +385,7 @@ export async function fetchInstrumentInfo(rawSymbol: string): Promise<Instrument
     }
   }
   const url = `${BASE_URL}/v5/market/instruments-info?category=spot&symbol=${encodeURIComponent(symbol)}`;
-  const data = await cachedFetchJson(`instrument:${symbol}`, url, 300_000); // 5 минут
+  const data = await cachedFetchJson(`instrument:${symbol}`, url, 300_000);
   if (data.retCode !== 0) return null;
   const item = data?.result?.list?.[0];
   if (!item) return null;
@@ -459,19 +396,21 @@ export async function fetchInstrumentInfo(rawSymbol: string): Promise<Instrument
   };
 }
 
+/**
+ * FIX: точный расчёт priceChange из процентного изменения.
+ * Если цена выросла на pct (в долях) до lastPrice, то:
+ *   previousPrice = lastPrice / (1 + pct)
+ *   priceChange = lastPrice - previousPrice = lastPrice * pct / (1 + pct)
+ */
 export async function fetch24hTicker(rawSymbol: string): Promise<Ticker24h> {
-  // Валидация symbol защищает от инъекции параметров в URL запроса к Bybit
   const symbol = assertValidSymbol(rawSymbol);
 
-  // TradFi: акции — только через серверный прокси (CORS + секретный ключ источника)
   const { base: stockBase, market: stockMarket } = parseMarket(symbol);
   if (stockMarket === 'stock') return fetchStockQuote(stockBase);
 
-  // 1) серверный прокси (боевой домен)
   const proxied = await proxyFetch('/api/quotes/ticker', { symbol });
   if (proxied && typeof proxied.lastPrice === 'number') return proxied as Ticker24h;
 
-  // 2) fallback напрямую
   const url = `${BASE_URL}/v5/market/tickers?category=spot&symbol=${encodeURIComponent(symbol)}`;
   const data = await cachedFetchJson(`ticker:${symbol}`, url, TICKER_TTL_MS);
   
@@ -482,9 +421,21 @@ export async function fetch24hTicker(rawSymbol: string): Promise<Ticker24h> {
   const ticker = data.result.list[0];
   const lastPrice = parseFloat(ticker.lastPrice);
   const pct = parseFloat(ticker.price24hPcnt);
+  
+  // FIX: точный расчёт вместо приближения pct * lastPrice
+  const priceChange = Number.isFinite(pct) && Number.isFinite(lastPrice) && pct !== -1
+    ? (lastPrice * pct) / (1 + pct)
+    : 0;
+  
   return {
     lastPrice,
-    priceChange: Number.isFinite(pct) && Number.isFinite(lastPrice) ? pct * lastPrice : 0,
+    priceChange,
     priceChangePercent: Number.isFinite(pct) ? pct * 100 : 0,
   };
+}
+
+/** Очистка кэша (для тестов) */
+export function clearCache(): void {
+  cache.clear();
+  inflight.clear();
 }
