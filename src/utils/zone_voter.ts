@@ -54,26 +54,25 @@ export type TimeframeKey = 'scalp' | 'intraday' | 'swing' | 'position';
  * FIX рассинхрона '1M': теперь '1M'/'1m' = минута (intraday), 'MO'/'1MO' = месяц (position).
  */
 export function timeframeKey(tf: string): TimeframeKey {
-  const t = tf.trim().toUpperCase();
-  if (['D', '1D'].includes(t)) return 'swing';
+  const t = tf.trim();
+  const upper = t.toUpperCase();
   
-  // Position: месячные ТФ ('MO', '1MO', '2MO', '3MO') — макро-масштаб Нисона.
-  // FIX: '1M' теперь = минута, не месяц!
-  if (/^([123]?MO)$/.test(t)) return 'position';
+  // Position: месячные ТФ. Проверяем UPPERCASE ДО скальп-логики.
+  if (/^([123]?MO?|M)$/.test(upper)) return 'position';
+  if (['W', '1W'].includes(upper)) return 'position';
   
-  // Инtraday: минутные ТФ от 30m до 4H
-  if (/^(1|3|5|15|30)(M|MIN)?$/.test(t)) {
-    const mins = parseInt(t);
-    if (mins < 30) return 'scalp';
-    return 'intraday';
-  }
-  if (['60', '1H', '2H', '4H'].includes(t)) return 'intraday';
-  if (/^(60|[124])(H|h)$/.test(t)) return 'intraday';
+  // Swing: дневные
+  if (['D', '1D'].includes(upper)) return 'swing';
   
-  // Недельные — position
-  if (['W', '1W'].includes(t)) return 'position';
+  // Intraday: 30m, 1h, 2h, 4h
+  if (/^(30|60|120|240)(M|MIN)?$/i.test(upper)) return 'intraday';
+  if (/^[124]H$/i.test(upper)) return 'intraday';
   
-  return 'position'; // fallback
+  // Scalp: 1m, 3m, 5m, 15m — ТОЛЬКО lowercase 'm' в исходной строке
+  if (/^(1|3|5|15)(m|min)?$/.test(t)) return 'scalp';
+  if (['1', '3', '5', '15'].includes(t)) return 'scalp';
+  
+  return 'position';
 }
 
 interface ZoneParams {
