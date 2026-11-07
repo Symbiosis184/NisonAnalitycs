@@ -480,7 +480,7 @@ export class SignalGenerator {
           if (direction === 'short' && patternTrend !== 'ВОСХОДЯЩИЙ') continue;
 
           // FIX аудита №4/№5: единые границы формации (для односвечных = high/low самой свечи)
-          const bounds = PatternDetector.getFormationBounds(check.name, candles, i);
+          const bounds = PatternDetector.getFormationBounds(check.name, candles, i, check.candlesCount);
           
           const signal = this.makeSignal(direction, check.name, patternCandle, closed, tf, 1.0, bounds);
           
