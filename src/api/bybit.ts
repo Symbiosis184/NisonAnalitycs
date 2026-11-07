@@ -322,6 +322,20 @@ export function toBybitInterval(tf: unknown): string | null {
   return INTERVAL_MAP[t] ?? null;
 }
 
+// Внутренний прокси принимает wire-формы '1h'/'1d', а прямой API Bybit —
+// '60'/'D'. Раньше в прокси уходил прямой формат: 'D' получал 400, после чего
+// браузер запускал медленный внешний fallback с повторными 10-секундными
+// таймаутами. Преобразуем интервал только для прокси, не меняя запрос к Bybit.
+const QUOTE_PROXY_INTERVAL_MAP: Record<string, string> = {
+  '1': '1m', '3': '3m', '5': '5m', '15': '15m', '30': '30m',
+  '60': '1h', '120': '2h', '240': '4h',
+  'D': '1d', 'W': '1w',
+};
+
+export function toQuoteProxyInterval(bybitInterval: string): string {
+  return QUOTE_PROXY_INTERVAL_MAP[bybitInterval] ?? bybitInterval;
+}
+
 export async function fetchKlines(rawSymbol: string, interval: string, rawLimit: number, opts: { force?: boolean } = {}): Promise<Kline[]> {
   const symbol = assertValidSymbol(rawSymbol);
   const mapped = toBybitInterval(interval);
@@ -342,7 +356,7 @@ export async function fetchKlines(rawSymbol: string, interval: string, rawLimit:
   if (opts.force) { cache.delete(cacheKey); inflight.delete(cacheKey); }
 
   const proxied = await proxyFetch('/api/quotes/klines',
-    { symbol, interval: bybitInterval, limit });
+    { symbol, interval: toQuoteProxyInterval(bybitInterval), limit });
   if (Array.isArray(proxied)) return proxied as Kline[];
 
   const url = `${BASE_URL}/v5/market/kline?category=spot&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(bybitInterval)}&limit=${limit}${opts.force ? `&_t=${Date.now()}` : ''}`;
