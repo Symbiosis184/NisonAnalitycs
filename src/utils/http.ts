@@ -15,23 +15,87 @@ export class RateLimitError extends Error {
   }
 }
 
-/** Распознавание ответов с ограничением частоты запросов */
-export function isRateLimited(status: number, payload?: { retCode?: number; code?: number }): boolean {
-  if (status === 429) return true;
+export interface RateLimitInfo {
+  isLimited: boolean;
+  retryAfterMs?: number;
+}
+
+/**
+ * Проверка ответа на rate-limit с извлечением Retry-After.
+ * FIX: теперь возвращает объект с retryAfterMs, а не просто boolean.
+ */
+export function checkRateLimit(
+  status: number,
+  headers: Headers,
+  payload?: { retCode?: number; code?: number } | null
+): RateLimitInfo {
+  if (status === 429) {
+    const retryAfterHeader = Number(headers.get('Retry-After'));
+    const retryAfterMs = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
+      ? retryAfterHeader * 1000
+      : 2000;
+    return { isLimited: true, retryAfterMs };
+  }
+  if (!payload) return { isLimited: false };
+
   // Bybit: 10006 = "ip banned" / too many visits
-  if (payload && typeof payload.retCode === 'number' && payload.retCode === 10006) return true;
+  if (typeof payload.retCode === 'number' && payload.retCode === 10006) {
+    return { isLimited: true, retryAfterMs: 5000 };
+  }
   // Binance: -1003 = Too many requests
-  if (payload && typeof payload.code === 'number' && payload.code === -1003) return true;
-  return false;
+  if (typeof payload.code === 'number' && payload.code === -1003) {
+    return { isLimited: true, retryAfterMs: 3000 };
+  }
+  return { isLimited: false };
+}
+
+/** Backward compatibility wrapper */
+export function isRateLimited(status: number, payload?: { retCode?: number; code?: number } | null): boolean {
+  return checkRateLimit(status, new Headers(), payload).isLimited;
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export interface FetchWithRetryOptions {
-  retries?: number;          // количество повторных попыток после первой
-  baseDelayMs?: number;      // базовая задержка backoff
-  maxDelayMs?: number;       // потолок задержки
-  timeoutMs?: number;        // таймаут одной попытки
+  retries?: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  headers?: Record<string, string>;
+  maxRetriesForRateLimit?: number;
+  logger?: (message: string) => void;
+}
+
+export interface FetchMetrics {
+  totalRequests: number;
+  successfulRequests: number;
+  failedRequests: number;
+  rateLimitedRequests: number;
+  totalRetries: number;
+  averageLatencyMs: number;
+}
+
+const metrics: FetchMetrics = {
+  totalRequests: 0,
+  successfulRequests: 0,
+  failedRequests: 0,
+  rateLimitedRequests: 0,
+  totalRetries: 0,
+  averageLatencyMs: 0,
+};
+
+export function getFetchMetrics(): FetchMetrics {
+  return { ...metrics };
+}
+
+export function resetFetchMetrics(): void {
+  metrics.totalRequests = 0;
+  metrics.successfulRequests = 0;
+  metrics.failedRequests = 0;
+  metrics.rateLimitedRequests = 0;
+  metrics.totalRetries = 0;
+  metrics.averageLatencyMs = 0;
 }
 
 /**
@@ -39,22 +103,57 @@ export interface FetchWithRetryOptions {
  * - Повторяет только сетевые ошибки, таймауты и 5xx/429.
  * - 4xx (кроме 429) считаем фатальными — не повторяем.
  * - При 429 уважаем подсказку Retry-After, если сервер её прислал.
+ * - Поддерживает внешний AbortSignal для отмены извне.
  */
 export async function fetchWithRetry(url: string, opts: FetchWithRetryOptions = {}): Promise<Response> {
-  const { retries = 2, baseDelayMs = 600, maxDelayMs = 8000, timeoutMs = 10_000 } = opts;
+  const {
+    retries = 2,
+    baseDelayMs = 600,
+    maxDelayMs = 8000,
+    timeoutMs = 10_000,
+    signal,
+    headers,
+    maxRetriesForRateLimit = 5,
+    logger,
+  } = opts;
+
+  metrics.totalRequests++;
+  const startTime = Date.now();
 
   let attempt = 0;
+  let rateLimitAttempts = 0;
   let lastError: unknown;
 
-  while (attempt <= retries) {
+  while (attempt <= retries || (lastError instanceof RateLimitError && rateLimitAttempts < maxRetriesForRateLimit)) {
+    if (signal?.aborted) {
+      throw new DOMException('Request aborted by user', 'AbortError');
+    }
+
+    if (logger) logger(`Попытка ${attempt + 1}/${retries + 1}: ${url}`);
+
     const controller = new AbortController();
+    const abortHandler = () => controller.abort();
+    signal?.addEventListener('abort', abortHandler);
+
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let response: Response | undefined;
+
     try {
-      const response = await fetch(url, { signal: controller.signal });
+      response = await fetch(url, {
+        signal: controller.signal,
+        headers: headers ? new Headers(headers) : undefined,
+      });
 
-      if (response.ok) return response;
+      if (response.ok) {
+        metrics.successfulRequests++;
+        const latency = Date.now() - startTime;
+        metrics.averageLatencyMs =
+          (metrics.averageLatencyMs * (metrics.successfulRequests - 1) + latency) / metrics.successfulRequests;
+        metrics.totalRetries += attempt;
+        return response;
+      }
 
-      // Пробуем прочитать тело для кодов rate-limit (иногда 429 приходит с телом)
+      // Пробуем прочитать тело для кодов rate-limit
       let payload: { retCode?: number; code?: number } | undefined;
       try {
         payload = await response.clone().json();
@@ -62,10 +161,10 @@ export async function fetchWithRetry(url: string, opts: FetchWithRetryOptions = 
         /* не-JSON тело — игнорируем */
       }
 
-      if (isRateLimited(response.status, payload)) {
-        const retryAfterHeader = Number(response.headers.get('Retry-After'));
-        const ra = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0 ? retryAfterHeader * 1000 : undefined;
-        throw new RateLimitError(undefined, ra);
+      const rateLimitInfo = checkRateLimit(response.status, response.headers, payload);
+      if (rateLimitInfo.isLimited) {
+        rateLimitAttempts++;
+        throw new RateLimitError(undefined, rateLimitInfo.retryAfterMs);
       }
 
       // 4xx (кроме 429) — повтор бессмысленен
@@ -78,32 +177,43 @@ export async function fetchWithRetry(url: string, opts: FetchWithRetryOptions = 
       if (err instanceof RateLimitError) {
         lastError = err;
       } else if (err instanceof DOMException && err.name === 'AbortError') {
+        if (signal?.aborted) {
+          throw err; // пользовательская отмена — не повторяем
+        }
         lastError = new Error('Таймаут запроса');
       } else if (err instanceof TypeError) {
-        lastError = new Error('Сетевая ошибка'); // fetch network failure
+        lastError = new Error('Сетевая ошибка');
       } else if ((err as Error).message?.startsWith('HTTP')) {
-        lastError = err; // фатальная 4xx — выходим из цикла ниже
+        lastError = err;
         if ((err as Error).message.match(/HTTP 4(?!29)/)) break;
       } else {
         lastError = err;
       }
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', abortHandler);
     }
 
     attempt++;
-    if (attempt > retries) break;
+    if (attempt > retries && !(lastError instanceof RateLimitError)) break;
 
     const delay = Math.min(baseDelayMs * 2 ** (attempt - 1), maxDelayMs);
     const jitter = delay * (0.5 + Math.random() * 0.5);
     const wait = lastError instanceof RateLimitError
       ? Math.max(jitter, lastError.retryAfterMs)
       : jitter;
+
+    if (logger) logger(`Ожидание ${Math.round(wait)}мс перед повтором`);
     await sleep(wait);
   }
 
-  if (lastError instanceof RateLimitError) throw lastError;
-  throw (lastError instanceof Error ? lastError : new Error('Запрос не выполнен'));
+  metrics.failedRequests++;
+  metrics.totalRetries += attempt;
+  if (lastError instanceof RateLimitError) {
+    metrics.rateLimitedRequests++;
+    throw lastError;
+  }
+  throw lastError instanceof Error ? lastError : new Error('Запрос не выполнен');
 }
 
 /** Понятное для пользователя сообщение о сетевой ошибке */
@@ -112,14 +222,30 @@ export function describeNetworkError(err: unknown): string {
     return 'Биржа ограничила частоту запросов. Подождите пару минут и попробуйте снова.';
   }
   const msg = err instanceof Error ? err.message : String(err);
+
   if (/HTTP 40[13]|invalid symbol/i.test(msg)) {
     return 'Инструмент не найден на бирже или недоступен.';
   }
-  if (/таймаут/i.test(msg)) {
+  if (/HTTP 404/i.test(msg)) {
+    return 'API endpoint не найден. Проверьте URL или обратитесь к разработчику.';
+  }
+  if (/HTTP 5\d\d/i.test(msg)) {
+    return 'Сервер биржи временно недоступен. Попробуйте через минуту.';
+  }
+  if (/таймаут|timeout/i.test(msg)) {
     return 'Сервер биржи не ответил вовремя. Попробуйте обновить страницу.';
+  }
+  if (/CORS|Access-Control/i.test(msg)) {
+    return 'Браузер заблокировал запрос к API биржи (CORS). Используйте прокси или обратитесь к разработчику.';
+  }
+  if (/DNS|getaddrinfo|ENOTFOUND/i.test(msg)) {
+    return 'Не удалось разрешить имя сервера биржи. Проверьте интернет-соединение.';
   }
   if (/сетевая ошибка|failed to fetch|networkerror/i.test(msg)) {
     return 'Нет соединения с API биржи. Проверьте интернет или зайдите позже.';
+  }
+  if (/aborted|cancelled/i.test(msg)) {
+    return 'Запрос был отменён.';
   }
   return 'Не удалось получить данные с биржи. Попробуйте обновить страницу.';
 }
