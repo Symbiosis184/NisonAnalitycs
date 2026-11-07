@@ -260,17 +260,18 @@ export default function CandlestickChart({
       };
     }
 
-    // ── Сигналы: линии входа/стопа/цели + маркер направления на баре сигнала ──
-    // Рисуем только живые сигналы (pending/confirmed): invalidated/expired — мусор истории.
-    const liveSignals = signals.filter(
-      (s) => (s.lifecycle_status ?? (s.confirmed ? 'confirmed' : 'pending')) !== 'invalidated'
-        && (s.lifecycle_status ?? '') !== 'expired',
-    );
+    // ── Сигналы: линии входа/стопа/цели + стрелка фактического входа ──
+    // Pending — только гипотетический сценарий: у него нет фактического бара
+    // входа, поэтому он не должен выглядеть на графике как состоявшийся сигнал.
+    const enteredSignals = signals.filter((s) => {
+      const status = s.lifecycle_status ?? (s.confirmed ? 'confirmed' : 'pending');
+      return status === 'confirmed' && s.confirmed && s.entry_index !== null;
+    });
     // lightweight-charts не допускает двух маркеров с одинаковым time —
     // на одном баре может быть несколько сигналов: объединяем в один,
     // при конфликте long/short ставим круг.
     const markerByTime = new Map<number, { dir: 'long' | 'short' | 'mixed' }>();
-    for (const sig of liveSignals.slice(-5)) {
+    for (const sig of enteredSignals.slice(-5)) {
       const isLong = sig.direction === 'long';
       candlestickSeries.createPriceLine({
         price: sig.entry_price,
@@ -296,8 +297,9 @@ export default function CandlestickChart({
         axisLabelVisible: true,
         title: t(`цель 1:${sig.rr.toFixed(1)}`),
       });
-      if (sig.bar_time) {
-        const t = Math.floor(sig.bar_time / 1000);
+      const entryTime = sig.entry_time ?? sig.bar_time;
+      if (entryTime) {
+        const t = Math.floor(entryTime / 1000);
         const prev = markerByTime.get(t);
         markerByTime.set(t, !prev ? { dir: sig.direction } : prev.dir === sig.direction ? prev : { dir: 'mixed' });
       }
@@ -310,14 +312,15 @@ export default function CandlestickChart({
       text: '',
       size: 1,
     })).sort((a, b) => (a.time as number) - (b.time as number));
-    if (signalMarkers.length > 0) {
-      createSeriesMarkers(candlestickSeries, signalMarkers);
-    }
+    // Маркеры регистрируются одним вызовом ниже: повторный createSeriesMarkers
+    // на той же серии заменяет предыдущий набор и смешивает сигналы с моделями.
+    const chartMarkers: any[] = [...signalMarkers];
 
     // ── Паттерны: компактные маркеры БЕЗ текста, название — в tooltip ─────
-    // Стрелки уменьшены (size 1), текст убран с canvas. При наведении мыши
-    // (или касании на мобильных) рядом с маркером всплывает тёмная плашка
-    // с названием паттерна и эвристическим баллом.
+    // Модель — ещё не торговый вход, поэтому обозначается маленьким кругом,
+    // а не стрелкой. Стрелки зарезервированы для фактических входов выше.
+    // При наведении мыши (или касании на мобильных) рядом с маркером
+    // всплывает тёмная плашка с названием паттерна и эвристическим баллом.
     let hideTimer: ReturnType<typeof setTimeout> | null = null;
 
     if (patterns.length > 0) {
@@ -374,14 +377,17 @@ export default function CandlestickChart({
             time: Math.floor(candle.time / 1000) as any,
             position: pattern.type === 'bullish' ? 'belowBar' as const : 'aboveBar' as const,
             color: pattern.type === 'bullish' ? '#34d399' : pattern.type === 'bearish' ? '#fb7185' : '#94a3b8',
-            shape: pattern.type === 'bullish' ? 'arrowUp' as const : pattern.type === 'bearish' ? 'arrowDown' as const : 'circle' as const,
+            shape: 'circle' as const,
             text: '', // название только в tooltip — чистый график без наложений
-            size: 1,
+            size: 0.5,
             __count: count,
           };
         });
 
-        createSeriesMarkers(candlestickSeries, markers);
+        // Если на баре есть фактический вход, сохраняем его стрелку; модель
+        // того же бара остаётся доступна в tooltip и не создаёт второй маркер.
+        const signalTimes = new Set(chartMarkers.map(marker => Number(marker.time)));
+        chartMarkers.push(...markers.filter(marker => !signalTimes.has(Number(marker.time))));
 
         // lightweight-charts рисует маркеры на canvas — ловим mousemove по
         // контейнеру и находим ближайший маркер по X-координате.
@@ -428,6 +434,11 @@ export default function CandlestickChart({
         container.addEventListener('mousemove', onMove);
         (chartRef.current as any).__cleanupMarkerHover = () => container.removeEventListener('mousemove', onMove);
       }
+    }
+
+    if (chartMarkers.length > 0) {
+      chartMarkers.sort((a, b) => Number(a.time) - Number(b.time));
+      createSeriesMarkers(candlestickSeries, chartMarkers);
     }
 
     chart.timeScale().fitContent();

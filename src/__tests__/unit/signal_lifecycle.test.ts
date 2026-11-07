@@ -6,9 +6,14 @@ import { c, flat } from '../helpers/candles';
 const bounds = { patternLow: 95, patternHigh: 105 };
 
 describe('stepSignal — long', () => {
-  it('подтверждение: бычья закрытая свеча выше close сигнала', () => {
-    const candle = c(100, 103, 99.5, 102); // bullish, close > signalClose(100)
-    expect(stepSignal('pending', 'long', 100, bounds, candle)).toBe('confirmed');
+  it('движение выше close сигнала внутри диапазона ещё не подтверждает вход', () => {
+    const candle = c(100, 103, 99.5, 102); // bullish, но close < patternHigh(105)
+    expect(stepSignal('pending', 'long', 100, bounds, candle)).toBe('pending');
+  });
+
+  it('только закрытие выше верхней границы подтверждает long', () => {
+    expect(stepSignal('pending', 'long', 100, bounds, c(104, 106, 103, 105))).toBe('pending');
+    expect(stepSignal('pending', 'long', 100, bounds, c(104, 106, 103, 105.1))).toBe('confirmed');
   });
 
   it('пробой верха формации подтверждает даже без бычьего тела?', () => {
@@ -35,9 +40,11 @@ describe('stepSignal — long', () => {
 });
 
 describe('stepSignal — short (зеркальность)', () => {
-  it('медвежья свеча ниже close сигнала → confirmed', () => {
-    const candle = c(100, 100.5, 97, 98); // bearish close < signalClose(100), high < patternHigh
-    expect(stepSignal('pending', 'short', 100, bounds, candle)).toBe('confirmed');
+  it('медвежья свеча внутри диапазона остаётся pending, пробой низа подтверждает', () => {
+    const inside = c(100, 100.5, 97, 98);
+    expect(stepSignal('pending', 'short', 100, bounds, inside)).toBe('pending');
+    const breakdown = c(96, 97, 94.5, 94.9);
+    expect(stepSignal('pending', 'short', 100, bounds, breakdown)).toBe('confirmed');
   });
 
   it('пробой верха формации отменяет шорт', () => {
@@ -49,10 +56,10 @@ describe('stepSignal — short (зеркальность)', () => {
 describe('resolveSignalStatus — только закрытые свечи', () => {
   it('формирующаяся последняя свеча НЕ участвует в подтверждении', () => {
     // idx=0 сигнал (close 100); candles[1] — «закрытая» отмена; candles[2] незакрытая
-    const arr = [c(100, 101, 99, 100), c(99, 100, 98.5, 99.2), c(99.5, 104, 99, 103.5)];
+    const arr = [c(100, 101, 99, 100), c(99, 100, 98.5, 99.2), c(99.5, 106, 99, 105.5)];
     // closedCount=2: учли только свечу [1] (не подтвердила, не отменила) → pending
     expect(resolveSignalStatus(arr, 0, 'long', 100, bounds, 2)).toBe('pending');
-    // closedCount=3: свеча [2] бычья выше close сигнала → confirmed
+    // closedCount=3: свеча [2] закрылась выше high формации → confirmed
     expect(resolveSignalStatus(arr, 0, 'long', 100, bounds, 3)).toBe('confirmed');
   });
 
@@ -74,7 +81,7 @@ describe('resolveSignalStatus — только закрытые свечи', () 
   it('инвариант согласованности: пошаговое вычисление == мгновенное', () => {
     // свойство: статус на N закрытых свечах = редукция шагов; подтверждённый статус
     // не меняется при добавлении последующих свечей (монотонность терминальных состояний)
-    const arr = [c(100, 101, 99, 100), c(100.2, 103, 100, 102.5), ...flat(4, 103)];
+    const arr = [c(100, 101, 99, 100), c(100.2, 106, 100, 105.5), ...flat(4, 106)];
     const s3 = resolveSignalStatus(arr.slice(0, 2), 0, 'long', 100, bounds, 2);
     expect(s3).toBe('confirmed');
     // добавили ещё свечи — статус остался confirmed (по полному массиву)

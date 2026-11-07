@@ -5,8 +5,8 @@
 // идёт исключительно по закрытым барам после завершения модели.
 //
 // Состояния:
-//   • confirmed — последующая закрытая свеча продолжила движение или закрылась
-//     за соответствующей границей формации;
+//   • confirmed — последующая закрытая свеча закрылась за соответствующей
+//     границей формации; движения внутри её диапазона недостаточно;
 //   • invalidated — до подтверждения достигнута противоположная граница;
 //   • pending — решающего события ещё нет;
 //   • expired — исчерпано проектное окно ожидания timeoutBars.
@@ -30,26 +30,22 @@ export interface FormationBoundsLite {
 export function stepSignal(
   status: SignalStatus,
   direction: 'long' | 'short',
-  signalClose: number,
+  _signalClose: number,
   bounds: FormationBoundsLite,
   candle: Candle,
 ): SignalStatus {
   if (status !== 'pending') return status; // терминальные состояния необратимы
 
   if (direction === 'long') {
-    // Отмена сильнее подтверждения: если свеча пробила стоп — сигнал мёртв,
-    // даже если внутри неё было движение вверх (проверяем low ДО прогресса).
+    // Отмена сильнее подтверждения: если свеча пробила стоп — сигнал мёртв.
+    // При неизвестном порядке внутрибарных событий выбираем консервативный исход.
     if (candle.low <= bounds.patternLow) return 'invalidated';
-    const progressed = candle.isBullish && candle.close > signalClose;
-    const breakout = candle.close > bounds.patternHigh;
-    if (progressed || breakout) return 'confirmed';
-    return 'pending';
+    // Бычье закрытие выше close модели, но внутри её диапазона — ещё не
+    // подтверждение. Такой мягкий критерий порождал серии шумовых входов.
+    return candle.close > bounds.patternHigh ? 'confirmed' : 'pending';
   } else {
     if (candle.high >= bounds.patternHigh) return 'invalidated';
-    const progressed = candle.isBearish && candle.close < signalClose;
-    const breakdown = candle.close < bounds.patternLow;
-    if (progressed || breakdown) return 'confirmed';
-    return 'pending';
+    return candle.close < bounds.patternLow ? 'confirmed' : 'pending';
   }
 }
 
