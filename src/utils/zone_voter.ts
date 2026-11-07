@@ -51,27 +51,31 @@ export type TimeframeKey = 'scalp' | 'intraday' | 'swing' | 'position';
 
 /**
  * Группировка интервалов Bybit по временнóму масштабу.
- * FIX рассинхрона '1M': теперь '1M'/'1m' = минута (intraday), 'MO'/'1MO' = месяц (position).
+ * ИСПРАВЛЕНО: правильная иерархия проверки — месячные/недельные проверяются ДО минутных,
+ * чтобы '1M' (месяц) не попадал в 'scalp'.
  */
 export function timeframeKey(tf: string): TimeframeKey {
-  const t = tf.trim();
-  const upper = t.toUpperCase();
-  
-  // Position: месячные ТФ. Проверяем UPPERCASE ДО скальп-логики.
-  if (/^([123]?MO?|M)$/.test(upper)) return 'position';
-  if (['W', '1W'].includes(upper)) return 'position';
-  
-  // Swing: дневные
-  if (['D', '1D'].includes(upper)) return 'swing';
-  
-  // Intraday: 30m, 1h, 2h, 4h
+  const raw = tf.trim();
+  const upper = raw.toUpperCase();
+
+  // 1. POSITION: Месячные и Недельные ТФ (Макро-масштаб)
+  // Проверяем ДО скальп-логики, чтобы '1M' (месяц) не попал в 'scalp'
+  if (/^([123]?MO?|M|W|1W)$/i.test(upper)) return 'position';
+
+  // 2. SWING: Дневные ТФ (Классический масштаб)
+  if (/^(D|1D)$/i.test(upper)) return 'swing';
+
+  // 3. INTRADAY: Часовые и 30-минутные ТФ
   if (/^(30|60|120|240)(M|MIN)?$/i.test(upper)) return 'intraday';
   if (/^[124]H$/i.test(upper)) return 'intraday';
-  
-  // Scalp: 1m, 3m, 5m, 15m — ТОЛЬКО lowercase 'm' в исходной строке
-  if (/^(1|3|5|15)(m|min)?$/.test(t)) return 'scalp';
-  if (['1', '3', '5', '15'].includes(t)) return 'scalp';
-  
+  if (['60', '1H', '2H', '4H'].includes(upper)) return 'intraday';
+
+  // 4. SCALP: Минутные ТФ (1м, 3м, 5м, 15м)
+  if (/^(1|3|5|15)(M|MIN)?$/i.test(upper)) return 'scalp';
+  if (['1', '3', '5', '15'].includes(raw)) return 'scalp';
+
+  // Fallback: безопасное отнесение к макро-масштабу
+  console.warn(`[Nison Engine] Неизвестный таймфрейм "${tf}". Применен fallback: position.`);
   return 'position';
 }
 
