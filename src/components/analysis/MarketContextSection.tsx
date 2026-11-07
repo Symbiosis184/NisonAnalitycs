@@ -77,13 +77,13 @@ export function MarketContextSection({ report, volumeRatio }: {
           {num(report.consensus?.score).toFixed(1)}/5
         </div>
         <div className="text-xs text-gray-400 mt-1">
-          {t('Уверенность:')} {num(report.consensus?.confidence).toFixed(0)}%
+          {t('Согласие сигналов:')} {num(report.consensus?.confidence).toFixed(0)}%
         </div>
         <div className="text-xs text-gray-400 mt-1">
           {t(report.consensus.direction === 'buy' ? 'Бычий консенсус' :
            report.consensus.direction === 'sell' ? 'Медвежий консенсус' : 'Нейтральный')}
         </div>
-        {/* Расшифровка: по Нисону консенсус — согласие факторов, а не количество сигналов */}
+        {/* Проектная эвристика: согласие сценариев важнее их количества. */}
         <p className="text-[11px] leading-relaxed text-gray-400 mt-2 border-t border-gray-800/60 pt-2">
           {t('Оценка согласия подтверждённых свечных сценариев (последние 20 баров) в одну сторону. Противоречивые сигналы (long+short одновременно) дают низкий балл даже при их большом количестве — это шум, а не консенсус. Высокая оценка = несколько независимых паттернов, усиленных объёмом и уровнями S/R.')}
         </p>

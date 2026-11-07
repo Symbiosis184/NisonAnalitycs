@@ -1,4 +1,4 @@
-// Страница «Бэктест» — эмпирическая проверка ребра паттернов Нисона (бэклог П.3)
+// Страница «Бэктест» — эмпирическая проверка торговых сценариев на истории
 // Данные: публичный REST Bybit (без ключей). Издержки: тейкер 0.1% + слиппедж 5 б.п./сторону.
 import { useEffect, useMemo, useState } from 'react';
 import { fetchKlines, type Kline } from '../api/bybit';
@@ -78,8 +78,7 @@ export default function BacktestPage() {
     if (candles.length < 80) return [];
     // Собираем все срабатывания генератора по истории one-at-a-time.
     // Ключ tf задаёт пороги подтверждения (timeout/дистанция уровней) — фиксируем 'D'.
-    const events: Array<{ i: number; pattern: string; direction: 'long' | 'short'; bounds: FormationBounds }> = [];
-    signalGenerator.resetRun(); // новый прогон — чистый кэш «свежих событий»
+    const events: Array<{ i: number; key: string; pattern: string; direction: 'long' | 'short'; bounds: FormationBounds }> = [];
     for (let i = 60; i < candles.length; i++) {
       const sigs = signalGenerator.findSignals(candles.slice(0, i + 1), 'D');
       for (const s of sigs) {
@@ -87,18 +86,18 @@ export default function BacktestPage() {
         // сигналы — «ожидание → подтверждение». Раньше вход шёл по close первого
         // появления формации (статус pending, т.е. за бар ДО подтверждения), что
         // систематически ломало статистику (WR ~35%, отрицательная expectancy).
-        if (!s.confirmed || s.status !== 'confirmed') continue;
-        // FIX: событие привязываем к ЗАКРЫВАЮЩЕМУ бару формации (meta.patternEndIdx),
-        // а не к текущему бару прогона i. При confirmDelay>1 пары (i, endIdx) не
-        // существовало — детектор runBacktest никогда не находил сигнал (потерянные
-        // паттерны). Вход: close бара подтверждения (= candles[endIdx+1]).
-        const entryBar = Math.min(s.meta.patternEndIdx + 1, i);
+        if (!s.isFreshEvent || !s.confirmed || s.status !== 'confirmed') continue;
+        // Вход привязан к фактическому закрытому бару подтверждения. Для
+        // самоподтверждённой модели это последний бар самой формации.
+        const entryBar = s.meta.entryIndex;
+        if (entryBar === null || entryBar > i) continue;
         // Сигнальный режим: несём в бэктест УПРАВЛЕНИЕ ЖИВОЙ СТРАТЕГИИ —
-        // структурную цель Нисона (s.target) и порог входа adjustedRR >= 2
+        // структурную цель (s.target) и проектный фильтр исходного RR >= 2
         // (тот же фильтр, что в findSignals). Теперь проверяется вся текущая
         // стратегия (вход + стоп + цель), а не только точка входа с механикой 2R.
         events.push({
           i: entryBar,
+          key: `${s.pattern}|${s.direction}|${s.meta.patternEndIdx}`,
           pattern: s.pattern,
           direction: s.direction,
           bounds: {
@@ -114,8 +113,7 @@ export default function BacktestPage() {
     // выборка раздувалась серией входов в одну структуру (артефакты «Три горы»).
     const uniqueEvents = new Map<string, typeof events[number]>();
     for (const e of events) {
-      const key = `${e.pattern}|${e.direction}|${e.i}`;
-      if (!uniqueEvents.has(key)) uniqueEvents.set(key, e);
+      if (!uniqueEvents.has(e.key)) uniqueEvents.set(e.key, e);
     }
     const deduped = [...uniqueEvents.values()];
 
@@ -232,7 +230,7 @@ export default function BacktestPage() {
               <tr>
                 <th className="p-2">{t('Паттерн')}</th><th className="p-2">{t('Сделок')}</th>
                 <th className="p-2 cursor-help" title={'Доля прибыльных сделок после вычета издержек цикла (0.30% на сделку).\n' + '[95% CI] — интервал Уилсона: диапазон, в котором с вероятностью 95% лежит истинный win rate.\n' + 'Пример: 48% [35–61] означает, что реальный WR может быть как 35%, так и 61% — при малом числе сделок не делайте выводов по одному лишь проценту.'}>WR (net) [95% CI]</th>
-                <th className="p-2 cursor-help" title={'Средний результат одной сделки в единицах риска R (стоп = граница формации, тейк = 2R), уже за вычетом издержек.\n' + 'Например, +0.15 R = в среднем каждая сделка приносит 15% от величины вашего стопа.\n' + '[CI] — 95%-й доверительный интервал среднего; p — вероятность получить такое среднее, если реального преимущества нет (edge = 0).\n' + 'Ключевой критерий Нисона: expectancy должна быть устойчиво положительной.'}>Exp. R [CI] · p</th>
+                <th className="p-2 cursor-help" title={'Средний результат одной сделки в единицах риска R (стоп = граница формации, тейк = структурная цель), уже за вычетом издержек.\n' + 'Например, +0.15 R = в среднем каждая сделка приносит 15% от величины вашего стопа.\n' + '[CI] — 95%-й доверительный интервал среднего; p — вероятность получить такое среднее, если реального преимущества нет (edge = 0).\n' + 'Статистический критерий проекта: положительная expectancy должна подтверждаться выборкой и внешней проверкой.'}>Exp. R [CI] · p</th>
                 <th className="p-2 cursor-help" title={'Walk-forward проверка на будущих данных: стратегия обучается на окне 300 свечей и тестируется на следующих 100, окно сдвигается.\n' + 'OOS expectancy — средний результат только на данных вне обучения.\n' + 'Если OOS близок к историческому результату — преимущество настоящее; если резко хуже — статистика переобучена (бейдж ⚠︎overfit?).'}>WF OOS</th>
                 <th className="p-2 cursor-help" title={'Вердикт по преимуществу (edge): EDGE — если 95%-й ДИ expectancy полностью выше нуля и p < 0.05, т.е. положительный результат статистически достоверен.\n' + 'n/d — недостаточно данных или преимущество не подтверждено (результат мог получиться случайно).'}>Edge</th>
                 <th className="p-2 cursor-help" title={'Суммарный накопленный результат всех сделок паттерна в единицах R (нетто, после издержек).\n' + '+12 R означает: при стопе 1% депозита каждая такая сделка в сумме дала бы ≈ +12% к капиталу без учёта компаундинга.'}>Σ net R</th>

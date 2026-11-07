@@ -10,31 +10,32 @@ function mkCandles(closes: number[]): Candle[] {
   );
 }
 
-// Восходящая лестница HH/HL: каждые 2 бара +шаг, откат на полшага назад.
-function upStructure(n = 60, start = 100, step = 1): number[] {
+// Восходящая структура HH/HL: четыре бара импульса и два бара отката.
+// Полных 80 баров достаточно и для свингов, и для настоящей SMA65.
+function upStructure(n = 80, start = 100, step = 1): number[] {
   const closes: number[] = [];
+  let close = start;
   for (let i = 0; i < n; i++) {
-    const seg = Math.floor(i / 2);
-    const within = i % 2;
-    closes.push(start + seg * step - within * step * 0.5);
+    close += i % 6 < 4 ? step : -step * 0.7;
+    closes.push(close);
   }
   return closes;
 }
 
-// Нисходящая лестница LH/LL.
-function downStructure(n = 60, start = 200, step = 1): number[] {
+// Нисходящая структура LH/LL.
+function downStructure(n = 80, start = 200, step = 1): number[] {
   const closes: number[] = [];
+  let close = start;
   for (let i = 0; i < n; i++) {
-    const seg = Math.floor(i / 2);
-    const within = i % 2;
-    closes.push(start - seg * step + within * step * 0.5);
+    close += i % 6 < 4 ? -step : step * 0.7;
+    closes.push(close);
   }
   return closes;
 }
 
 // Боковик: узкий диапазон с явными равными экстремумами (HH/LL не образуются —
 // строгие неравенства в детекторе свингов дают БОКОВИК).
-function flatSeries(n = 60, base = 150): number[] {
+function flatSeries(n = 80, base = 150): number[] {
   const closes: number[] = [];
   for (let i = 0; i < n; i++) closes.push(i % 2 === 0 ? base + 1 : base - 1);
   return closes;
@@ -93,7 +94,7 @@ describe('getTrendCascade (контекст по каскаду ТФ)', () => {
     // порядок entries НЕ от старшего к младшему (ошибка вызывающего) —
     // поэтому проверяем инвариант согласия всех голосов вместо флага:
     const res = getTrendCascade([
-      ['W', mkCandles(downStructure(60, 300, 2))],
+      ['W', mkCandles(downStructure(80, 300, 2))],
       ['D', mkCandles(downStructure())],
       ['1H', mkCandles(flatSeries())],
     ]);
@@ -138,6 +139,9 @@ describe('detectTrendStart: крест MA10/MA65 (канон Нисона, гл.
     for (let i = 0; i < 90; i++) closes.push(200 - i * 0.5); // нисходящий
     for (let i = 0; i < 18; i++) closes.push(155 + i * 2.5); // сильный подъём
     const candles = mkCandles(closes);
+    // Один крест не должен сам объявлять тренд: добавляем независимый
+    // объёмный пробой, чтобы выполнить проектное правило трёх согласованных признаков.
+    candles[candles.length - 1].volume = 1000;
 
     // Sanity: факт пересечения действительно произошёл в последних 8 барах.
     // Проверка на тех же скользящих, что использует детектор (SMA по канону, гл. 13).

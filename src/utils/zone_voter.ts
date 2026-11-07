@@ -1,4 +1,6 @@
-// Zone Voter - определение зон поддержки/сопротивления по методологии Стива Нисона
+// Zone Voter — книжные ориентиры S/R плюс явно числовые эвристики проекта.
+// Свинги, полярность, длинные тела и окна связаны с книгами; допуски, ATR-ширина,
+// круглые числа, лимиты и баллы являются настройками реализации, а не цитатами.
 // Ключевые принципы:
 // 1. Уровни - это ЗОНЫ, а не точные цены
 // 2. Количество касаний определяет силу
@@ -104,12 +106,26 @@ export class ZoneVoter {
   // FIX ТФ-канона: значимых зон не больше MAX_ZONES_PER_SIDE с каждой стороны
   private static readonly MAX_ZONES_PER_SIDE = 8;
 
-  /**
-   * Кэш результатов collect() для избежания повторных вычислений.
-   * Ключ: `${candles.length}_${lastCandleTime}_${tfKey}_${price}`
-   */
+  /** Кэш зависит от цены, масштаба и содержимого истории, не только от её длины. */
   private static collectCache = new Map<string, { support: Zone[]; resistance: Zone[] }>();
   private static readonly CACHE_MAX_SIZE = 10;
+
+  private static historyFingerprint(candles: Candle[]): string {
+    let hash = 2166136261;
+    const mix = (value: number) => {
+      hash ^= Math.round((Number.isFinite(value) ? value : 0) * 1e6);
+      hash = Math.imul(hash, 16777619);
+    };
+    for (const candle of candles) {
+      mix(candle.time);
+      mix(candle.open);
+      mix(candle.high);
+      mix(candle.low);
+      mix(candle.close);
+      mix(candle.volume);
+    }
+    return (hash >>> 0).toString(36);
+  }
 
   /**
    * Сбор всех зон с голосованием.
@@ -120,11 +136,13 @@ export class ZoneVoter {
     candles: Candle[],
     tfKey: TimeframeKey = 'swing'
   ): { support: Zone[]; resistance: Zone[] } {
-    // Проверяем кэш
     const lastCandle = candles[candles.length - 1];
-    // Цена участвует в построении и фильтрации зон: без неё в ключе повторный
-    // вызов с той же историей, но другой ценой возвращал чужие S/R-наборы.
-    const cacheKey = `${candles.length}_${lastCandle?.time ?? 0}_${tfKey}_${price}`;
+    const cacheKey = [
+      price,
+      tfKey,
+      candles.length,
+      this.historyFingerprint(candles),
+    ].join('_');
     const cached = this.collectCache.get(cacheKey);
     if (cached) return cached;
 
@@ -148,7 +166,7 @@ export class ZoneVoter {
     this.addLongBodyLevels(candles, supMap, resMap, params.tolerance);
 
     // 6. Психологические круглые числа
-    this.addRoundNumbers(price, supMap, resMap, params.tolerance);
+    this.addRoundNumbers(price, supMap, resMap, params.tolerance, lastCandle?.time ?? 0);
 
     // 7. Уровни Фибоначчи (глава 12)
     this.addFibonacciLevels(candles, supMap, resMap, params.tolerance);
@@ -344,7 +362,7 @@ export class ZoneVoter {
   ) {
     const closes = candles.map(c => c.close);
     const periods = [50, 65, 200];
-    const lastTime = candles[candles.length - 1]?.time ?? Date.now();
+    const lastTime = candles[candles.length - 1]?.time ?? 0;
 
     for (const period of periods) {
       if (candles.length >= period) {
@@ -422,7 +440,8 @@ export class ZoneVoter {
     price: number,
     supMap: Map<number, ZoneClusterData>,
     resMap: Map<number, ZoneClusterData>,
-    tolerance: number
+    tolerance: number,
+    formedAt: number,
   ) {
     let step: number;
     if (price >= 10000) step = 1000;
@@ -440,10 +459,10 @@ export class ZoneVoter {
     const proximityThreshold = step * 0.2;
 
     if (price - lower <= proximityThreshold && lower > 0) {
-      addLevelToMap(supMap, lower, 'психологический уровень (круглое число)', Date.now(), tolerance);
+      addLevelToMap(supMap, lower, 'психологический уровень (круглое число)', formedAt, tolerance);
     }
     if (upper - price <= proximityThreshold && upper > 0) {
-      addLevelToMap(resMap, upper, 'психологический уровень (круглое число)', Date.now(), tolerance);
+      addLevelToMap(resMap, upper, 'психологический уровень (круглое число)', formedAt, tolerance);
     }
   }
 
@@ -469,7 +488,7 @@ export class ZoneVoter {
     
     if (range <= 0) return;
 
-    const lastTime = candles[candles.length - 1]?.time ?? Date.now();
+    const lastTime = candles[candles.length - 1]?.time ?? 0;
     
     // Уровни коррекции Фибоначчи
     const fibLevels = [
@@ -503,7 +522,7 @@ export class ZoneVoter {
     candles: Candle[]
   ): Zone[] {
     const zones: Zone[] = [];
-    const lastTime = candles[candles.length - 1]?.time ?? Date.now();
+    const lastTime = candles[candles.length - 1]?.time ?? 0;
 
     for (const [level, data] of map.entries()) {
       const uniqueReasons = Array.from(new Set(data.reasons));

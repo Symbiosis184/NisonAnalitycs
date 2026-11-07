@@ -1,19 +1,18 @@
-// Жизненный цикл сигнала по канону Стива Нисона (аудит №11).
+// Жизненный цикл торгового сценария поверх книжных свечных формаций.
 //
-// Проблема до фикса: `confirmed` вычислялся ОДИН РАЗ при детекции — по следующей
-// свече, которая на момент анализа часто ещё НЕ закрыта (live-данные Bybit отдают
-// последующие свечи формирующимися). Итог: «подтверждение» рисовалось по незакрытой
-// свече и навсегда замораживалось в статусе journal.
+// Отдельное подтверждение применяется только к моделям из pattern_ids.ts; оно
+// не приписывается каждой формации как универсальное правило Нисона. Проверка
+// идёт исключительно по закрытым барам после завершения модели.
 //
-// Нисон (гл. 4–6): сигнал живёт до тех пор, пока не произойдёт одно из:
-//   • ПОДТВЕРЖДЕНИЕ — первая ЗАКРЫТАЯ свеча после формации продолжила движение
-//     в сторону сигнала (или пробила границу формации);
-//   • ОТМЕНА — первая закрытая свеча пробила стоп формации (сигнал аннулируется;
-//     у Нисона несостоявшийся разворот не «пересиживает», а отменяется);
-//   • ожидание — свеча не дала ни того, ни другого: ждём следующую закрытую свечу
-//     (в пределах окна ожидания timeoutBars; дальше сигнал «протухает»).
+// Состояния:
+//   • confirmed — последующая закрытая свеча продолжила движение или закрылась
+//     за соответствующей границей формации;
+//   • invalidated — до подтверждения достигнута противоположная граница;
+//   • pending — решающего события ещё нет;
+//   • expired — исчерпано проектное окно ожидания timeoutBars.
 //
-// Чистая функция: state(i) = reduce(step, pending, candles[i+1..]). Это даёт
+// Конкретные условия переходов и лимит ожидания — правила торгового движка
+// проекта. Чистая функция: state(i) = reduce(step, pending, candles[i+1..]). Это даёт
 // инвариант согласованности: подтверждение, вычисленное позже по факту закрытия
 // свечи, всегда совпадает с мгновенной оценкой на тот же набор закрытых данных
 // (см. тесты property-based сверки).
@@ -63,6 +62,47 @@ export function stepSignal(
  *        для исторического бэктеста все свечи закрыты → closedCount = len)
  * @param timeoutBars окно ожидания подтверждения (в свечах), дальше — expired
  */
+export interface SignalLifecycle {
+  status: SignalStatus;
+  /** Закрытый бар, на котором впервые появилось подтверждение. */
+  confirmationIndex: number | null;
+  /** Закрытый бар, отменивший сценарий. */
+  invalidationIndex: number | null;
+  /** Бар истечения проектного окна ожидания. */
+  expirationIndex: number | null;
+}
+
+/**
+ * Полный жизненный цикл с фактическими индексами событий. Три бара ожидания —
+ * настройка проекта, а не универсальное числовое правило книг.
+ */
+export function resolveSignalLifecycle(
+  candles: Candle[],
+  idx: number,
+  direction: 'long' | 'short',
+  signalClose: number,
+  bounds: FormationBoundsLite,
+  closedCount: number,
+  timeoutBars: number = 3,
+): SignalLifecycle {
+  let status: SignalStatus = 'pending';
+  const lastClosedIdx = Math.min(candles.length - 1, closedCount - 1);
+  for (let i = idx + 1; i <= lastClosedIdx; i++) {
+    status = stepSignal(status, direction, signalClose, bounds, candles[i]);
+    if (status === 'confirmed') {
+      return { status, confirmationIndex: i, invalidationIndex: null, expirationIndex: null };
+    }
+    if (status === 'invalidated') {
+      return { status, confirmationIndex: null, invalidationIndex: i, expirationIndex: null };
+    }
+    if (i - idx >= timeoutBars) {
+      return { status: 'expired', confirmationIndex: null, invalidationIndex: null, expirationIndex: i };
+    }
+  }
+  return { status: 'pending', confirmationIndex: null, invalidationIndex: null, expirationIndex: null };
+}
+
+/** Совместимая обёртка для вызовов, которым нужен только статус. */
 export function resolveSignalStatus(
   candles: Candle[],
   idx: number,
@@ -72,14 +112,9 @@ export function resolveSignalStatus(
   closedCount: number,
   timeoutBars: number = 3,
 ): SignalStatus {
-  let status: SignalStatus = 'pending';
-  const lastClosedIdx = Math.min(candles.length - 1, closedCount - 1);
-  for (let i = idx + 1; i <= lastClosedIdx; i++) {
-    status = stepSignal(status, direction, signalClose, bounds, candles[i]);
-    if (status !== 'pending') return status;
-    if (i - idx >= timeoutBars) return 'expired';
-  }
-  return status;
+  return resolveSignalLifecycle(
+    candles, idx, direction, signalClose, bounds, closedCount, timeoutBars,
+  ).status;
 }
 
 /** UI-метка статуса. */

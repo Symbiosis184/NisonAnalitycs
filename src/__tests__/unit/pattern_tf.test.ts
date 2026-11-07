@@ -2,8 +2,8 @@
 // а не всегда использовать дневной толеранс (Нисон: уровень — зона, её ширина
 // зависит от масштаба графика).
 import { describe, it, expect } from 'vitest';
-import { setPatternTimeframe, getPatternTimeframe, SupportResistance } from '../../utils/pattern_engine';
-import { ZoneVoter } from '../../utils/zone_voter';
+import { SupportResistance } from '../../utils/pattern_engine';
+import { ZoneVoter, timeframeKey } from '../../utils/zone_voter';
 import { detectPatterns, sortPatternsForDisplay, PATTERN_DISPLAY_WINDOW } from '../../utils/patterns';
 import { Candle } from '../../utils/candle';
 
@@ -12,14 +12,10 @@ function mk(o: number, h: number, l: number, c: number, v = 100): Candle {
 }
 
 describe('ТФ-контекст детектора паттернов', () => {
-  it('setPatternTimeframe меняет активный масштаб', () => {
-    setPatternTimeframe('D');
-    expect(getPatternTimeframe()).toBe('swing');
-    setPatternTimeframe('15m');
-    expect(getPatternTimeframe()).toBe('scalp');
-    setPatternTimeframe('W');
-    expect(getPatternTimeframe()).toBe('position');
-    setPatternTimeframe('D'); // вернуть дефолт для других тестов
+  it('явный ТФ отображается в масштаб без изменяемого глобального состояния', () => {
+    expect(timeframeKey('D')).toBe('swing');
+    expect(timeframeKey('15m')).toBe('scalp');
+    expect(timeframeKey('W')).toBe('position');
   });
 
   it('detectPatterns принимает ТФ и возвращает результаты', () => {
@@ -30,12 +26,11 @@ describe('ТФ-контекст детектора паттернов', () => {
     expect(Array.isArray(resM)).toBe(true);
   });
 
-  it('глобальный ТФ-контекст сбрасывается после detectPatterns (нет протечки)', () => {
-    setPatternTimeframe('W'); // намеренно «грязное» состояние
-    const candles = Array.from({ length: 30 }, (_, i) => mk(100, 101, 99, 100.5));
-    detectPatterns(candles, '15m');
-    // после завершения — нейтральный дефолт swing ('D'), а не scalp/position
-    expect(getPatternTimeframe()).toBe('swing');
+  it('последовательные вызовы с разными ТФ не протекают друг в друга', () => {
+    const candles = Array.from({ length: 30 }, () => mk(100, 101, 99, 100.5));
+    const first = detectPatterns(candles, '15m');
+    detectPatterns(candles, 'W');
+    expect(detectPatterns(candles, '15m')).toEqual(first);
   });
 });
 
@@ -101,7 +96,7 @@ describe('Отображение паттернов: свежие не выте�
     expect(res.some(p => p.candleIndex === 5)).toBe(false);
   });
 
-  it('ранжирование: свежесть → подтверждение → уверенность', () => {
+  it('ранжирование: свежесть → подтверждение → эвристический балл', () => {
     const arr = [mk(170, false, 92), mk(175, true, 60), mk(172, true, 70)];
     const res = sortPatternsForDisplay(arr, 180);
     expect(res.map(p => p.candleIndex)).toEqual([175, 172, 170]);

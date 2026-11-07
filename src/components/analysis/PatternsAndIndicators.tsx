@@ -44,7 +44,7 @@ export function ConfirmedPatternsList({ patterns, total, timeframe }: { patterns
                     {t(pattern.name)}
                   </div>
                   <div className="text-xs text-gray-400">
-                    {t('Уверенность:')} {pattern.confidence}%
+                    {t('Эвристический балл:')} {pattern.confidence}/100
                     {/* Дата/время подтверждения — закрытие подтверждающей свечи (Нисон) */}
                     {(() => {
                       const confirmedAt = formatConfirmedTime(pattern.confirmedTime, timeframe);

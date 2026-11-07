@@ -317,15 +317,14 @@ export default function CandlestickChart({
     // ── Паттерны: компактные маркеры БЕЗ текста, название — в tooltip ─────
     // Стрелки уменьшены (size 1), текст убран с canvas. При наведении мыши
     // (или касании на мобильных) рядом с маркером всплывает тёмная плашка
-    // с названием паттерна и уверенностью.
+    // с названием паттерна и эвристическим баллом.
     let hideTimer: ReturnType<typeof setTimeout> | null = null;
 
     if (patterns.length > 0) {
-      // По Нисону паттерн считается валидным только ПОСЛЕ подтверждения
-      // следующей свечой — на графике рисуем исключительно подтверждённые
-      // маркеры (это защита от «ложных» стрелок: неподтверждённая формация
-      // может быть отменена следующей свечой). При равной уверенности выше
-      // ставится тот паттерн, который подкреплён объёмом или уровнем S/R.
+      // На графике показываются завершённые и подтверждённые формации.
+      // Отдельное подтверждение требуется только моделям из pattern_ids.ts;
+      // остальные завершаются собственным последним закрытым баром.
+      // При равном эвристическом балле выше паттерн с объёмом или уровнем S/R.
       const confirmedPatterns = patterns
         .filter(p => p.confirmed && p.candleIndex >= 0 && p.candleIndex < candles.length)
         .sort(
@@ -408,7 +407,7 @@ export default function CandlestickChart({
             const barTime = String(m.time);
             const names = confirmedPatterns
               .filter(p => String(Math.floor(candles[p.candleIndex].time / 1000)) === barTime)
-              .map(p => `${p.name} · ${Math.round(Math.min(100, Math.max(0, p.confidence)))}%`);
+              .map(p => `${p.name} · ${Math.round(Math.min(100, Math.max(0, p.confidence)))}/100`);
             const label = names.length > 1 ? t(`Паттерны Нисона: ${names.join(' | ')}`) : (names[0] ? t(names[0]) : '');
             const cx = chart.timeScale().timeToCoordinate(m.time as any) ?? x;
             const anchorPattern = byTime.get(barTime)?.pattern ?? confirmedPatterns[0];

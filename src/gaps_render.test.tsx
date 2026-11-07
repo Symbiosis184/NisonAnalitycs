@@ -95,6 +95,37 @@ describe('гэпы: порог и рынок', () => {
     const gaps = detectGaps(candles, 'stock');
     expect(gaps).toHaveLength(1);
     expect(gaps[0].unfilled).toBe(false);
+    expect(gaps[0].filled).toBe(true);
+    expect(gaps[0].broken).toBe(false);
+  });
+
+  it('внутрисессионное заполнение восходящего окна не равно его прорыву', () => {
+    const gaps = detectGaps([
+      bar(0, 100, 101, 99, 100),
+      bar(1, 103.5, 105, 102.5, 104),
+      bar(2, 103, 103.5, 100.9, 102), // low заполнил окно, close остался выше 101
+    ], 'stock');
+    expect(gaps[0].filled).toBe(true);
+    expect(gaps[0].unfilled).toBe(false);
+    expect(gaps[0].broken).toBe(false);
+  });
+
+  it('окно пробито только закрытием за его дальней границей', () => {
+    const up = detectGaps([
+      bar(0, 100, 101, 99, 100),
+      bar(1, 103.5, 105, 102.5, 104),
+      bar(2, 103, 103.5, 100.5, 100.9),
+    ], 'stock');
+    expect(up[0].filled).toBe(true);
+    expect(up[0].broken).toBe(true);
+
+    const down = detectGaps([
+      bar(0, 100, 101, 99, 100),
+      bar(1, 96, 97.4, 95, 96.5),
+      bar(2, 96.5, 99.2, 96, 98.8), // high заполнил окно, close остался ниже 99
+    ], 'stock');
+    expect(down[0].filled).toBe(true);
+    expect(down[0].broken).toBe(false);
   });
 });
 
@@ -102,7 +133,7 @@ describe('CandlestickChart принимает gaps', () => {
   it('гэп рисуется КОРОТКОЙ черточкой внутри разрыва (не ценовой линией через весь график)', async () => {
     const gaps: GapDTO[] = [{
       time: 86400000, prevClose: 101, open: 102.5, top: 102.5, bottom: 101,
-      direction: 'up', pct: 1.5, unfilled: true,
+      direction: 'up', pct: 1.5, unfilled: true, filled: false, broken: false,
     }];
     const candles = [bar(0, 100, 101, 99, 100), bar(86400000, 103, 104, 102.5, 103)];
     calls.priceLines.length = 0; calls.markers.length = 0;
@@ -130,7 +161,7 @@ describe('CandlestickChart принимает gaps', () => {
   it('заполненный гэп — тусклая пунктирная черточка без подписи', async () => {
     const gaps: GapDTO[] = [{
       time: 86400000, prevClose: 101, open: 102.5, top: 102.5, bottom: 101,
-      direction: 'down', pct: 1.5, unfilled: false,
+      direction: 'down', pct: 1.5, unfilled: false, filled: true, broken: false,
     }];
     const candles = [bar(0, 100, 101, 99, 100), bar(86400000, 103, 104, 102.5, 103)];
     calls.priceLines.length = 0; calls.markers.length = 0;

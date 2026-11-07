@@ -1,5 +1,5 @@
 import { Candle } from './candle';
-import { ema, sma, rsi } from './indicators';
+import { sma, rsi } from './indicators';
 import { detectPatterns } from './patterns';
 
 export type TrendContext = 'ВОСХОДЯЩИЙ' | 'НИСХОДЯЩИЙ' | 'БОКОВИК';
@@ -8,11 +8,13 @@ export type TrendContext = 'ВОСХОДЯЩИЙ' | 'НИСХОДЯЩИЙ' | 'Б
 // 10-дневную SMA и 65-дневную SMA ("The Ten-Day Moving Average", "The Sixty-Five
 // Day Moving Average"). EMA даёт иной отклик и раньше «переезжает» цену, поэтому
 // там, где Нисон формулирует правило через MA10/MA65, применяется именно SMA.
-// SMA[0..period-2] = NaN (недостаточно данных) — заменяем на значение EMA на том
-// же индексе, чтобы массив был пригоден для сравнений на короткой истории.
+// SMA[0..period-2] = NaN: до накопления полного окна значения не существует.
+// EMA не подставляется — это другой индикатор с другой историей и откликом.
 export function nisonSma(values: number[], period: number): number[] {
-  const base = values.length >= period ? sma(values, period) : ema(values, period);
-  return base.map((v, i) => (Number.isNaN(v) ? ema(values, period)[i] : v));
+  if (!Number.isInteger(period) || period < 1) {
+    throw new RangeError('Период SMA должен быть положительным целым числом');
+  }
+  return sma(values, period);
 }
 
 // Структурный тренд по канону Нисона (гл. 13): направление определяется
@@ -65,8 +67,9 @@ function isFlatMarket(candles: Candle[]): boolean {
   const ma65 = nisonSma(closes, 65); // Нисон гл. 13: SMA65
   const lastMa = ma65[ma65.length - 1];
   const prevMa = ma65[Math.max(0, ma65.length - 11)];
-  const slopePct = lastMa > 0 ? Math.abs((lastMa - prevMa) / lastMa) : 1;
-  return slopePct < 0.005; // MA65 горизонтальна
+  if (!Number.isFinite(lastMa) || !Number.isFinite(prevMa) || lastMa <= 0) return false;
+  const slopePct = Math.abs((lastMa - prevMa) / lastMa);
+  return slopePct < 0.005; // Проектный порог горизонтальности MA65.
 }
 
 // Контекст тренда: структура свингов (первична по Нисону) с MA-подтверждением.
@@ -252,17 +255,33 @@ export function detectTrendStart(candles: Candle[], price: number): {
   const prevHigh = Math.max(...prev.map(c => c.high));
   const recentLow = Math.min(...recent.map(c => c.low));
   const prevLow = Math.min(...prev.map(c => c.low));
-  
-  const recentRsi = rsiValues.slice(-20);
-  const prevRsi = rsiValues.slice(-40, -20);
-  const recentRsiVal = recentRsi[recentRsi.length - 1];
-  const prevRsiVal = prevRsi[prevRsi.length - 1];
-  
-  if (recentHigh > prevHigh && recentRsiVal < prevRsiVal - 5) {
-    bear.push('медвежья дивергенция у перекупленности (гл. 14)');
+
+  // RSI сравнивается на тех же барах, где возникли ценовые экстремумы,
+  // а не на последних барах двух произвольных двадцатидневных окон.
+  const recentStart = candles.length - recent.length;
+  const prevStart = candles.length - recent.length - prev.length;
+  const recentHighIdx = recentStart + recent.findIndex(c => c.high === recentHigh);
+  const prevHighIdx = prevStart + prev.findIndex(c => c.high === prevHigh);
+  const recentLowIdx = recentStart + recent.findIndex(c => c.low === recentLow);
+  const prevLowIdx = prevStart + prev.findIndex(c => c.low === prevLow);
+  const recentHighRsi = rsiValues[recentHighIdx];
+  const prevHighRsi = rsiValues[prevHighIdx];
+  const recentLowRsi = rsiValues[recentLowIdx];
+  const prevLowRsi = rsiValues[prevLowIdx];
+
+  if (
+    recentHigh > prevHigh
+    && Number.isFinite(recentHighRsi) && Number.isFinite(prevHighRsi)
+    && recentHighRsi < prevHighRsi - 5
+  ) {
+    bear.push('медвежья дивергенция RSI на ценовых максимумах (проектный порог 5 п.п.)');
   }
-  if (recentLow < prevLow && recentRsiVal > prevRsiVal + 5) {
-    bull.push('бычья дивергенция у перепроданности (гл. 14)');
+  if (
+    recentLow < prevLow
+    && Number.isFinite(recentLowRsi) && Number.isFinite(prevLowRsi)
+    && recentLowRsi > prevLowRsi + 5
+  ) {
+    bull.push('бычья дивергенция RSI на ценовых минимумах (проектный порог 5 п.п.)');
   }
   
   // 7) Рост объёма

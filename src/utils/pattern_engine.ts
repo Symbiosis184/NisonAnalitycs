@@ -2,7 +2,7 @@ import { Candle } from './candle';
 import { ema } from './indicators';
 import { ZoneVoter, timeframeKey, type TimeframeKey } from './zone_voter';
 import { findSwings } from './levels';
-import { getSwingTrend, nisonSma } from './trend_detection';
+import { getSwingTrend } from './trend_detection';
 import { getPatternCandleCount } from './pattern_ids';
 
 const SWING_SPAN_BY_TF: Record<TimeframeKey, number> = {
@@ -30,22 +30,32 @@ export class VolumeAnalyzer {
     if (candles.length < period) return 0;
     return candles.slice(-period).reduce((s, c) => s + c.volume, 0) / period;
   }
-  static isHighVolume(candle: Candle, candles: Candle[], multiplier: number = 1.3): boolean {
-    const prev = candles.slice(0, -1);
-    const avg = this.getAverageVolume(prev);
+  /**
+   * Сравнение с объёмом строго ПРЕДШЕСТВУЮЩИХ свечей. Вызывающий код обязан
+   * исключить текущую свечу: так одинаковые аргументы дают одинаковый результат
+   * в списке моделей, сигналах и бэктесте.
+   */
+  static isHighVolume(candle: Candle, priorCandles: Candle[], multiplier: number = 1.3): boolean {
+    const avg = this.getAverageVolume(priorCandles);
     return avg > 0 && candle.volume > avg * multiplier;
   }
 }
 
-let PATTERN_TF_KEY: TimeframeKey = 'swing';
-export function setPatternTimeframe(tf: string): void { PATTERN_TF_KEY = timeframeKey(tf); }
-export function getPatternTimeframe(): TimeframeKey { return PATTERN_TF_KEY; }
-
-type MarketKind = 'crypto' | 'stocks';
-let CURRENT_MARKET: MarketKind = 'crypto';
-export function setMarket(market: MarketKind): void { CURRENT_MARKET = market; }
-export function getMarket(): MarketKind { return CURRENT_MARKET; }
-function GAP_PATTERNS_ENABLED(): boolean { return CURRENT_MARKET === 'stocks'; }
+export type PatternMarket = 'crypto' | 'stocks';
+export interface PatternContext {
+  timeframe?: string;
+  market?: PatternMarket;
+}
+export interface PatternDetection {
+  found: boolean;
+  name: string;
+  /** Фактический размер переменной формации; иначе используется реестр ID. */
+  formationSize?: number;
+}
+const DEFAULT_PATTERN_CONTEXT: Required<PatternContext> = { timeframe: 'D', market: 'crypto' };
+function patternContext(context?: PatternContext): Required<PatternContext> {
+  return { ...DEFAULT_PATTERN_CONTEXT, ...context };
+}
 
 /** Базовое имя модели без контекстных суффиксов в скобках. */
 function baseName(name: string): string {
@@ -58,13 +68,18 @@ export class PatternDetector {
    * ИСПРАВЛЕНО: размерность формации берётся из единого канонического
    * справочника (гл. 4–7 ЯС), а не подбирается по подстрокам имени.
    */
-  static getFormationBounds(patternName: string, candles: Candle[], endIdx: number) {
+  static getFormationBounds(
+    patternName: string,
+    candles: Candle[],
+    endIdx: number,
+    formationSize?: number,
+  ) {
     const n = candles.length;
     if (n === 0) {
       return { patternCandlesCount: 0, patternStartIdx: -1, patternEndIdx: -1, patternLow: 0, patternHigh: 0 };
     }
     const idx = Math.min(Math.max(endIdx, 0), n - 1);
-    const count = Math.min(getPatternCandleCount(patternName), idx + 1);
+    const count = Math.min(formationSize ?? getPatternCandleCount(patternName), idx + 1);
     const startIdx = idx - count + 1;
     const formation = candles.slice(startIdx, idx + 1);
     return {
@@ -103,45 +118,46 @@ export class PatternDetector {
   }
 
   /**
-   * Подтверждённый контекст по Нисону (гл. 13): структура HH/HL или LH/LL,
-   * положение закрытия относительно SMA65 и наклон SMA65 должны совпасть.
-   * nisonSma сохраняет тот же SMA65-канон на короткой истории через EMA-fallback.
+   * Разворотная модель требует уже существующего движения, которое она может
+   * развернуть. Близость к экстремуму сама по себе трендом не является.
+   * Сначала используется структура свингов; если её недостаточно — направление
+   * и наклон доступной SMA. Это воспроизводимая эвристика контекста, а не
+   * числовой порог, заданный книгами.
    */
-  private static confirmedPrecedingTrend(prev: Candle[]): 'up' | 'down' | null {
-    if (prev.length < 4) return null;
-    const swing = getSwingTrend(prev, 3);
-    if (swing === 'БОКОВИК') return null;
-
-    const ma65 = nisonSma(prev.map(c => c.close), 65);
-    const lastMa = ma65[ma65.length - 1];
-    const priorMa = ma65[Math.max(0, ma65.length - 11)];
-    const lastClose = prev[prev.length - 1].close;
-    if (![lastMa, priorMa, lastClose].every(Number.isFinite)) return null;
-
-    if (swing === 'ВОСХОДЯЩИЙ' && lastClose > lastMa && lastMa > priorMa) return 'up';
-    if (swing === 'НИСХОДЯЩИЙ' && lastClose < lastMa && lastMa < priorMa) return 'down';
-    return null;
-  }
-
-  // Для разворота недостаточно произвольного движения за несколько баров:
-  // блокируем только подтверждённый противоположный тренд. Нейтральный контекст
-  // не запрещает модель, но и не считается доказательством разворота сам по себе.
   private static precededByDecline(prev: Candle[]): boolean {
-    return prev.length >= 4 && this.confirmedPrecedingTrend(prev) !== 'up';
+    if (prev.length < 4) return false;
+    const swing = getSwingTrend(prev);
+    if (swing === 'НИСХОДЯЩИЙ') return true;
+    if (swing === 'ВОСХОДЯЩИЙ') return false;
+    return this.maDirection(prev) === 'down';
   }
 
   private static precededByRally(prev: Candle[]): boolean {
-    return prev.length >= 4 && this.confirmedPrecedingTrend(prev) !== 'down';
+    if (prev.length < 4) return false;
+    const swing = getSwingTrend(prev);
+    if (swing === 'ВОСХОДЯЩИЙ') return true;
+    if (swing === 'НИСХОДЯЩИЙ') return false;
+    return this.maDirection(prev) === 'up';
   }
 
-  // Модели ПРОДОЛЖЕНИЯ, в отличие от разворотов, требуют подтверждённого
-  // тренда в собственном направлении; нейтральный контекст для них недостаточен.
-  private static inConfirmedDecline(prev: Candle[]): boolean {
-    return this.confirmedPrecedingTrend(prev) === 'down';
-  }
-
-  private static inConfirmedRally(prev: Candle[]): boolean {
-    return this.confirmedPrecedingTrend(prev) === 'up';
+  private static maDirection(candles: Candle[]): 'up' | 'down' | 'flat' {
+    const period = Math.min(65, candles.length);
+    if (period < 4) return 'flat';
+    const closes = candles.map(c => c.close);
+    const meanAt = (end: number) => {
+      const from = Math.max(0, end - period + 1);
+      const part = closes.slice(from, end + 1);
+      return part.reduce((sum, value) => sum + value, 0) / part.length;
+    };
+    const now = meanAt(closes.length - 1);
+    const before = meanAt(closes.length - 2);
+    const last = closes[closes.length - 1];
+    const avgRange = candles.slice(-period)
+      .reduce((sum, c) => sum + c.totalRange, 0) / period;
+    const tolerance = Math.max(Number.EPSILON, avgRange * 0.05);
+    if (last < now - tolerance && now < before - tolerance) return 'down';
+    if (last > now + tolerance && now > before + tolerance) return 'up';
+    return 'flat';
   }
 
   private static makesNewExtreme(value: number, window: Candle[], isLow: boolean): boolean {
@@ -181,7 +197,7 @@ export class PatternDetector {
 
   // ─── гл. 4 ЯС: МОЛОТ / ПОВЕШЕННЫЙ / ПАДАЮЩАЯ ЗВЕЗДА ────────────────
 
-  static isHammer(candle: Candle, prevCandles: Candle[]): { found: boolean; name: string } {
+  static isHammer(candle: Candle, prevCandles: Candle[], context?: PatternContext): PatternDetection {
     if (candle.totalRange === 0) return { found: false, name: '' };
     if (candle.body > candle.totalRange * 0.45) return { found: false, name: '' };
     if (candle.lowerWick < candle.body * 2) return { found: false, name: '' };
@@ -190,10 +206,7 @@ export class PatternDetector {
     if (!this.atLocalLow(candle, prevCandles)) return { found: false, name: '' };
     if (!this.precededByDecline(prevCandles)) return { found: false, name: '' };
 
-    const nearSupport = ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01, PATTERN_TF_KEY, candle.low) ||
-      ZoneVoter.isNearSupport(candle.low, prevCandles, 0.01, PATTERN_TF_KEY);
-    if (!nearSupport) return { found: false, name: '' };
-
+    // Близость поддержки усиливает контекст, но не отменяет геометрию модели.
     const volumeOk = VolumeAnalyzer.isHighVolume(candle, prevCandles, 1.3);
     const closes = prevCandles.map(c => c.close);
     const m20Arr = ema(closes, 20);
@@ -201,7 +214,7 @@ export class PatternDetector {
     const maOk = m20 !== null && Number.isFinite(m20) && Math.abs(candle.low - m20) <= m20 * 0.01;
 
     let name = 'МОЛОТ';
-    if (ZoneVoter.isNearSupport(candle.close, prevCandles, 0.015, PATTERN_TF_KEY)) name += ' (У ПОДДЕРЖКИ)';
+    if (ZoneVoter.isNearSupport(candle.close, prevCandles, 0.015, timeframeKey(patternContext(context).timeframe))) name += ' (У ПОДДЕРЖКИ)';
     if (volumeOk) name += ' (ОБЪЁМ)';
     else if (maOk) name += ' (MA20)';
     return { found: true, name };
@@ -211,7 +224,7 @@ export class PatternDetector {
    * ИСПРАВЛЕНО (гл. 4, рис. 4.8–4.9 ЯС): у несовершенного молота нижняя
    * тень короче двух тел, но не меньше одного тела.
    */
-  static isImperfectHammer(candle: Candle, prevCandles: Candle[]): { found: boolean; name: string } {
+  static isImperfectHammer(candle: Candle, prevCandles: Candle[], context?: PatternContext): PatternDetection {
     if (candle.totalRange === 0) return { found: false, name: '' };
     if (candle.body > candle.totalRange * 0.5) return { found: false, name: '' };
     if (candle.lowerWick < candle.body) return { found: false, name: '' };
@@ -220,10 +233,7 @@ export class PatternDetector {
     if (!this.atLocalLow(candle, prevCandles)) return { found: false, name: '' };
     if (!this.precededByDecline(prevCandles)) return { found: false, name: '' };
 
-    const nearSupport = ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01, PATTERN_TF_KEY, candle.low) ||
-      ZoneVoter.isNearSupport(candle.low, prevCandles, 0.01, PATTERN_TF_KEY);
-    if (!nearSupport) return { found: false, name: '' };
-
+    // Близость поддержки усиливает контекст, но не отменяет геометрию модели.
     return { found: true, name: 'МОЛОТ (НЕСОВЕРШЕННЫЙ)' };
   }
 
@@ -231,7 +241,7 @@ export class PatternDetector {
    * ИСПРАВЛЕНО: тело в НИЖНЕЙ части диапазона — сравнение с серединой
    * ДИАПАЗОНА, а не тела (цвет не важен, гл. 5 ЯС).
    */
-  static isInvertedHammer(candle: Candle, prevCandles: Candle[]): { found: boolean; name: string } {
+  static isInvertedHammer(candle: Candle, prevCandles: Candle[], context?: PatternContext): PatternDetection {
     if (candle.totalRange === 0) return { found: false, name: '' };
     if (candle.body > candle.totalRange * 0.45) return { found: false, name: '' };
     if (candle.upperWick < candle.body * 2) return { found: false, name: '' };
@@ -240,12 +250,9 @@ export class PatternDetector {
     if (!this.atLocalLow(candle, prevCandles)) return { found: false, name: '' };
     if (!this.precededByDecline(prevCandles)) return { found: false, name: '' };
 
-    const nearSupport = ZoneVoter.isNearSupport(candle.close, prevCandles, 0.01, PATTERN_TF_KEY, candle.low) ||
-      ZoneVoter.isNearSupport(candle.low, prevCandles, 0.01, PATTERN_TF_KEY);
-    if (!nearSupport) return { found: false, name: '' };
-
+    // Близость поддержки усиливает контекст, но не отменяет геометрию модели.
     let name = 'ПЕРЕВЁРНУТЫЙ МОЛОТ';
-    if (ZoneVoter.isNearSupport(candle.close, prevCandles, 0.015, PATTERN_TF_KEY)) name += ' (У ПОДДЕРЖКИ)';
+    if (ZoneVoter.isNearSupport(candle.close, prevCandles, 0.015, timeframeKey(patternContext(context).timeframe))) name += ' (У ПОДДЕРЖКИ)';
     return { found: true, name };
   }
 
@@ -253,7 +260,7 @@ export class PatternDetector {
    * ИСПРАВЛЕНО: тело у ВЕРХНЕЙ границы диапазона — сравнение с серединой
    * ДИАПАЗОНА (цвет не важен, гл. 4 ЯС).
    */
-  static isHangingMan(candle: Candle, prevCandles: Candle[]): { found: boolean; name: string } {
+  static isHangingMan(candle: Candle, prevCandles: Candle[], context?: PatternContext): PatternDetection {
     if (candle.totalRange === 0) return { found: false, name: '' };
     if (candle.body > candle.totalRange * 0.45) return { found: false, name: '' };
     if (candle.lowerWick < candle.body * 2) return { found: false, name: '' };
@@ -263,12 +270,12 @@ export class PatternDetector {
     if (!this.precededByRally(prevCandles)) return { found: false, name: '' };
 
     let name = 'ПОВЕШЕННЫЙ';
-    if (ZoneVoter.isNearResistance(candle.close, prevCandles, 0.015, PATTERN_TF_KEY)) name += ' (У СОПРОТИВЛЕНИЯ)';
+    if (ZoneVoter.isNearResistance(candle.close, prevCandles, 0.015, timeframeKey(patternContext(context).timeframe))) name += ' (У СОПРОТИВЛЕНИЯ)';
     if (candle.isBearish) name += ' (ЧЁРНОЕ ТЕЛО)';
     return { found: true, name };
   }
 
-  static isShootingStar(candle: Candle, prevCandles: Candle[]): { found: boolean; name: string } {
+  static isShootingStar(candle: Candle, prevCandles: Candle[], context?: PatternContext): PatternDetection {
     if (candle.totalRange === 0) return { found: false, name: '' };
     if (candle.body > candle.totalRange * 0.45) return { found: false, name: '' };
     if (candle.upperWick < candle.body * 2) return { found: false, name: '' };
@@ -278,7 +285,7 @@ export class PatternDetector {
     if (!this.precededByRally(prevCandles)) return { found: false, name: '' };
 
     let name = 'ПАДАЮЩАЯ ЗВЕЗДА';
-    if (ZoneVoter.isNearResistance(candle.close, prevCandles, 0.015, PATTERN_TF_KEY)) name += ' (У СОПРОТИВЛЕНИЯ)';
+    if (ZoneVoter.isNearResistance(candle.close, prevCandles, 0.015, timeframeKey(patternContext(context).timeframe))) name += ' (У СОПРОТИВЛЕНИЯ)';
     if (VolumeAnalyzer.isHighVolume(candle, prevCandles, 1.3)) name += ' (ОБЪЁМ)';
     return { found: true, name };
   }
@@ -288,7 +295,7 @@ export class PatternDetector {
   /**
    * ИСПРАВЛЕНО: добавлены длинноногая дожи и рикша (гл. 8 ЯС).
    */
-  static classifyDoji(candle: Candle): { found: boolean; name: string } {
+  static classifyDoji(candle: Candle): PatternDetection {
     if (!candle.isDoji) return { found: false, name: '' };
     const r = candle.totalRange;
     if (r <= 0) return { found: false, name: '' };
@@ -309,7 +316,7 @@ export class PatternDetector {
   }
 
   /** НОВОЕ (гл. 2 ЯС): высокая волна — малое тело + длинные обе тени. */
-  static isHighWave(candle: Candle, prevCandles: Candle[]): { found: boolean; name: string } {
+  static isHighWave(candle: Candle, prevCandles: Candle[]): PatternDetection {
     if (candle.totalRange <= 0) return { found: false, name: '' };
     if (candle.isDoji) return { found: false, name: '' };
     if (candle.body > candle.totalRange * 0.3) return { found: false, name: '' };
@@ -322,26 +329,26 @@ export class PatternDetector {
 
   // ─── гл. 4 ЯС: ПОГЛОЩЕНИЕ, ЗАВЕСА, ПРОСВЕТ ──────────────────────────
 
-  static isBullishEngulfing(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
+  static isBullishEngulfing(c1: Candle, c2: Candle, prev: Candle[], context?: PatternContext): PatternDetection {
     if (!(c1.isBearish || c1.isDoji)) return { found: false, name: '' };
     if (!c2.isBullish || !c2.isEngulfing(c1)) return { found: false, name: '' };
     if (!this.precededByDecline(prev)) return { found: false, name: '' };
 
     let name = 'БЫЧЬЕ ПОГЛОЩЕНИЕ';
     if (this.isSmallRelative(c1, prev.slice(-20)) && this.isLongRelative(c2, prev.slice(-20))) name += ' (СИЛЬНОЕ)';
-    if (ZoneVoter.isNearSupport(c2.close, prev, 0.015, PATTERN_TF_KEY)) name += ' (У ПОДДЕРЖКИ)';
+    if (ZoneVoter.isNearSupport(c2.close, prev, 0.015, timeframeKey(patternContext(context).timeframe))) name += ' (У ПОДДЕРЖКИ)';
     if (VolumeAnalyzer.isHighVolume(c2, prev, 1.5)) name += ' (ОБЪЁМ)';
     return { found: true, name };
   }
 
-  static isBearishEngulfing(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
+  static isBearishEngulfing(c1: Candle, c2: Candle, prev: Candle[], context?: PatternContext): PatternDetection {
     if (!(c1.isBullish || c1.isDoji)) return { found: false, name: '' };
     if (!c2.isBearish || !c2.isEngulfing(c1)) return { found: false, name: '' };
     if (!this.precededByRally(prev)) return { found: false, name: '' };
 
     let name = 'МЕДВЕЖЬЕ ПОГЛОЩЕНИЕ';
     if (this.isSmallRelative(c1, prev.slice(-20)) && this.isLongRelative(c2, prev.slice(-20))) name += ' (СИЛЬНОЕ)';
-    if (ZoneVoter.isNearResistance(c2.close, prev, 0.015, PATTERN_TF_KEY)) name += ' (У СОПРОТИВЛЕНИЯ)';
+    if (ZoneVoter.isNearResistance(c2.close, prev, 0.015, timeframeKey(patternContext(context).timeframe))) name += ' (У СОПРОТИВЛЕНИЯ)';
     if (VolumeAnalyzer.isHighVolume(c2, prev, 1.5)) name += ' (ОБЪЁМ)';
     return { found: true, name };
   }
@@ -350,7 +357,7 @@ export class PatternDetector {
    * ИСПРАВЛЕНО (гл. 4 ЯС): гэп смягчён до адаптивного допуска — на крипте
    * строгие гэпы редки; метка «(ГЭП)» ставится только при настоящем гэпе.
    */
-  static isDarkCloudCover(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
+  static isDarkCloudCover(c1: Candle, c2: Candle, prev: Candle[], context?: PatternContext): PatternDetection {
     if (!(c1.isBullish && c1.isLongCandle)) return { found: false, name: '' };
     if (!(c2.isBearish && c2.isLongCandle)) return { found: false, name: '' };
     if (!this.precededByRally(prev)) return { found: false, name: '' };
@@ -362,11 +369,11 @@ export class PatternDetector {
     let name = 'ЗАВЕСА ИЗ ТЁМНЫХ ОБЛАКОВ';
     if (c2.open > c1.high) name += ' (ГЭП ВЫШЕ МАКСИМУМА)';
     else if (c2.open > c1.close) name += ' (ГЭП)';
-    if (ZoneVoter.isNearResistance(c2.close, prev, 0.015, PATTERN_TF_KEY)) name += ' (У СОПРОТИВЛЕНИЯ)';
+    if (ZoneVoter.isNearResistance(c2.close, prev, 0.015, timeframeKey(patternContext(context).timeframe))) name += ' (У СОПРОТИВЛЕНИЯ)';
     return { found: true, name };
   }
 
-  static isPiercingPattern(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
+  static isPiercingPattern(c1: Candle, c2: Candle, prev: Candle[], context?: PatternContext): PatternDetection {
     if (!(c1.isBearish && c1.isLongCandle)) return { found: false, name: '' };
     if (!(c2.isBullish && c2.isLongCandle)) return { found: false, name: '' };
     if (!this.precededByDecline(prev)) return { found: false, name: '' };
@@ -378,7 +385,7 @@ export class PatternDetector {
     let name = 'ПРОСВЕТ В ОБЛАКАХ';
     if (c2.open < c1.low) name += ' (ГЭП НИЖЕ МИНИМУМА)';
     else if (c2.open < c1.close) name += ' (ГЭП)';
-    if (ZoneVoter.isNearSupport(c2.close, prev, 0.015, PATTERN_TF_KEY)) name += ' (У ПОДДЕРЖКИ)';
+    if (ZoneVoter.isNearSupport(c2.close, prev, 0.015, timeframeKey(patternContext(context).timeframe))) name += ' (У ПОДДЕРЖКИ)';
     return { found: true, name };
   }
 
@@ -386,7 +393,7 @@ export class PatternDetector {
    * ИСПРАВЛЕНО (ЗГ гл. 3): основание «последнее поглощение» — крупная ЧЁРНАЯ
    * поглощает малое БЕЛОЕ во время СПАДА; вершина — зеркально.
    */
-  static isLastEngulfing(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
+  static isLastEngulfing(c1: Candle, c2: Candle, prev: Candle[]): PatternDetection {
     const eng = c2.bodyTop >= c1.bodyTop && c2.bodyBottom <= c1.bodyBottom && c2.body > c1.body;
     if (!eng) return { found: false, name: '' };
 
@@ -405,7 +412,7 @@ export class PatternDetector {
    * ИСПРАВЛЕНО (гл. 5 ЯС): гэп третьей свечи не обязателен — «второй гэп
    * возникает редко и не влияет на силу сигнала». Оставлен как усилитель.
    */
-  static isMorningStar(candles: Candle[]): { found: boolean; name: string } {
+  static isMorningStar(candles: Candle[]): PatternDetection {
     if (candles.length < 3) return { found: false, name: '' };
     const c1 = candles[candles.length - 3];
     const c2 = candles[candles.length - 2];
@@ -438,7 +445,7 @@ export class PatternDetector {
     return { found: true, name };
   }
 
-  static isEveningStar(candles: Candle[]): { found: boolean; name: string } {
+  static isEveningStar(candles: Candle[]): PatternDetection {
     if (candles.length < 3) return { found: false, name: '' };
     const c1 = candles[candles.length - 3];
     const c2 = candles[candles.length - 2];
@@ -477,7 +484,7 @@ export class PatternDetector {
    * ИСПРАВЛЕНО (гл. 7 ЯС): добавлена проверка последовательно повышающихся
    * цен закрытия — ключевой критерий «трёх наступающих белых солдат».
    */
-  static isThreeWhiteSoldiers(candles: Candle[]): { found: boolean; name: string } {
+  static isThreeWhiteSoldiers(candles: Candle[]): PatternDetection {
     if (candles.length < 3) return { found: false, name: '' };
     const c1 = candles[candles.length - 3];
     const c2 = candles[candles.length - 2];
@@ -494,6 +501,12 @@ export class PatternDetector {
     // Открытия внутри предыдущих тел.
     if (!(c2.open >= c1.bodyBottom && c2.open <= c1.bodyTop)) return { found: false, name: '' };
     if (!(c3.open >= c2.bodyBottom && c3.open <= c2.bodyTop)) return { found: false, name: '' };
+    const prior = candles.slice(0, -3);
+    // По Нисону это бычья модель в зоне низких цен, а не универсальное
+    // продолжение: изолированных трёх растущих свечей недостаточно.
+    if (prior.length < 4 || !(this.precededByDecline(prior) || this.atLocalLow(c1, prior))) {
+      return { found: false, name: '' };
+    }
 
     return { found: true, name: 'ТРИ БЕЛЫХ СОЛДАТА' };
   }
@@ -502,7 +515,7 @@ export class PatternDetector {
    * ИСПРАВЛЕНО (гл. 6 ЯС): добавлен контекст предшествующего роста и
    * выделение «трёх одинаковых ворон» (глоссарий ЯС).
    */
-  static isThreeBlackCrows(candles: Candle[]): { found: boolean; name: string } {
+  static isThreeBlackCrows(candles: Candle[]): PatternDetection {
     if (candles.length < 3) return { found: false, name: '' };
     const c1 = candles[candles.length - 3];
     const c2 = candles[candles.length - 2];
@@ -527,7 +540,7 @@ export class PatternDetector {
   }
 
   /** НОВОЕ (гл. 7 ЯС): «отбитое наступление» — ослабление быков. */
-  static isAdvanceBlock(candles: Candle[]): { found: boolean; name: string } {
+  static isAdvanceBlock(candles: Candle[]): PatternDetection {
     if (candles.length < 3) return { found: false, name: '' };
     const c1 = candles[candles.length - 3];
     const c2 = candles[candles.length - 2];
@@ -545,7 +558,7 @@ export class PatternDetector {
   }
 
   /** НОВОЕ (гл. 7 ЯС): «торможение» — малая свеча на плече длинной белой. */
-  static isStalled(candles: Candle[]): { found: boolean; name: string } {
+  static isStalled(candles: Candle[]): PatternDetection {
     if (candles.length < 2) return { found: false, name: '' };
     const c1 = candles[candles.length - 2];
     const c2 = candles[candles.length - 1];
@@ -564,7 +577,7 @@ export class PatternDetector {
   // ─── гл. 11 ЯС: СПРУЖИНИВАНИЯ ────────────────────────────────────────
 
   /** ИСПРАВЛЕНО: добавлена проверка бокового коридора (гл. 11 ЯС). */
-  static isSpring(candles: Candle[]): { found: boolean; name: string } {
+  static isSpring(candles: Candle[]): PatternDetection {
     if (candles.length < 25) return { found: false, name: '' };
     const last = candles[candles.length - 1];
     const baseWindow = candles.slice(-21, -1);
@@ -583,7 +596,7 @@ export class PatternDetector {
   }
 
   /** НОВОЕ (гл. 11 ЯС): верхнее спружинивание — зеркало нижнего. */
-  static isUpthrust(candles: Candle[]): { found: boolean; name: string } {
+  static isUpthrust(candles: Candle[]): PatternDetection {
     if (candles.length < 25) return { found: false, name: '' };
     const last = candles[candles.length - 1];
     const topWindow = candles.slice(-21, -1);
@@ -602,7 +615,7 @@ export class PatternDetector {
 
   // ─── гл. 6 ЯС: ХАРАМИ, ПИНЦЕТ, ПОЯС, КОНТРАТАКА, РАЗДЕЛЕНИЕ, ШЕЯ ─────
 
-  static isHarami(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
+  static isHarami(c1: Candle, c2: Candle, prev: Candle[]): PatternDetection {
     if (!this.isLongRelative(c1, this.relWindow([...prev, c1], prev.length + 1))) return { found: false, name: '' };
     if (!this.isSmallRelative(c2, [...prev.slice(-19), c1])) return { found: false, name: '' };
     if (!(c2.bodyTop <= c1.bodyTop && c2.bodyBottom >= c1.bodyBottom)) return { found: false, name: '' };
@@ -612,7 +625,7 @@ export class PatternDetector {
     return { found: false, name: '' };
   }
 
-  static isHaramiCross(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
+  static isHaramiCross(c1: Candle, c2: Candle, prev: Candle[]): PatternDetection {
     if (!this.isLongRelative(c1, this.relWindow([...prev, c1], prev.length + 1))) return { found: false, name: '' };
     if (!c2.isDoji) return { found: false, name: '' };
     if (!(c2.bodyTop <= c1.bodyTop && c2.bodyBottom >= c1.bodyBottom)) return { found: false, name: '' };
@@ -622,50 +635,52 @@ export class PatternDetector {
     return { found: false, name: '' };
   }
 
-  static isTweezerBottom(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
+  static isTweezerBottom(c1: Candle, c2: Candle, prev: Candle[], context?: PatternContext): PatternDetection {
     if (!(c1.isBearish && c2.isBullish)) return { found: false, name: '' };
     const tolB = Math.max(c1.low * 0.001, ((c1.totalRange + c2.totalRange) / 2) * 0.15);
     if (Math.abs(c1.low - c2.low) > tolB) return { found: false, name: '' };
-    if (!ZoneVoter.isNearSupport(c2.low, prev, 0.01, PATTERN_TF_KEY)) return { found: false, name: '' };
     if (!this.precededByDecline(prev)) return { found: false, name: '' };
-    return { found: true, name: 'ПИНЦЕТ (НИЗ)' };
+    const name = ZoneVoter.isNearSupport(c2.low, prev, 0.01, timeframeKey(patternContext(context).timeframe))
+      ? 'ПИНЦЕТ (НИЗ) (У ПОДДЕРЖКИ)' : 'ПИНЦЕТ (НИЗ)';
+    return { found: true, name };
   }
 
-  static isTweezerTop(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
+  static isTweezerTop(c1: Candle, c2: Candle, prev: Candle[], context?: PatternContext): PatternDetection {
     if (!(c1.isBullish && c2.isBearish)) return { found: false, name: '' };
     const tolT = Math.max(c1.high * 0.001, ((c1.totalRange + c2.totalRange) / 2) * 0.15);
     if (Math.abs(c1.high - c2.high) > tolT) return { found: false, name: '' };
-    if (!ZoneVoter.isNearResistance(c2.high, prev, 0.01, PATTERN_TF_KEY)) return { found: false, name: '' };
     if (!this.precededByRally(prev)) return { found: false, name: '' };
-    return { found: true, name: 'ПИНЦЕТ (ВЕРХ)' };
+    const name = ZoneVoter.isNearResistance(c2.high, prev, 0.01, timeframeKey(patternContext(context).timeframe))
+      ? 'ПИНЦЕТ (ВЕРХ) (У СОПРОТИВЛЕНИЯ)' : 'ПИНЦЕТ (ВЕРХ)';
+    return { found: true, name };
   }
 
   /**
    * ИСПРАВЛЕНО (гл. 6 ЯС): убрано выдуманное условие `c2.open >= c1.close`.
    * Захват за пояс — длинная свеча с открытием на экстремуме сессии.
    */
-  static isBullishBelt(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
+  static isBullishBelt(c1: Candle, c2: Candle, prev: Candle[], context?: PatternContext): PatternDetection {
     if (!(c2.isBullish && c2.isLongCandle)) return { found: false, name: '' };
     if (c2.lowerWick > c2.totalRange * 0.05) return { found: false, name: '' };
     if (!this.precededByDecline(prev)) return { found: false, name: '' };
 
     let name = 'ЛИНИЯ ПОЯСА (БЫЧЬЯ)';
-    if (ZoneVoter.isNearSupport(c2.close, prev, 0.015, PATTERN_TF_KEY)) name += ' (У ПОДДЕРЖКИ)';
+    if (ZoneVoter.isNearSupport(c2.close, prev, 0.015, timeframeKey(patternContext(context).timeframe))) name += ' (У ПОДДЕРЖКИ)';
     return { found: true, name };
   }
 
-  static isBearishBelt(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
+  static isBearishBelt(c1: Candle, c2: Candle, prev: Candle[], context?: PatternContext): PatternDetection {
     if (!(c2.isBearish && c2.isLongCandle)) return { found: false, name: '' };
     if (c2.upperWick > c2.totalRange * 0.05) return { found: false, name: '' };
     if (!this.precededByRally(prev)) return { found: false, name: '' };
 
     let name = 'ЛИНИЯ ПОЯСА (МЕДВЕЖЬЯ)';
-    if (ZoneVoter.isNearResistance(c2.close, prev, 0.015, PATTERN_TF_KEY)) name += ' (У СОПРОТИВЛЕНИЯ)';
+    if (ZoneVoter.isNearResistance(c2.close, prev, 0.015, timeframeKey(patternContext(context).timeframe))) name += ' (У СОПРОТИВЛЕНИЯ)';
     return { found: true, name };
   }
 
-  static isCounterattack(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
-    if (!GAP_PATTERNS_ENABLED()) return { found: false, name: '' };
+  static isCounterattack(c1: Candle, c2: Candle, prev: Candle[], context?: PatternContext): PatternDetection {
+    if (patternContext(context).market !== 'stocks') return { found: false, name: '' };
     const closeTol = Math.max(c1.close * 0.001, ((c1.totalRange + c2.totalRange) / 2) * 0.1);
     if (Math.abs(c1.close - c2.close) > closeTol) return { found: false, name: '' };
     if (!(c1.isLongCandle && c2.isLongCandle)) return { found: false, name: '' };
@@ -685,7 +700,7 @@ export class PatternDetector {
    * ИСПРАВЛЕНО (гл. 7 ЯС): разделение — две КОНТРАСТНЫЕ свечи с одинаковыми
    * ценами открытия; бычье — продолжение РОСТА, медвежье — продолжение СПАДА.
    */
-  static isSeparatingLines(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
+  static isSeparatingLines(c1: Candle, c2: Candle, prev: Candle[]): PatternDetection {
     const tol = Math.max(c1.open * 0.001, ((c1.totalRange + c2.totalRange) / 2) * 0.1);
     if (Math.abs(c1.open - c2.open) > tol) return { found: false, name: '' };
     const winSL = this.relWindow(prev, prev.length - 1);
@@ -694,11 +709,11 @@ export class PatternDetector {
     }
 
     // Бычье разделение: чёрная → белая (контраст), продолжение РОСТА.
-    if (c1.isBearish && c2.isBullish && c2.open <= c2.low + c2.totalRange * 0.05 && this.inConfirmedRally(prev)) {
+    if (c1.isBearish && c2.isBullish && c2.open <= c2.low + c2.totalRange * 0.05 && this.precededByRally(prev)) {
       return { found: true, name: 'РАЗДЕЛЕНИЕ (БЫЧЬЕ)' };
     }
     // Медвежье разделение: белая → чёрная (контраст), продолжение СПАДА.
-    if (c1.isBullish && c2.isBearish && c2.open >= c2.high - c2.totalRange * 0.05 && this.inConfirmedDecline(prev)) {
+    if (c1.isBullish && c2.isBearish && c2.open >= c2.high - c2.totalRange * 0.05 && this.precededByDecline(prev)) {
       return { found: true, name: 'РАЗДЕЛЕНИЕ (МЕДВЕЖЬЕ)' };
     }
     return { found: false, name: '' };
@@ -708,8 +723,8 @@ export class PatternDetector {
    * ИСПРАВЛЕНО (гл. 4 ЯС): «ниже шеи / на шее / толчок» — МЕДВЕЖЬИ модели
    * продолжения спада, не бычьи.
    */
-  static isNeckFamily(c1: Candle, c2: Candle, prev: Candle[]): { found: boolean; name: string } {
-    if (!this.inConfirmedDecline(prev)) return { found: false, name: '' };
+  static isNeckFamily(c1: Candle, c2: Candle, prev: Candle[]): PatternDetection {
+    if (!this.precededByDecline(prev)) return { found: false, name: '' };
     if (!(c1.isBearish && c1.isLongCandle)) return { found: false, name: '' };
     if (!(c2.isBullish && c2.body <= c1.body * 0.5)) return { found: false, name: '' };
 
@@ -720,7 +735,7 @@ export class PatternDetector {
     return { found: false, name: '' };
   }
 
-  static isDoubleThrustingBull(candles: Candle[]): { found: boolean; name: string } {
+  static isDoubleThrustingBull(candles: Candle[]): PatternDetection {
     if (candles.length < 4) return { found: false, name: '' };
     for (let i = 0; i < 2; i++) {
       const a = candles[candles.length - 4 + i * 2];
@@ -734,7 +749,7 @@ export class PatternDetector {
 
   // ─── гл. 6–7 ЯС: МНОГОСВЕЧНЫЕ ФОРМАЦИИ ───────────────────────────────
 
-  static isTowerTop(candles: Candle[]): { found: boolean; name: string } {
+  static isTowerTop(candles: Candle[]): PatternDetection {
     if (candles.length < 6) return { found: false, name: '' };
     if (!(candles[candles.length - 2].isBullish && candles[candles.length - 3].isBullish)) return { found: false, name: '' };
     {
@@ -752,7 +767,7 @@ export class PatternDetector {
     return { found: true, name: 'БАШЕННАЯ ВЕРШИНА' };
   }
 
-  static isTowerBottom(candles: Candle[]): { found: boolean; name: string } {
+  static isTowerBottom(candles: Candle[]): PatternDetection {
     if (candles.length < 6) return { found: false, name: '' };
     if (!(candles[candles.length - 2].isBearish && candles[candles.length - 3].isBearish)) return { found: false, name: '' };
     {
@@ -770,7 +785,7 @@ export class PatternDetector {
     return { found: true, name: 'БАШЕННОЕ ДНО' };
   }
 
-  static isThreeMountains(candles: Candle[]): { found: boolean; name: string } {
+  static isThreeMountains(candles: Candle[]): PatternDetection {
     if (candles.length < 12) return { found: false, name: '' };
     const seg = candles.length >= 40 ? candles.slice(-40) : candles;
     const highs: number[] = [];
@@ -790,7 +805,7 @@ export class PatternDetector {
     return { found: true, name: 'ТРИ ГОРЫ (ВЕРШИНА)' };
   }
 
-  static isThreeRivers(candles: Candle[]): { found: boolean; name: string } {
+  static isThreeRivers(candles: Candle[]): PatternDetection {
     if (candles.length < 12) return { found: false, name: '' };
     const seg = candles.length >= 40 ? candles.slice(-40) : candles;
     const lows: number[] = [];
@@ -814,7 +829,7 @@ export class PatternDetector {
    * ИСПРАВЛЕНО (гл. 7 ЯС): объём — усилитель, не обязательное условие.
    * «Значимость моделей „три ступени" ПОВЫШАЕТСЯ, если объём выше».
    */
-  static isRisingThree(candles: Candle[]): { found: boolean; name: string } {
+  static isRisingThree(candles: Candle[]): PatternDetection {
     if (candles.length < 5) return { found: false, name: '' };
     const f = candles[candles.length - 5];
     const small = candles.slice(candles.length - 4, candles.length - 1);
@@ -833,7 +848,7 @@ export class PatternDetector {
     return { found: true, name };
   }
 
-  static isFallingThree(candles: Candle[]): { found: boolean; name: string } {
+  static isFallingThree(candles: Candle[]): PatternDetection {
     if (candles.length < 5) return { found: false, name: '' };
     const f = candles[candles.length - 5];
     const small = candles.slice(candles.length - 4, candles.length - 1);
@@ -855,28 +870,28 @@ export class PatternDetector {
    * ИСПРАВЛЕНО (гл. 6 ЯС): малые свечи — в пределах ДИАПАЗОНА первой свечи,
    * первая малая может быть выше тела (гэп вверх по глоссарию).
    */
-  static isMatHold(candles: Candle[]): { found: boolean; name: string } {
-    if (candles.length < 5) return { found: false, name: '' };
-    const c0 = candles[candles.length - 5];
-    const small = candles.slice(candles.length - 4, candles.length - 1);
-    const c4 = candles[candles.length - 1];
-
-    if (!(c0.isBullish && c0.isLongCandle)) return { found: false, name: '' };
-    if (!small[0].isBearish) return { found: false, name: '' };
-    for (const s of small) {
-      if (s.body > c0.body * 0.5) return { found: false, name: '' };
-      if (s.high > c0.high || s.low < c0.low) return { found: false, name: '' };
+  static isMatHold(candles: Candle[]): PatternDetection {
+    // В книге допускаются две, три или четыре маленькие ЧЁРНЫЕ свечи.
+    for (const smallCount of [4, 3, 2]) {
+      const size = smallCount + 2;
+      if (candles.length < size) continue;
+      const c0 = candles[candles.length - size];
+      const small = candles.slice(candles.length - size + 1, candles.length - 1);
+      const last = candles[candles.length - 1];
+      if (!(c0.isBullish && c0.isLongCandle)) continue;
+      if (!small.every(s => s.isBearish && s.body <= c0.body * 0.5)) continue;
+      if (small.some(s => s.high > c0.high || s.low < c0.low)) continue;
+      if (!(last.isBullish && (last.isLongCandle || last.open > small[small.length - 1].high))) continue;
+      if (last.close <= Math.max(...small.map(s => s.high))) continue;
+      if (!this.precededByRally(candles.slice(0, -size))) continue;
+      let name = 'УДЕРЖАНИЕ НА ТАТАМИ';
+      if (small[0].bodyBottom > c0.bodyTop) name += ' (ГЭП ВВЕРХ)';
+      return { found: true, name, formationSize: size };
     }
-    if (!(c4.isBullish && c4.isLongCandle)) return { found: false, name: '' };
-    if (c4.close <= Math.max(...small.map(s => s.high))) return { found: false, name: '' };
-    if (!this.inConfirmedRally(candles.slice(0, -5))) return { found: false, name: '' };
-
-    let name = 'УДЕРЖАНИЕ НА ТАТАМИ';
-    if (small[0].bodyBottom > c0.bodyTop) name += ' (ГЭП ВВЕРХ)';
-    return { found: true, name };
+    return { found: false, name: '' };
   }
 
-  static isLadderBottom(candles: Candle[]): { found: boolean; name: string } {
+  static isLadderBottom(candles: Candle[]): PatternDetection {
     if (candles.length < 5) return { found: false, name: '' };
     const [c1, c2, c3, c4, c5] = candles.slice(-5);
     if (!([c1, c2, c3].every(c => c.isBearish))) return { found: false, name: '' };
@@ -890,8 +905,8 @@ export class PatternDetector {
    * ИСПРАВЛЕНО (гл. 6 ЯС): «две взлетевшие вороны» — гэповая модель,
    * требует гейта и контекста восходящего тренда.
    */
-  static isTwoCrows(candles: Candle[]): { found: boolean; name: string } {
-    if (!GAP_PATTERNS_ENABLED()) return { found: false, name: '' };
+  static isTwoCrows(candles: Candle[], context?: PatternContext): PatternDetection {
+    if (patternContext(context).market !== 'stocks') return { found: false, name: '' };
     if (candles.length < 3) return { found: false, name: '' };
     const c1 = candles[candles.length - 3];
     const c2 = candles[candles.length - 2];
@@ -905,12 +920,12 @@ export class PatternDetector {
     if (!this.precededByRally(candles.slice(0, -3))) return { found: false, name: '' };
 
     let name = 'ДВЕ ВЗЛЕТЁВШИЕ ВОРОНЫ';
-    if (ZoneVoter.isNearResistance(c3.close, candles.slice(0, -3), 0.015, PATTERN_TF_KEY)) name += ' (У СОПРОТИВЛЕНИЯ)';
+    if (ZoneVoter.isNearResistance(c3.close, candles.slice(0, -3), 0.015, timeframeKey(patternContext(context).timeframe))) name += ' (У СОПРОТИВЛЕНИЯ)';
     return { found: true, name };
   }
 
-  static isAbandonedBaby(candles: Candle[]): { found: boolean; name: string } {
-    if (!GAP_PATTERNS_ENABLED()) return { found: false, name: '' };
+  static isAbandonedBaby(candles: Candle[], context?: PatternContext): PatternDetection {
+    if (patternContext(context).market !== 'stocks') return { found: false, name: '' };
     if (candles.length < 3) return { found: false, name: '' };
     const c1 = candles[candles.length - 3];
     const c2 = candles[candles.length - 2];
@@ -926,8 +941,8 @@ export class PatternDetector {
     return { found: false, name: '' };
   }
 
-  static isTasuki(candles: Candle[]): { found: boolean; name: string } {
-    if (!GAP_PATTERNS_ENABLED()) return { found: false, name: '' };
+  static isTasuki(candles: Candle[], context?: PatternContext): PatternDetection {
+    if (patternContext(context).market !== 'stocks') return { found: false, name: '' };
     if (candles.length < 3) return { found: false, name: '' };
     const c1 = candles[candles.length - 3];
     const c2 = candles[candles.length - 2];
@@ -942,8 +957,8 @@ export class PatternDetector {
     return { found: false, name: '' };
   }
 
-  static isGappingSideBySide(candles: Candle[]): { found: boolean; name: string } {
-    if (!GAP_PATTERNS_ENABLED()) return { found: false, name: '' };
+  static isGappingSideBySide(candles: Candle[], context?: PatternContext): PatternDetection {
+    if (patternContext(context).market !== 'stocks') return { found: false, name: '' };
     if (candles.length < 3) return { found: false, name: '' };
     const c0 = candles[candles.length - 3];
     const c1 = candles[candles.length - 2];
@@ -958,8 +973,8 @@ export class PatternDetector {
     return { found: false, name: '' };
   }
 
-  static isGappingPlay(candles: Candle[]): { found: boolean; name: string } {
-    if (!GAP_PATTERNS_ENABLED()) return { found: false, name: '' };
+  static isGappingPlay(candles: Candle[], context?: PatternContext): PatternDetection {
+    if (patternContext(context).market !== 'stocks') return { found: false, name: '' };
     if (candles.length < 7) return { found: false, name: '' };
     const last = candles[candles.length - 1];
     const cons = candles.slice(-6, -1);
@@ -972,7 +987,7 @@ export class PatternDetector {
     return { found: false, name: '' };
   }
 
-  static isConsolidationBreakout(candles: Candle[]): { found: boolean; name: string } {
+  static isConsolidationBreakout(candles: Candle[]): PatternDetection {
     if (candles.length < 7) return { found: false, name: '' };
     const last = candles[candles.length - 1];
     const cons = candles.slice(-5, -1);
@@ -996,7 +1011,7 @@ export class PatternDetector {
    * ИСПРАВЛЕНО (глоссарий ЯС): ключевой разворот — закрытие выше/ниже
    * предыдущей ЦЕНЫ ЗАКРЫТИЯ, а не максимума/минимума.
    */
-  static isKeyReversal(candles: Candle[]): { found: boolean; name: string } {
+  static isKeyReversal(candles: Candle[]): PatternDetection {
     if (candles.length < 21) return { found: false, name: '' };
     const n = candles.length;
     const last = candles[n - 1];
@@ -1024,8 +1039,8 @@ export class PatternDetector {
     return { found: true, name };
   }
 
-  static isVolSpin(candle: Candle, candles: Candle[]): { found: boolean; name: string } {
-    const avg = VolumeAnalyzer.getAverageVolume(candles);
+  static isVolSpin(candle: Candle, candles: Candle[]): PatternDetection {
+    const avg = VolumeAnalyzer.getAverageVolume(candles.slice(0, -1));
     if (!(avg > 0 && candle.volume > avg * 1.5)) return { found: false, name: '' };
     if (candle.totalRange <= 0 || candle.body > candle.totalRange * 0.3) return { found: false, name: '' };
     const seg = candles.slice(-20);
@@ -1038,7 +1053,7 @@ export class PatternDetector {
     return { found: false, name: '' };
   }
 
-  static isLevelTest(candles: Candle[]): { found: boolean; name: string } {
+  static isLevelTest(candles: Candle[], context?: PatternContext): PatternDetection {
     if (candles.length < 30) return { found: false, name: '' };
     const last = candles[candles.length - 1];
     const pre = candles.slice(0, -1);
@@ -1051,17 +1066,17 @@ export class PatternDetector {
 
     const supHold = (m20Val !== null && last.low <= m20Val * 1.005 && last.close > m20Val) ||
       (m65Val !== null && last.low <= m65Val * 1.005 && last.close > m65Val) ||
-      (ZoneVoter.isNearSupport(last.close, pre, 0.01, PATTERN_TF_KEY) && last.close > last.open);
+      (ZoneVoter.isNearSupport(last.close, pre, 0.01, timeframeKey(patternContext(context).timeframe)) && last.close > last.open);
     const resHold = (m20Val !== null && last.high >= m20Val * 0.995 && last.close < m20Val) ||
       (m65Val !== null && last.high >= m65Val * 0.995 && last.close < m65Val) ||
-      (ZoneVoter.isNearResistance(last.close, pre, 0.01, PATTERN_TF_KEY) && last.close < last.open);
+      (ZoneVoter.isNearResistance(last.close, pre, 0.01, timeframeKey(patternContext(context).timeframe)) && last.close < last.open);
 
     if (supHold && (last.isBullish || last.close > mid)) return { found: true, name: 'ТЕСТ ПОДДЕРЖКИ (БЫЧИЙ)' };
     if (resHold && (last.isBearish || last.close < mid)) return { found: true, name: 'ТЕСТ СОПРОТИВЛЕНИЯ (МЕДВЕЖИЙ)' };
     return { found: false, name: '' };
   }
 
-  static isTrendPullbackCandle(candles: Candle[]): { found: boolean; name: string } {
+  static isTrendPullbackCandle(candles: Candle[]): PatternDetection {
     if (candles.length < 20) return { found: false, name: '' };
     const last = candles[candles.length - 1];
     const pre = candles.slice(0, -1);

@@ -103,7 +103,7 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
             </div>
           </div>
           <div className="text-right">
-            <div className="text-xs text-gray-400">{t('Уверенность')}</div>
+            <div className="text-xs text-gray-400">{t('Согласие сигналов')}</div>
             <div className="text-lg font-bold">
               {item.consensus.confidence.toFixed(0)}%
             </div>
@@ -130,7 +130,7 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
                   </span>
                   <span className="text-green-400 text-[11px]">✓</span>
                 </div>
-                <span className="text-gray-400">{pattern.confidence}%</span>
+                <span className="text-gray-400" title={t('Эвристический балл')}>{pattern.confidence}/100</span>
               </div>
             ))}
           </div>
@@ -167,7 +167,7 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
                 <div className="text-gray-400 text-[11px]">{t(signal.pattern)}</div>
                 <div className="flex items-center justify-between mt-1 text-[11px]">
                   <span className="text-gray-400">R:R 1:{signal.rr.toFixed(2)}</span>
-                  <span className="text-gray-400">{(signal.quality * 100).toFixed(0)}%</span>
+                  <span className="text-gray-400" title={t('Эвристический балл')}>{(signal.quality * 100).toFixed(0)}/100</span>
                 </div>
               </div>
             ))}
@@ -489,19 +489,19 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
           <div>
             <div className="text-amber-400 font-semibold mb-1">{t('1. Контекст')}</div>
-            <div className="text-gray-400">{t('Определяем тренд и режим рынка. Торгуем только в направлении тренда.')}</div>
+            <div className="text-gray-400">{t('Сначала оцениваем тренд и режим рынка; разворотные модели требуют предшествующего движения.')}</div>
           </div>
           <div>
             <div className="text-amber-400 font-semibold mb-1">{t('2. Паттерны')}</div>
-            <div className="text-gray-400">{t('Ищем свечные паттерны в контексте тренда. Паттерны без контекста не работают.')}</div>
+            <div className="text-gray-400">{t('Геометрия свечной формации оценивается вместе с предшествующим движением и уровнями.')}</div>
           </div>
           <div>
             <div className="text-amber-400 font-semibold mb-1">{t('3. Подтверждение')}</div>
-            <div className="text-gray-400">{t('Каждый паттерн должен быть подтверждён следующей свечой или объёмом.')}</div>
+            <div className="text-gray-400">{t('Для формаций, которым нужно подтверждение, ждём закрытой свечи; остальные завершаются последним баром модели.')}</div>
           </div>
           <div>
             <div className="text-amber-400 font-semibold mb-1">{t('4. Правило множества')}</div>
-            <div className="text-gray-400">{t('Минимум 3 независимых сигнала для входа. Consensus score показывает силу.')}</div>
+            <div className="text-gray-400">{t('Несколько независимых методов могут усиливать вывод; числовой Consensus — эвристика проекта.')}</div>
           </div>
         </div>
       </div>

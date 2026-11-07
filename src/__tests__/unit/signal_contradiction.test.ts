@@ -21,10 +21,9 @@ describe('единый классификатор разворотов (нет �
       expect(isReversalModel(n)).toBe(isReversalPatternName(n));
     }
   });
-  it('молот/звёзда/солдаты — разворот; прорыв — продолжение', () => {
+  it('молот, звезда и три белых солдата — разворотные модели', () => {
     expect(isReversalPatternName('МОЛОТ')).toBe(true);
     expect(isReversalPatternName('ПАДАЮЩАЯ ЗВЕЗДА')).toBe(true);
-    // Три белых солдата — бычья разворотная модель в основании (гл. 6 ЯС).
     expect(isReversalPatternName('ТРИ БЕЛЫХ СОЛДАТА')).toBe(true);
     expect(isReversalPatternName('ПРОРЫВ КОНСОЛИДАЦИИ (БЫЧИЙ)')).toBe(false);
   });
@@ -144,5 +143,7 @@ describe('строгий канон Нисона: контекст и взаим
     // EMA10 была бы выше? нет — при линейном росте EMA отстаёт от SMA вниз? проверяем отличие от ema
     const e = ema(vals, 10);
     expect(out[out.length - 1]).not.toBeCloseTo(e[e.length - 1], 10);
+    expect(out.slice(0, 9).every(Number.isNaN)).toBe(true);
+    expect(nisonSma([1, 2, 3], 5).every(Number.isNaN)).toBe(true);
   });
 });

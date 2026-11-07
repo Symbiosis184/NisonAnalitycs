@@ -124,12 +124,12 @@ function SignalCard({ signal, riskSettings }: {
           <p className="text-sm text-gray-400">{signal.pattern}</p>
         </div>
         <div className="sm:text-right">
-          <div className="text-xs text-gray-400">{t('Качество')}</div>
+          <div className="text-xs text-gray-400">{t('Эвристический балл')}</div>
           <div className={`text-lg font-bold ${
             signal.quality >= 0.7 ? 'text-green-400' :
             signal.quality >= 0.5 ? 'text-yellow-400' : 'text-red-400'
           }`}>
-            {(signal.quality * 100).toFixed(0)}%
+            {(signal.quality * 100).toFixed(0)}/100
           </div>
         </div>
       </div>

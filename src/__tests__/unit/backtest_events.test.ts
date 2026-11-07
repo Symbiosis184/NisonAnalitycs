@@ -19,7 +19,7 @@ function mkCandles(n: number): Candle[] {
       // молот: малое тело вверху диапазона, длинная нижняя тень тестирует поддержку
       c = price * 1.004;
       o = price * 0.997;
-      lo = Math.min(o, c) * 0.955;   // тень ~8× тела
+      lo = Math.min(o, c) * 0.965;   // длинная нижняя тень ≥2× тела
       hi = Math.max(o, c) * 1.002;
     } else if (phase === 13) {
       // подтверждающая бычья свеча выше максимума молота
@@ -56,7 +56,9 @@ describe('backtest event collection (no lookahead, fresh events)', () => {
     let events = 0;
     for (let i = 60; i < candles.length; i++) {
       const sigs = signalGenerator.findSignals(candles.slice(0, i + 1), 'D');
-      for (const s of sigs) if ((s as typeof s & { isFreshEvent?: boolean }).isFreshEvent) events++;
+      for (const s of sigs) {
+        if (s.isFreshEvent && s.status === 'confirmed') events++;
+      }
     }
     expect(events).toBeGreaterThan(0);
     // событие не может ссылаться на бар из будущего относительно прогона
@@ -84,7 +86,9 @@ describe('backtest event collection (no lookahead, fresh events)', () => {
     for (let i = 60; i < candles.length; i++) {
       const sigs = signalGenerator.findSignals(candles.slice(0, i + 1), 'D');
       for (const s of sigs) {
-        if (!(s as typeof s & { isFreshEvent?: boolean }).isFreshEvent) continue;
+        if (!s.isFreshEvent || s.status !== 'confirmed') continue;
+        expect(s.meta.entryIndex).not.toBeNull();
+        expect(s.meta.entryIndex!).toBeLessThanOrEqual(i);
         const key = `${s.pattern}|${s.direction}|${s.meta.patternEndIdx}`;
         seenKeys.set(key, (seenKeys.get(key) ?? 0) + 1);
       }

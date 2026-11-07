@@ -1,11 +1,11 @@
-// Аудит Consensus Score: по Нисону консенсус — это СОГЛАСИЕ факторов, а не сумма голосов.
+// Consensus Score — проектная оценка согласия факторов, а не сумма голосов.
 // Чистая функция-агрегатор вынесена в src/utils/consensus.ts и используется client.ts.
 import { describe, it, expect } from 'vitest';
 import { aggregateConsensus, type ConsensusInput } from '../../utils/consensus';
 
 const sig = (direction: 'long' | 'short', quality: number): ConsensusInput => ({ direction, quality });
 
-describe('aggregateConsensus (канон Нисона: согласие > количество)', () => {
+describe('aggregateConsensus (проектная эвристика: согласие > количество)', () => {
   it('нет подтверждённых сигналов → 0/5, нейтрально', () => {
     const r = aggregateConsensus([]);
     expect(r.score).toBe(0);

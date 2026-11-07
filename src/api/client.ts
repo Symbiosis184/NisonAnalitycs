@@ -2,7 +2,6 @@ import { fetchKlines, fetch24hTicker, fetchInstrumentInfo, fetchMarketOverviewBa
 import { Candle } from '../utils/candle';
 import { ema, rsi, macd } from '../utils/indicators';
 import { detectPatterns, patternStory } from '../utils/patterns';
-import { setMarket as setPatternMarket } from '../utils/pattern_engine';
 import { detectGaps } from '../utils/gaps';
 import { requiresNextCandleConfirmation } from '../utils/pattern_ids';
 import { signalGenerator, SignalGenerator } from '../utils/signal_generator';
@@ -48,6 +47,7 @@ const toPatternDirection = (type: 'бычий' | 'медвежий' | 'нейт�
 
 interface BtEvent {
   i: number;
+  key: string;
   pattern: string;
   direction: 'long' | 'short';
   bounds: FormationBounds;
@@ -75,19 +75,26 @@ interface BtEvent {
  * обрывом по индексу массива: раньше `break` при >400 событий молча терял весь
  * хвост истории на длинных окнах.
  */
-function collectBacktestEvents(generator: SignalGenerator, candles: Candle[], timeframe: string): BtEvent[] {
+function collectBacktestEvents(
+  generator: SignalGenerator,
+  candles: Candle[],
+  timeframe: string,
+  market: 'crypto' | 'stocks',
+): BtEvent[] {
   const events: BtEvent[] = [];
-  generator.resetRun(); // новый прогон — чистый кэш «свежих событий»
   const cutoffTime = candles[candles.length - 1].time - 730 * 24 * 3600 * 1000; // ~2 года
   for (let i = 60; i < candles.length; i++) {
     if (candles[i].time < cutoffTime) continue; // дешёвый skip старых баров
     const slice = candles.slice(0, i + 1);
-    const sigs = generator.findSignals(slice, timeframe);
+    const sigs = generator.findSignals(slice, timeframe, { market });
     for (const s of sigs) {
       if (!(s as import("../utils/signal_generator").Signal & { isFreshEvent?: boolean }).isFreshEvent) continue;
       if (!s.confirmed || s.status !== 'confirmed') continue; // только подтверждённые (методология «Бэктест»)
+      const entryIndex = s.meta.entryIndex;
+      if (entryIndex === null || entryIndex > i) continue;
       events.push({
-        i: Math.min(s.meta.patternEndIdx + 1, i),
+        i: entryIndex,
+        key: `${s.pattern}|${s.direction}|${s.meta.patternEndIdx}`,
         pattern: s.pattern,
         direction: s.direction,
         bounds: {
@@ -118,14 +125,19 @@ function buildEventsByBar(events: BtEvent[]): Map<number, BtEvent[]> {
  * движка utils/backtest.ts (пункты №2/№3 аудита). Возвращает null-компоненты,
  * если наблюдений мало; ошибки прогона не роняют основной отчёт.
  */
-function computeBacktestReports(generator: SignalGenerator, candles: Candle[], timeframe: string): {
+function computeBacktestReports(
+  generator: SignalGenerator,
+  candles: Candle[],
+  timeframe: string,
+  market: 'crypto' | 'stocks',
+): {
   edge: EdgeReportDTO | null;
   backtest: BacktestSummaryDTO[] | null;
 } {
   const MIN_EVENTS = 5;  // минимум срабатываний для edge-вердикта
   const MIN_TRADES = 3;  // минимум сделок для показа сводки по паре
   try {
-    const events = collectBacktestEvents(generator, candles, timeframe);
+    const events = collectBacktestEvents(generator, candles, timeframe, market);
     if (events.length < MIN_EVENTS) return { edge: null, backtest: null };
 
     // ── Edge: один общий прогон (прежняя методология когорт), но поверх
@@ -191,8 +203,7 @@ function computeBacktestReports(generator: SignalGenerator, candles: Candle[], t
       const confirmed = events.filter((e) => e.bounds.target);
       const unique = new Map<string, BtEvent>();
       for (const e of confirmed) {
-        const key = `${e.pattern}|${e.direction}|${e.i}`;
-        if (!unique.has(key)) unique.set(key, e);
+        if (!unique.has(e.key)) unique.set(e.key, e);
       }
       const deduped = [...unique.values()];
       if (deduped.length >= MIN_TRADES) {
@@ -241,10 +252,9 @@ function computeBacktestReports(generator: SignalGenerator, candles: Candle[], t
   }
 }
 
-// Иерархия «разрешённых» таймфреймов приложения (Нисон, гл. 8 «Магические
-// дожи»: свечной анализ не работает на внутридневных ТФ <30 минут — там
-// постоянно образуются ложные «дожи», поэтому 1m/5m/15m выведены из
-// торговых каскадов и списков выбора; используются только 30m/1H/4H/D/W).
+// Иерархия таймфреймов — настройка приложения: старший масштаб задаёт контекст,
+// младший используется для сценария. Минимум 30m и список ступеней являются
+// проектным ограничением шума и числа запросов, а не книжным запретом.
 const TF_ALLOWED_ORDER = ['30', '1H', '4H', 'D', 'W'];
 
 /** Приведение произвольной формы ТФ ('30m', '60', '240'...) к канону ORDER. Экспортируется для UI-компонентов. */
@@ -278,8 +288,8 @@ export function higherTimeframe(tf: string): string | null {
  * Нисона: направление задаёт старший ТФ, младший даёт вход). Возвращает
  * цепочку строго старше текущего — от самого старшего к самому младшему
  * из старших (например, для 1H: ['W', 'D', '4H']). Упорядочено по убыванию ТФ.
- * В каскаде участвуют только ТФ ≥30 минут (запрет Нисона на <30m) и недельный
- * график для макро-тренда (гл. «Контекст»).
+ * В каскаде участвуют только разрешённые проектом ТФ ≥30 минут; глубина
+ * ограничена тремя ступенями, чтобы не раздувать число сетевых запросов.
  */
 export function timeframeCascade(tf: string): string[] {
   const ORDER = TF_ALLOWED_ORDER;
@@ -295,9 +305,8 @@ export function timeframeCascade(tf: string): string[] {
 
 export class ApiClient {
   async getAnalysis(symbol: string, timeframe: string = 'D', opts: { force?: boolean } = {}): Promise<AnalysisReport> {
-    // Гэповые модели Нисона (гл. 7) имеют смысл только на рынках с сессиями:
-    // включаем их лишь для акций; на крипте 24/7 гэпов нет — они отключены.
-    setPatternMarket(parseMarket(symbol).market === 'stock' ? 'stocks' : 'crypto');
+    // Рынок передаётся явно в каждый чистый расчёт, без глобального состояния.
+    const patternMarket = parseMarket(symbol).market === 'stock' ? 'stocks' as const : 'crypto' as const;
     const klines = await fetchKlines(symbol, timeframe, 250, opts);
     const ticker = await fetch24hTicker(symbol).catch(() => null);
 
@@ -365,7 +374,7 @@ export class ApiClient {
     
     // Детекция паттернов по Нисону — только по закрытым барам (подтверждение
     // формации фактом закрытия; незакрытый бар порождает призрачные паттерны).
-    const detectedPatterns = detectPatterns(closedCandles, timeframe);
+    const detectedPatterns = detectPatterns(closedCandles, timeframe, { market: patternMarket });
     const apiPatterns: PatternDTO[] = detectedPatterns.map(p => ({
       name: p.name,
       type: toPatternDirection(p.type),
@@ -389,23 +398,21 @@ export class ApiClient {
     // сбора событий и одного набора прогонов движка utils/backtest.ts (пункты
     // №2/№3 аудита: раньше считались два независимых прогона с разной выборкой).
     // На закрытых барах, без lookahead; при нехватке наблюдений — null-компоненты.
-    // Тяжёлый one-at-a-time прогон ведётся на ИЗОЛИРОВАННОМ генераторе (отдельный
-    // кэш «свежих событий»): параллельные getAnalysis больше не перемаривают его
-    // друг у друга (гонка синглтона, пункт №2).
+    // One-at-a-time прогон использует отдельный генератор. Свежесть события
+    // детерминированно выводится из последнего закрытого бара без скрытого кэша.
     const { edge: edgeReport, backtest: backtestSummaries } = computeBacktestReports(
-      new SignalGenerator(), closedCandles, timeframe,
+      new SignalGenerator(), closedCandles, timeframe, patternMarket,
     );
 
     // Генерация торговых сигналов через SignalGenerator (только закрытые бары:
     // сигнал формируется фактом ЗАКРЫТИЯ бара — живой незакрытый бар не должен
     // порождать «черновики», которые исчезают к концу интервала).
-    // Живой анализ использует общий синглтон; перед ним сбрасываем состояние
-    // one-at-a-time прогонов, чтобы кэш «свежести» гарантированно чист.
-    signalGenerator.resetRun();
-    // opts.context включает «путь цены» (S/R-зоны + HVN) и фазы Вайкоффа в фильтрацию RR.
+    // Свежесть события вычисляется по последнему закрытому бару без скрытого состояния.
+    // opts.context включает дополнительные эвристики «пути цены» и фаз Вайкоффа.
     const marketPhase = detectPhase(closedCandles);
     const detectedSignals = signalGenerator.findSignals(closedCandles, timeframe, {
       context: { zones, volumeBands: vprofile.bands },
+      market: patternMarket,
     });
 
     // Аудит №10: план размера позиции по правилу фиксированного риска.
@@ -469,8 +476,13 @@ export class ApiClient {
         rr: s.rr,
         quality: s.quality,
         timestamp: s.timestamp,
-        // openTime бара подтверждения формации — для маркера сигнала на графике
-        bar_time: closedCandles[s.meta?.patternEndIdx ?? -1]?.time ?? s.timestamp,
+        // У подтверждённого сигнала маркер стоит на фактическом баре входа;
+        // у pending — на последнем баре формации, а цена остаётся оценочной.
+        bar_time: closedCandles[s.meta.entryIndex ?? s.meta.patternEndIdx]?.time ?? s.timestamp,
+        confirmation_index: s.meta.confirmationIndex,
+        entry_index: s.meta.entryIndex,
+        entry_time: s.meta.entryTime,
+        entry_estimated: s.meta.entryEstimated,
         confirmed: s.confirmed,
         lifecycle_status: s.status,
         // Класс подтверждения по Нисону (гл. 3–6): 'model' — подтверждение внутри
