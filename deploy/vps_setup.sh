@@ -37,7 +37,10 @@ echo "==> 1/11 Установка пакетов (nginx, git, curl, certbot)"
 #      KillMode=mixed + RestartSec/StartLimit (лечит orphan uvicorn worker'а,
 #      который держал сокет после main-процесса); выводятся PID/venv занявшего
 #      процесса для диагностики.
-export DEPLOY_SCRIPT_REV="v16"
+# v17: ключ Twelvedata больше не хранится в репозитории. Существующий ключ на
+#      сервере сохраняется; для первой настройки или ротации его нужно передать
+#      через TWELVEDATA_API_KEY. Без ключа остальные функции продолжают работать.
+export DEPLOY_SCRIPT_REV="v17"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq nginx git curl ca-certificates gnupg certbot python3-certbot-nginx python3-dnspython || {
@@ -157,17 +160,19 @@ if ! [ -f /tmp/kairi_api_broken ]; then
     /opt/kairi-api/venv/bin/python3 -m py_compile /opt/kairi-api/quotes_server.py \
       || { echo "    !! quotes_server.py не компилируется"; touch /tmp/kairi_api_broken; }
 fi
-# TradFi-ключ Twelvedata (американские акции). Дефолтный ключ бесплатного
-# тарифа зашит ниже, чтобы деплой работал из коробки; переопределяется env
-# TWELVEDATA_API_KEY при запуске скрипта. Сервис читает файл сам
-# (KAIRI_TWELVEDATA_KEY_FILE по умолчанию /etc/kairi/twelvedata.key).
-TD_DEFAULT_KEY="091e319b4dba4cd9a25e02f65cbe9b54"
-TD_EFFECTIVE_KEY="${TWELVEDATA_API_KEY:-$TD_DEFAULT_KEY}"
-if [ ! -s /etc/kairi/twelvedata.key ] || [ -n "${TWELVEDATA_API_KEY:-}" ]; then
-    (umask 077 && printf '%s\n' "$TD_EFFECTIVE_KEY" > /etc/kairi/twelvedata.key)
+# TradFi-ключ Twelvedata (американские акции). Секрет не хранится в git:
+# существующий файл на сервере сохраняется, а первичная настройка/ротация
+# выполняется через TWELVEDATA_API_KEY при запуске скрипта. Сервис читает файл
+# сам (KAIRI_TWELVEDATA_KEY_FILE по умолчанию /etc/kairi/twelvedata.key).
+if [ -n "${TWELVEDATA_API_KEY:-}" ]; then
+    (umask 077 && printf '%s\n' "$TWELVEDATA_API_KEY" > /etc/kairi/twelvedata.key)
 fi
-chmod 600 /etc/kairi/twelvedata.key
-echo "    OK: ключ Twelvedata настроен (/etc/kairi/twelvedata.key)"
+if [ -s /etc/kairi/twelvedata.key ]; then
+    chmod 600 /etc/kairi/twelvedata.key
+    echo "    OK: ключ Twelvedata настроен (/etc/kairi/twelvedata.key)"
+else
+    echo "    .. Twelvedata без ключа: акции могут быть ограничены; задайте TWELVEDATA_API_KEY"
+fi
 # Секрет подтверждения платежей (on-chain watcher подписывает им факт оплаты)
 if [ ! -s /etc/kairi/payment_secret ]; then
     (umask 077 && openssl rand -hex 32 > /etc/kairi/payment_secret)

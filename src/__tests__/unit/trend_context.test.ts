@@ -3,22 +3,26 @@ import { Candle } from '../../utils/candle';
 import { PatternDetector } from '../../utils/pattern_engine';
 import { c } from '../helpers/candles';
 
-/** Ровный рост: закрытия повышаются — выраженный восходящий тренд. */
+/** Восходящий зигзаг: импульс за 4 бара и откат за 2 образуют HH/HL. */
 const rally = (n: number, start: number, step: number) => {
   const a: Candle[] = [];
+  let cl = start;
   for (let i = 0; i < n; i++) {
-    const cl = start + i * step;
-    a.push(new Candle({ time: 1000 + i, open: cl - 0.5, high: cl + 0.3, low: cl - 0.8, close: cl, volume: 100 }));
+    const phase = i % 6;
+    cl += phase < 4 ? step : -step * 0.7;
+    a.push(new Candle({ time: 1000 + i, open: cl, high: cl + 1, low: cl - 1, close: cl, volume: 100 }));
   }
   return a;
 };
 
-/** Ровное снижение: закрытия понижаются — выраженный нисходящий тренд. */
+/** Нисходящий зигзаг: импульс за 4 бара и откат за 2 образуют LH/LL. */
 const decline = (n: number, start: number, step: number) => {
   const a: Candle[] = [];
+  let cl = start;
   for (let i = 0; i < n; i++) {
-    const cl = start - i * step;
-    a.push(new Candle({ time: 1000 + i, open: cl + 0.5, high: cl + 0.8, low: cl - 0.3, close: cl, volume: 100 }));
+    const phase = i % 6;
+    cl += phase < 4 ? -step : step * 0.7;
+    a.push(new Candle({ time: 1000 + i, open: cl, high: cl + 1, low: cl - 1, close: cl, volume: 100 }));
   }
   return a;
 };
@@ -38,40 +42,36 @@ const sawtoothFlat = (n: number, mid = 100, amp = 2) => {
 
 describe('trendContext: блокировка разворотов против тренда', () => {
   it('бычье поглощение НЕ детектится после выраженного роста', () => {
-    const prev = rally(25, 100, 0.6); // closes 100 → ~114.4
-    const c1 = c(114, 114.5, 111, 111.5); // bearish
-    const c2 = c(111, 115, 110.8, 114.8); // bullish engulfing
+    const prev = rally(25, 100, 0.6);
+    const lastClose = prev[prev.length - 1].close;
+    const c1 = c(lastClose, lastClose + 0.5, lastClose - 3.5, lastClose - 2.5); // bearish
+    const c2 = c(lastClose - 2.7, lastClose + 1, lastClose - 4, lastClose + 0.5); // bullish engulfing
     expect(PatternDetector.isBullishEngulfing(c1, c2, prev).found).toBe(false);
   });
 
   it('медвежье поглощение НЕ детектится после выраженного спада', () => {
     const prev = decline(25, 114, 0.6);
-    const c1 = c(100, 103, 99.5, 102.5); // bullish
-    const c2 = c(103, 103.2, 98.8, 99.2); // bearish engulfing
+    const lastClose = prev[prev.length - 1].close;
+    const c1 = c(lastClose, lastClose + 2.5, lastClose - 0.5, lastClose + 2); // bullish
+    const c2 = c(lastClose + 2.2, lastClose + 3, lastClose - 1, lastClose - 0.5); // bearish engulfing
     expect(PatternDetector.isBearishEngulfing(c1, c2, prev).found).toBe(false);
   });
 
   it('после реального спада бычье поглощение по-прежнему детектится', () => {
     const prev = decline(25, 114, 0.6);
-    const c1 = c(100, 100.5, 97, 97.5);
-    const c2 = c(97, 101, 96.8, 100.8);
+    const lastClose = prev[prev.length - 1].close;
+    const c1 = c(lastClose, lastClose + 0.5, lastClose - 3.5, lastClose - 2.5);
+    const c2 = c(lastClose - 2.7, lastClose + 1, lastClose - 4, lastClose + 0.5);
     expect(PatternDetector.isBullishEngulfing(c1, c2, prev).found).toBe(true);
   });
 
-  it('боковик/пила не даёт ложных разворотных сигналов поглощений', () => {
+  it('боковик/пила не считается подтверждённым противоположным трендом', () => {
     const prev = sawtoothFlat(25);
-    // Бычья поглощающая свеча в середине пилообразного канала: формально
-    // поглощает предыдущую, но трендового контекста нет — Нисон требует
-    // движения против сигнала. Проверяем сам контекст через харами-крест
-    // (у него нет зоны S/R, только precededBy*): медвежий длинный candle
-    // внутри флэта не должен порождать ни бычий, ни медвежий харами...
-    // Для поглощения проверяем симметричную пару: обе стороны заблокированы
-    // либо сигнал остаётся нейтральным без ложного «разворота после тренда».
     const d1 = c(98, 102.5, 97.5, 102);   // bullish
-    const d2 = c(102, 102.2, 97.8, 98.2); // bearish engulfing
-    // В плоском боковике закрытие не у потолка и не у значимого роста окна —
-    // медвежий разворот обязан быть заблокирован (прежняя эвристика пропускала
-    // его по условию last >= hi * 0.98 на любом отскоке пилы).
-    expect(PatternDetector.isBearishEngulfing(d1, d2, prev).found).toBe(false);
+    const d2 = c(102.2, 102.4, 97.8, 97.9); // bearish engulfing
+    // Ни структура, ни положение цены и наклон SMA65 не подтверждают тренд.
+    // Нейтральный контекст не блокирует разворот по каноническому фильтру;
+    // это не приравнивает боковик к доказательству силы сигнала.
+    expect(PatternDetector.isBearishEngulfing(d1, d2, prev).found).toBe(true);
   });
 });

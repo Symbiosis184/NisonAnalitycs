@@ -124,27 +124,23 @@ export function mergeJournals(local: SignalEntry[], server: SignalEntry[]): Sign
     byId.set(s.id, existing ? pickBetter(existing, s) : s);
   }
 
-  // Дедупликация одного события под разными id (два устройства залогировали
-  // одну формацию независимо): оставляем более финальную запись.
+  // Дедупликация одного события под разными id: в результат попадает именно
+  // победитель pickBetter, а не просто самая новая по timestamp запись —
+  // иначе свежий pending может перезаписать закрытие сделки.
   const winnerByEvent = new Map<string, SignalEntry>();
-  for (const s of Array.from(byId.values())) {
+  const withoutEvent: SignalEntry[] = [];
+  for (const s of byId.values()) {
     const key = eventKeyOf(s);
-    if (key === null) continue;
+    if (key === null) {
+      withoutEvent.push(s);
+      continue;
+    }
     const prev = winnerByEvent.get(key);
     winnerByEvent.set(key, prev ? pickBetter(prev, s) : s);
   }
 
-  const result: SignalEntry[] = [];
-  const seenEvents = new Set<string>();
-  for (const s of Array.from(byId.values()).sort((a, b) => b.timestamp - a.timestamp)) {
-    const key = eventKeyOf(s);
-    if (key !== null) {
-      if (seenEvents.has(key)) continue; // проигравший близнец уже отброшен
-      seenEvents.add(key);
-    }
-    result.push(s);
-  }
-  return result;
+  return [...withoutEvent, ...winnerByEvent.values()]
+    .sort((a, b) => b.timestamp - a.timestamp);
 }
 
 // --- API синхронизации ---

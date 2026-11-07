@@ -236,7 +236,9 @@ export class SignalGenerator {
       if ((signal.path?.adjustedRR ?? signal.rr) >= 2) pushUnique(signal);
     };
 
-    for (let i = candles.length - 2; i >= Math.max(0, candles.length - 20); i--) {
+    // Последняя ЗАКРЫТАЯ свеча тоже участвует в сканировании. Если последний
+    // элемент формируется, closedCount уже указывает на предыдущий бар.
+    for (let i = closedCount - 1; i >= Math.max(0, closedCount - 20); i--) {
       const patternCandle = candles[i];
       const closed = candles.slice(0, i + 1);
 

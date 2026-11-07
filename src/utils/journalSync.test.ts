@@ -41,6 +41,17 @@ describe('mergeJournals — слияние локального и сервер�
     expect(merged[0].id).toBe('b'); // закрытая сделка побеждает pending-близнеца
   });
 
+  it('закрытие побеждает более свежий pending-близнец с другого устройства', () => {
+    const pending = sig({ id: 'a', barTime: 777, status: 'pending', timestamp: 5000 });
+    const closed = sig({
+      id: 'b', barTime: 777, status: 'hit_stop', timestamp: 2000, exitTimestamp: 3000,
+    });
+    const merged = mergeJournals([pending], [closed]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].id).toBe('b');
+    expect(merged[0].status).toBe('hit_stop');
+  });
+
   it('разные бары одной формации — два разных сигнала (валидная серия)', () => {
     const s1 = sig({ id: 'a', barTime: 100 });
     const s2 = sig({ id: 'b', barTime: 200 });

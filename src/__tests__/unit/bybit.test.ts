@@ -86,7 +86,8 @@ describe('fetch24hTicker', () => {
     const t = await fetch24hTicker('XRPUSDT');
     expect(t.lastPrice).toBe(50000);
     expect(t.priceChangePercent).toBeCloseTo(2.5);
-    expect(t.priceChange).toBeCloseTo(1250);
+    // previousPrice = 50000 / 1.025; абсолютное изменение считается от неё.
+    expect(t.priceChange).toBeCloseTo(50000 * 0.025 / 1.025);
     vi.unstubAllGlobals();
   });
 

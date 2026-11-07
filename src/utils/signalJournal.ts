@@ -283,7 +283,7 @@ export function updateSignalStatus(
     entry.status = status;
     entry.exitTimestamp = Date.now();
     if (exitPrice !== undefined) {
-      applyExit(entry, exitPrice);
+      Object.assign(entry, applyExit(entry, exitPrice));
     }
     if (notes) {
       entry.notes = notes;

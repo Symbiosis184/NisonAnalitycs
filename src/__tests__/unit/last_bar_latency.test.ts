@@ -3,6 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { Candle } from '../../utils/candle';
 import { detectPatterns } from '../../utils/patterns';
+import { requiresNextCandleConfirmation } from '../../utils/pattern_ids';
 
 const mk = (t: number, o: number, h: number, l: number, c: number, v = 100): Candle =>
   new Candle({ time: t, open: o, high: h, low: l, close: c, volume: v });
@@ -26,8 +27,8 @@ describe('последняя закрытая свеча проверяется 
     // появляться на последнем баре сразу (без задержки в бар) со статусом pending.
     // Завершённые формации (поглощения, звёзды, солдаты/вороны) подтверждаются
     // внутри себя и имеют status='confirmed' — это тоже соответствие канону.
-    const CONFIRM_CLASSES = ['МОЛОТ', 'ПОВЕШЕННЫЙ', 'ПАДАЮЩАЯ ЗВЕЗДА', 'ДОДЖИ', 'ХАРАМИ', 'ПИНЦЕТ'];
-    const onLastBar = pats.filter(p => p.candleIndex === lastIdx && CONFIRM_CLASSES.some(k => p.name.includes(k)));
+    const onLastBar = pats.filter(p =>
+      p.candleIndex === lastIdx && requiresNextCandleConfirmation(p.name));
     expect(onLastBar.length).toBeGreaterThan(0);
     expect(onLastBar.every(p => p.status === 'pending')).toBe(true);
   });

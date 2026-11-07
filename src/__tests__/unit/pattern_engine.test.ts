@@ -104,7 +104,13 @@ describe('PatternDetector.isThreeWhiteSoldiers / isThreeBlackCrows', () => {
   });
 
   it('три чёрных ворона', () => {
-    const candles = [c(108, 108.5, 105, 105.5), c(105.5, 106, 102.5, 103), c(103, 103.5, 100, 100.5)];
+    // Модель разворачивает предшествующий рост: добавляем его в фикстуру.
+    const rally = [
+      c(94, 95, 93.5, 94.8), c(94.8, 96, 94.3, 95.8),
+      c(95.8, 97, 95.3, 96.8), c(96.8, 98, 96.3, 97.8),
+      c(97.8, 99, 97.3, 98.8), c(98.8, 100, 98.3, 99.8),
+    ];
+    const candles = [...rally, c(108, 108.5, 105, 105.5), c(105.8, 106.2, 102.5, 103), c(103.4, 103.8, 100, 100.5)];
     const res = PatternDetector.isThreeBlackCrows(candles);
     expect(res.found).toBe(true);
     expect(res.name).toBe('ТРИ ЧЁРНЫХ ВОРОНЫ');
@@ -187,6 +193,26 @@ describe('PatternDetector.getFormationBounds', () => {
   it('неизвестный паттерн — фолбэк на последнюю свечу', () => {
     const b = PatternDetector.getFormationBounds('НЕСУЩЕСТВУЮЩИЙ', candles, 2);
     expect(b.patternCandlesCount).toBe(1);
+  });
+
+  it('линия пояса — односвечная модель, c1 задаёт только контекст', () => {
+    const b = PatternDetector.getFormationBounds('ЛИНИЯ ПОЯСА (БЫЧЬЯ)', candles, 2);
+    expect(b.patternCandlesCount).toBe(1);
+    expect(b.patternStartIdx).toBe(2);
+  });
+
+  it('гэп на максимумах — пять свечей консолидации и сигнальная', () => {
+    const history = Array.from({ length: 8 }, (_, i) => c(100 + i, 102 + i, 99 + i, 101 + i));
+    const b = PatternDetector.getFormationBounds('ГЭП НА МАКСИМУМАХ', history, 7);
+    expect(b.patternCandlesCount).toBe(6);
+    expect(b.patternStartIdx).toBe(2);
+  });
+
+  it('прорыв консолидации — четыре свечи диапазона и сигнальная', () => {
+    const history = Array.from({ length: 8 }, (_, i) => c(100 + i, 102 + i, 99 + i, 101 + i));
+    const b = PatternDetector.getFormationBounds('ПРОРЫВ КОНСОЛИДАЦИИ (БЫЧИЙ)', history, 7);
+    expect(b.patternCandlesCount).toBe(5);
+    expect(b.patternStartIdx).toBe(3);
   });
 });
 
