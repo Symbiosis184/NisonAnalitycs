@@ -37,7 +37,7 @@ if (!(window as any).matchMedia) {
   (window as any).matchMedia = (q: string) => ({ matches: false, media: q, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} });
 }
 import { detectGaps, MIN_GAP_PCT } from './utils/gaps';
-import type { CandleDTO, GapDTO } from './api/types';
+import type { CandleDTO, GapDTO, PatternDTO, SignalDTO } from './api/types';
 
 const bar = (time: number, o: number, h: number, l: number, c: number): CandleDTO =>
   ({ time, open: o, high: h, low: l, close: c, volume: 10 });
@@ -186,5 +186,67 @@ describe('CandlestickChart принимает gaps', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(calls.markers.length).toBe(0);
     expect(container.firstChild).toBeTruthy();
+  });
+});
+
+describe('CandlestickChart отличает модели от фактических входов', () => {
+  const makeSignal = (confirmed: boolean): SignalDTO => ({
+    direction: 'long', pattern: 'МОЛОТ', entry_price: confirmed ? 106 : 103,
+    stop_loss: 95, target: 120, risk: 0.1, rr: 2, quality: 0.7,
+    timestamp: confirmed ? 172800000 : 86400000,
+    bar_time: confirmed ? 172800000 : 86400000,
+    confirmation_index: confirmed ? 2 : null,
+    entry_index: confirmed ? 2 : null,
+    entry_time: confirmed ? 172800000 : null,
+    entry_estimated: !confirmed, confirmed,
+    lifecycle_status: confirmed ? 'confirmed' : 'pending',
+    story: '',
+  });
+
+  const pattern: PatternDTO = {
+    name: 'БЫЧЬЕ ПОГЛОЩЕНИЕ', type: 'bullish', candleIndex: 1,
+    confidence: 72, confirmed: true, hasVolume: false, atLevel: false, story: '',
+  };
+
+  it('pending не рисует стрелку и линии входа, модель не маскируется под вход', async () => {
+    const candles = [
+      bar(0, 100, 101, 99, 100),
+      bar(86400000, 101, 105, 100, 104),
+      bar(172800000, 105, 107, 104, 106),
+    ];
+    calls.priceLines.length = 0; calls.markers.length = 0;
+    render(
+      <CandlestickChart
+        candles={candles} patterns={[pattern]} signals={[makeSignal(false), makeSignal(true)]}
+        support={[]} resistance={[]} gaps={[]}
+      />,
+    );
+    await new Promise((r) => setTimeout(r, 0));
+
+    const arrows = calls.markers.filter((m: any) => m.shape === 'arrowUp' || m.shape === 'arrowDown');
+    expect(arrows).toHaveLength(1);
+    expect(Number(arrows[0].time)).toBe(172800);
+    expect(calls.markers.filter((m: any) => m.shape === 'circle')).toHaveLength(1);
+    expect(calls.priceLines.some((line: any) => line.price === 103)).toBe(false);
+    expect(calls.priceLines.some((line: any) => line.price === 106)).toBe(true);
+  });
+
+  it('на баре фактического входа стрелка имеет приоритет над кругом модели', async () => {
+    const candles = [
+      bar(0, 100, 101, 99, 100),
+      bar(86400000, 101, 105, 100, 104),
+      bar(172800000, 105, 107, 104, 106),
+    ];
+    calls.priceLines.length = 0; calls.markers.length = 0;
+    render(
+      <CandlestickChart
+        candles={candles} patterns={[{ ...pattern, candleIndex: 2 }]} signals={[makeSignal(true)]}
+        support={[]} resistance={[]} gaps={[]}
+      />,
+    );
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(calls.markers).toHaveLength(1);
+    expect(calls.markers[0].shape).toBe('arrowUp');
   });
 });
