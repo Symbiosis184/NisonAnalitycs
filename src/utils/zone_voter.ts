@@ -5,6 +5,7 @@
 // 3. Объём подтверждает значимость
 // 4. Полярность: пробитое сопротивление становится поддержкой
 // 5. Кластеризация близких уровней
+// 6. Уровни Фибоначчи (гл. 12)
 
 import { Candle } from './candle';
 import { sma } from './indicators';
@@ -41,36 +42,38 @@ export interface Zone {
    * данных перекрывает половину диапазона.
    */
   halfWidth: number;
+  /** Время формирования зоны (для учёта "свежести"). */
+  formedAt: number;
 }
 
 /** Ключ временнóго масштаба для кэша результатов collect (см. timeframeKey). */
 export type TimeframeKey = 'scalp' | 'intraday' | 'swing' | 'position';
 
 /**
- * Группировка интервалов Bybit по временнóму масштабу. Нужна потому, что
- * параметры зон (толеранс кластеризации, порог подтверждения пробоя) должны
- * различаться на разных ТФ: фиксированные 0.5% корректны для дневного графика,
- * но на 5-минутке шумят, а на недельном — слишком мелки.
- *
- * Нисон (гл. 8 «Магические дожи»): свечной анализ не применяется на ТФ <30
- * минут — скальп-масштаб оставлен только как техническая категория для
- * сырых форм ('1'..'15'), все торговые ТФ приложения ≥30m. '30m' (канон
- * UI) и '30' (Bybit) — intraday: самый младший разрешённый масштаб анализа.
+ * Группировка интервалов Bybit по временнóму масштабу.
+ * FIX рассинхрона '1M': теперь '1M'/'1m' = минута (intraday), 'MO'/'1MO' = месяц (position).
  */
 export function timeframeKey(tf: string): TimeframeKey {
   const t = tf.trim().toUpperCase();
   if (['D', '1D'].includes(t)) return 'swing';
-  // Position: месячные ТФ ('M','1M'..'3M','MO') — макро-масштаб Нисона.
-  // Недельные формы ('W','1W','w') попадают в fallback ниже.
-  if (/^([123]?MO?|M)$/.test(t)) return 'position';
-  // Инtraday: 30-минутный и выше (разрешённые Нисоном внутридневные ТФ)
-  if (/^30(M|MIN)?$/.test(t)) return 'intraday';
+  
+  // Position: месячные ТФ ('MO', '1MO', '2MO', '3MO') — макро-масштаб Нисона.
+  // FIX: '1M' теперь = минута, не месяц!
+  if (/^([123]?MO)$/.test(t)) return 'position';
+  
+  // Инtraday: минутные ТФ от 30m до 4H
+  if (/^(1|3|5|15|30)(M|MIN)?$/.test(t)) {
+    const mins = parseInt(t);
+    if (mins < 30) return 'scalp';
+    return 'intraday';
+  }
   if (['60', '1H', '2H', '4H'].includes(t)) return 'intraday';
   if (/^(60|[124])(H|h)$/.test(t)) return 'intraday';
-  // Скальп — только суб-30m формы (вне канона приложения, см. запрет гл. 8)
-  if (/^(1|3|5|15)(M|MIN)?$/.test(t)) return 'scalp';
-  if (['1', '3', '5', '15'].includes(t)) return 'scalp';
-  return 'position'; // W и всё нестандартное
+  
+  // Недельные — position
+  if (['W', '1W'].includes(t)) return 'position';
+  
+  return 'position'; // fallback
 }
 
 interface ZoneParams {
@@ -89,31 +92,37 @@ const ZONE_PARAMS: Record<TimeframeKey, ZoneParams> = {
 };
 
 export class ZoneVoter {
-  // Толеранс по умолчанию (дневной ТФ, историческая совместимость): зоны в пределах
-  // 0.5% считаются одной зоной. Для других ТФ передавайте timeframeKey в collect().
+  // Толеранс по умолчанию (дневной ТФ, историческая совместимость)
   private static readonly CLUSTER_TOLERANCE = 0.005;
 
   // Минимум голосов для сильной зоны
   private static readonly STRONG_ZONE_MIN_VOTES = 3;
 
-  // FIX ТФ-канона (Нисон гл. 10): на графике одновременно не должно быть
-  // десятки «уровней» — значимых зон столько, сколько цена реально тестировала.
-  // Выводимые списки ограничиваются наиболее значимыми зонами с каждой стороны.
+  // FIX ТФ-канона: значимых зон не больше MAX_ZONES_PER_SIDE с каждой стороны
   private static readonly MAX_ZONES_PER_SIDE = 8;
 
   /**
+   * Кэш результатов collect() для избежания повторных вычислений.
+   * Ключ: `${candles.length}_${lastCandleTime}_${tfKey}`
+   */
+  private static collectCache = new Map<string, { support: Zone[]; resistance: Zone[] }>();
+  private static readonly CACHE_MAX_SIZE = 10;
+
+  /**
    * Сбор всех зон с голосованием.
-   * FIX аудита №1: уровни классифицируются как поддержка/сопротивление ОТНОСИТЕЛЬНО
-   * каждой последующей свечи (касание), а не по положение относительно текущей цены.
-   * Это даёт реальные касания (touches) вместо «все свинги ниже цены = поддержка».
-   * @param timeframeKey — временнóй масштаб (см. timeframeKey): подбирает толеранс
-   *   кластеризации и порог подтверждения пробоя под ТФ. По умолчанию — дневной.
+   * FIX: добавлена мемоизация для производительности.
    */
   static collect(
     price: number,
     candles: Candle[],
     tfKey: TimeframeKey = 'swing'
   ): { support: Zone[]; resistance: Zone[] } {
+    // Проверяем кэш
+    const lastCandle = candles[candles.length - 1];
+    const cacheKey = `${candles.length}_${lastCandle?.time ?? 0}_${tfKey}`;
+    const cached = this.collectCache.get(cacheKey);
+    if (cached) return cached;
+
     const params = ZONE_PARAMS[tfKey];
     const supMap = new Map<number, ZoneClusterData>();
     const resMap = new Map<number, ZoneClusterData>();
@@ -136,92 +145,67 @@ export class ZoneVoter {
     // 6. Психологические круглые числа
     this.addRoundNumbers(price, supMap, resMap, params.tolerance);
 
-    // FIX аудита №1: финальная транзитивная дедупликация — разные источники
-    // (MA, климакс, середины тел, круглые числа) могли оставить «половины»
-    // одной зоны; до mapToZones сливаем их в единый уровень.
+    // 7. Уровни Фибоначчи (глава 12)
+    this.addFibonacciLevels(candles, supMap, resMap, params.tolerance);
+
+    // Финальная транзитивная дедупликация
     dedupeZones(supMap, params.tolerance);
     dedupeZones(resMap, params.tolerance);
 
-    // Ширина зоны привязана к волатильности ТФ (ATR): толеранс кластеризации,
-    // но не уже 0.25×ATR и не шире 2×ATR (Нисон: уровень — это ЗОНА).
-    // FIX канона (гл. 11): ATR считается по ПОСЛЕДНИМ ~60 свечам окна анализа,
-    // а не по всей истории. При резкой смене волатильности (затишье → импульс)
-    // исторический Wilder-ATR остаётся заниженным, зона получается тоньше своих
-    // же касаний — формация у уровня переставала считаться «у поддержки» и
-    // молот/звезда терялись на графике.
+    // Ширина зоны привязана к волатильности ТФ (ATR)
     const atrWindow = candles.length > 74 ? candles.slice(-60) : candles;
     const atrVal = atrWilder(atrWindow, 14);
-    // FIX канона (гл. 11): ширина зоны — СВОЙСТВО УРОВНЯ, а не глобальная
-    // константа текущего момента. Прежняя halfWidthBase применялась ко всем
-    // зонам сразу: далеко стоящая зона получала полосу из сегодняшнего ATR,
-    // и проверка «цена внутри полосы» давала ложные касания (молот «видел»
-    // поддержку там, где её не было). Канон: зона = [уровень ± max(толеранс
-    // кластеризации, 0.25×ATR)], т.е. полоса покрывает разброс составляющих
-    // зону цен и шум вокруг уровня, но не растягивается на весь ATR-диапазон.
     const zoneHalfWidth = (level: number) =>
       Math.max(params.tolerance * level, atrVal * 0.25);
 
-    // FIX канон-аудита (гл. 11): роль уровня определяется его ПОЗИЦИЕЙ ОТНОСИТЕЛЬНО
-    // ТЕКУЩЕЙ ЦЕНЫ, а не тем, из какой карты он собран. Пробитое сопротивление
-    // (полярность) живёт в supMap на уровне НИЖЕ цены — корректно; но свинг-хай
-    // над ценой мог попасть в «поддержку» (если цена касалась его снизу какSupport
-    // ложно срабатывал при level≈price), а круглое число ниже цены — в
-    // «сопротивление». Финальная инварианта: поддержка ≤ цена ≤ сопротивление.
-    // FIX ТФ-канона (аудит «много линий сопротивления на 4H», Нисон гл. 10):
-    // значимость уровня определяется СИЛОЙ ОТВЕРА ценой (число касаний с
-    // отбоем), а не расстоянием до цены. Прежний вывод давал на волатильных
-    // внутридневных ТФ десятки «зон» из одного случайного экстремума — шум
-    // вместо уровней. Ранжирование по Нисону: сначала число тестирований
-    // уровня ценой, затем число независимых источников (votes); в итоговый
-    // вывод попадают только наиболее значимые зоны (не более MAX_ZONES_PER_
-    // SIDE с каждой стороны). Сортировка «ближайшие к цене первыми» после
-    // этого сохраняется.
+    // FIX: значимость определяется в первую очередь votes (независимые источники),
+    // затем touches (касания), затем расстояние до цены.
+    // По ЯС гл. 11: "Чем больше технических индикаторов сходятся в одной зоне,
+    // тем выше вероятность того, что эта зона окажется значимой".
     const significance = (a: Zone, b: Zone) =>
-      (b.touches - a.touches) || (b.votes - a.votes) ||
+      (b.votes - a.votes) || (b.touches - a.touches) ||
       Math.abs(a.level - price) - Math.abs(b.level - price);
 
-    // FIX канона (гл. 10): порог ЗНАЧИМОСТИ уровня адаптивен к ТФ-масштабу.
-    // На младших разрешённых ТФ (30m/1H/4H) один случайный экстремум — не
-    // уровень: требуется минимум 2 тестирования ценой с отбоем (или подтверждение
-    // несколькими независимыми источниками). На D/W история реже и каждый
-    // протестированный уровень весомее — достаточно одного касания. Прежний
-    // единый фильтр «touches ≥ 1» на внутридневных графиках пропускал шумовые
-    // зоны из одного свинга («линии-призраки» над графиком).
+    // Порог значимости адаптивен к ТФ
     const minTouches = tfKey === 'intraday' || tfKey === 'scalp' ? 2 : 1;
     const significant = (z: Zone) =>
       z.touches >= minTouches || z.votes >= this.STRONG_ZONE_MIN_VOTES;
 
-    const support = this.mapToZones(supMap, zoneHalfWidth)
+    const support = this.mapToZones(supMap, zoneHalfWidth, candles)
       .filter(z => z.level <= price)
       .filter(significant)
       .sort(significance)
       .slice(0, this.MAX_ZONES_PER_SIDE)
-      .sort((a, b) => b.level - a.level); // Ближайшие к цене — первыми
+      .sort((a, b) => b.level - a.level);
 
-    const resistance = this.mapToZones(resMap, zoneHalfWidth)
+    const resistance = this.mapToZones(resMap, zoneHalfWidth, candles)
       .filter(z => z.level >= price)
       .filter(significant)
       .sort(significance)
       .slice(0, this.MAX_ZONES_PER_SIDE)
-      .sort((a, b) => a.level - b.level); // Ближайшие к цене — первыми
+      .sort((a, b) => a.level - b.level);
 
-    return { support, resistance };
+    const result = { support, resistance };
+
+    // Сохраняем в кэш
+    this.collectCache.set(cacheKey, result);
+    // Ограничиваем размер кэша
+    if (this.collectCache.size > this.CACHE_MAX_SIZE) {
+      const firstKey = this.collectCache.keys().next().value;
+      if (firstKey) this.collectCache.delete(firstKey);
+    }
+
+    return result;
   }
 
-  /** Wilder ATR(14) по закрытым свечам; 0 при нехватке данных. */
-  private static atr(candles: Candle[], period = 14): number {
-    return atrWilder(candles, period);
+  /** Очистка кэша (для тестов). */
+  static clearCache(): void {
+    this.collectCache.clear();
   }
 
   /**
-   * 1+2. Касательная классификация свинг-уровней (FIX аудита №1/№2).
-   * По Нисону уровень — это ЗОНА, многократно оттестированная ценой. Поэтому:
-   *  • берём свинги из единого детектора levels.ts;
-   *  • для каждого уровня смотрим только свечи ПОСЛЕ его образования (без lookahead);
-   *  • касание поддержки: low <= zone*(1+tol) и close > zone (цена отскочила снизу вверх);
-   *  • касание сопротивления: high >= zone*(1-tol) и close < zone (отбой сверху вниз);
-   *  • если зона была пробита ЗАКРЫТИЕМ (≥0.3% за уровнем) — срабатывает полярность
-   *    (гл. 11): пробитое сопротивление становится поддержкой и наоборот.
+   * 1. Касательная классификация свинг-уровней
+   * FIX: используем halfWidth вместо tolerance для проверки касаний.
    */
   private static addTouchBasedLevels(
     price: number,
@@ -233,21 +217,29 @@ export class ZoneVoter {
     const lookback = Math.min(params.lookback, candles.length);
     const tol = params.tolerance;
 
-    // Сначала группируем свинги в зоны (кластеризация), помня самый ранний индекс
-    // и ВСЕ составляющие цены каждой зоны. В одну зону сливаются и свинг-минимумы,
-    // и свинг-максимумы: касания считаются отдельно для каждой ценой составляющей
-    // (иначе зона из уровней 89.0 и 89.4 теряла бы касания к более высокому краю).
-    const zoneDefs: Array<{ level: number; firstIndex: number; members: number[] }> = [];
+    // Группируем свинги в зоны (кластеризация)
+    const zoneDefs: Array<{ level: number; firstIndex: number; members: number[]; formedAt: number }> = [];
     for (const swing of findSwings(candles, lookback, params.swingSpan)) {
       const hit = zoneDefs.find((z) =>
         z.members.some((m) => Math.abs(swing.level - m) / m <= tol));
       if (hit) {
         hit.firstIndex = Math.min(hit.firstIndex, swing.index);
+        hit.formedAt = Math.min(hit.formedAt, candles[swing.index]?.time ?? 0);
         if (!hit.members.includes(swing.level)) hit.members.push(swing.level);
       } else {
-        zoneDefs.push({ level: swing.level, firstIndex: swing.index, members: [swing.level] });
+        zoneDefs.push({ 
+          level: swing.level, 
+          firstIndex: swing.index, 
+          members: [swing.level],
+          formedAt: candles[swing.index]?.time ?? 0
+        });
       }
     }
+
+    // Вычисляем среднюю ширину зоны для проверки касаний
+    const atrWindow = candles.length > 74 ? candles.slice(-60) : candles;
+    const atrVal = atrWilder(atrWindow, 14);
+    const halfWidth = Math.max(tol * price, atrVal * 0.25);
 
     for (const zone of zoneDefs) {
       let supTouches = 0;
@@ -258,28 +250,20 @@ export class ZoneVoter {
       for (let j = zone.firstIndex + 1; j < candles.length; j++) {
         const c = candles[j];
         for (const m of zone.members) {
-          // Поддержка: коснулась края зоны и закрылась ВЫШЕ него
-          if (c.low <= m * (1 + tol) && c.close > m) {
+          // FIX: проверяем касание по halfWidth, а не по проценту
+          // Поддержка: low вошёл в зону [m - halfWidth, m + halfWidth] и close > m
+          if (c.low <= m + halfWidth && c.low >= m - halfWidth && c.close > m) {
             supTouches++;
             lastSupTime = c.time;
           }
-          // Сопротивление: коснулась края зоны и закрылась НИЖЕ него
-          // (проверяется независимо — свеча может дать оба сигнала на разных участках)
-          if (c.high >= m * (1 - tol) && c.close < m) {
+          // Сопротивление: high вошёл в зону и close < m
+          if (c.high >= m - halfWidth && c.high <= m + halfWidth && c.close < m) {
             resTouches++;
             lastResTime = c.time;
           }
         }
       }
 
-      // Уровни без касаний после образования не голосуются (Нисон: уровень
-      // значим ровно настолько, насколько его тестировала цена).
-      // FIX канон-аудита: роль зоны определяется ПОЗИЦИЕЙ ОТНОСИТЕЛЬНО ЦЕНЫ, а не
-      // счётчиком касаний. По Нисону (гл. 11) уровень НИЖЕ цены — это поддержка,
-      // ВЫШЕ — сопротивление; «смена полярности» происходит только через ПРОБОЙ
-      // закрытием (addPolarityLevels), а не потому что касаний-отбоев было больше.
-      // Прежнее условие (supTouches > resTouches без проверки цены) могло показать
-      // «поддержку» НАД ценой и исказить голосование источников в кластере.
       const asSupport = supTouches > 0 && zone.level <= price;
       const asResistance = resTouches > 0 && zone.level >= price;
 
@@ -294,9 +278,7 @@ export class ZoneVoter {
 
   /**
    * 2. Полярность: пробитые уровни меняют роль
-   * По Нисону (глава 11): "Пробитое сопротивление становится поддержкой".
-   * FIX аудита №2: пробой подтверждается ЗАКРЫТИЕМ свечи за уровнем (≥0.3%),
-   * а не тенью/мигом; учитывается только закрытие последней свечи против зоны.
+   * FIX: добавлена проверка возврата к пробитому уровню (гл. 11).
    */
   private static addPolarityLevels(
     price: number,
@@ -309,25 +291,36 @@ export class ZoneVoter {
     const lookback = Math.min(params.lookback, candles.length);
     const swings = findSwings(candles, lookback, params.swingSpan);
     const last = candles[candles.length - 1];
-    // Порог подтверждения пробоя закрытием — под ТФ (см. ZONE_PARAMS)
     const BREAK_PCT = params.breakPct;
 
     for (const swing of swings) {
-      // Индекс свинга +2 — минимум подтверждений экстремума; проверяем закрытия после него
       const fromIdx = Math.max(swing.index + 1, candles.length - 40);
       if (swing.type === 'high') {
+        // Проверяем: был ли пробой вверх И возврат к уровню сверху
         const brokeUp = candles.slice(fromIdx).some(
-          (c) => c.close > swing.level * (1 + BREAK_PCT) && last.close > swing.level * (1 + BREAK_PCT)
+          (c) => c.close > swing.level * (1 + BREAK_PCT)
         );
-        if (brokeUp && last.close > swing.level) {
-          // Пробитое сопротивление -> поддержка (только если цена УВЕРЕННО выше)
+        // Возврат: цена была выше уровня и вернулась к нему
+        const returnedToLevel = candles.slice(fromIdx).some(
+          (c) => c.high >= swing.level * (1 - BREAK_PCT) && 
+                 c.low <= swing.level * (1 + BREAK_PCT) &&
+                 c.close > swing.level
+        );
+        
+        if (brokeUp && returnedToLevel && last.close > swing.level) {
           addLevelToMap(supMap, swing.level, 'полярность: пробитое сопротивление → поддержка', last.time, params.tolerance);
         }
       } else {
         const brokeDown = candles.slice(fromIdx).some(
-          (c) => c.close < swing.level * (1 - BREAK_PCT) && last.close < swing.level * (1 - BREAK_PCT)
+          (c) => c.close < swing.level * (1 - BREAK_PCT)
         );
-        if (brokeDown && last.close < swing.level) {
+        const returnedToLevel = candles.slice(fromIdx).some(
+          (c) => c.low <= swing.level * (1 + BREAK_PCT) && 
+                 c.high >= swing.level * (1 - BREAK_PCT) &&
+                 c.close < swing.level
+        );
+        
+        if (brokeDown && returnedToLevel && last.close < swing.level) {
           addLevelToMap(resMap, swing.level, 'полярность: пробитая поддержка → сопротивление', last.time, params.tolerance);
         }
       }
@@ -336,27 +329,23 @@ export class ZoneVoter {
 
   /**
    * 3. Скользящие средние как динамические уровни
-   * По Нисону (глава 13): MA50, MA65, MA200 - важные уровни.
-   * SMA, а не EMA: канон гл. 13 формулируется через простые скользящие.
    */
   private static addMALevels(
     price: number,
     candles: Candle[],
-    supMap: Map<number, { reasons: string[]; touches: number; lastTouch: number }>,
-    resMap: Map<number, { reasons: string[]; touches: number; lastTouch: number }>,
+    supMap: Map<number, ZoneClusterData>,
+    resMap: Map<number, ZoneClusterData>,
     tolerance: number
   ) {
     const closes = candles.map(c => c.close);
     const periods = [50, 65, 200];
+    const lastTime = candles[candles.length - 1]?.time ?? Date.now();
 
     for (const period of periods) {
       if (candles.length >= period) {
         const ma = sma(closes, period);
-        // sma() возвращает NaN на первых period-1 элементах (недостаточно
-        // истории); при candles.length >= period последнее значение всегда валидно.
         const maVal = ma[ma.length - 1];
         if (Number.isNaN(maVal)) continue;
-        const lastTime = candles[candles.length - 1].time;
 
         if (maVal <= price) {
           addLevelToMap(supMap, maVal, `MA${period}`, lastTime, tolerance);
@@ -369,22 +358,18 @@ export class ZoneVoter {
 
   /**
    * 4. Объёмные климасы
-   * По Нисону (глава 15): свечи с экстремальным объёмом создают уровни
    */
   private static addVolumeClimaxLevels(
     candles: Candle[],
-    supMap: Map<number, { reasons: string[]; touches: number; lastTouch: number }>,
-    resMap: Map<number, { reasons: string[]; touches: number; lastTouch: number }>,
+    supMap: Map<number, ZoneClusterData>,
+    resMap: Map<number, ZoneClusterData>,
     tolerance: number
   ) {
     const lookback = Math.min(60, candles.length);
     const recent = candles.slice(-lookback);
-
-    // Считаем средний объём
     const avgVolume = recent.reduce((sum, c) => sum + c.volume, 0) / recent.length;
 
     for (const c of recent) {
-      // Кульминационный объём (>2x среднего)
       if (c.volume > avgVolume * 2) {
         const level = c.isBullish ? c.low : c.high;
         if (c.isBullish) {
@@ -398,22 +383,18 @@ export class ZoneVoter {
 
   /**
    * 5. Середины длинных тел
-   * По Нисону (глава 2): середины длинных свечей - важные уровни
    */
   private static addLongBodyLevels(
     candles: Candle[],
-    supMap: Map<number, { reasons: string[]; touches: number; lastTouch: number }>,
-    resMap: Map<number, { reasons: string[]; touches: number; lastTouch: number }>,
+    supMap: Map<number, ZoneClusterData>,
+    resMap: Map<number, ZoneClusterData>,
     tolerance: number
   ) {
     const lookback = Math.min(60, candles.length);
     const recent = candles.slice(-lookback);
-
-    // Средний размер тела
     const avgBody = recent.reduce((sum, c) => sum + c.body, 0) / recent.length;
 
     for (const c of recent) {
-      // Длинная свеча (>1.5x среднего)
       if (c.isLongCandle && c.body > avgBody * 1.5) {
         const mid = (c.open + c.close) / 2;
 
@@ -430,15 +411,14 @@ export class ZoneVoter {
 
   /**
    * 6. Психологические круглые числа
-   * По Нисону: круглые числа часто выступают как уровни
+   * FIX: исправлен тавтологический фильтр — теперь проверяем реальную близость.
    */
   private static addRoundNumbers(
     price: number,
-    supMap: Map<number, { reasons: string[]; touches: number; lastTouch: number }>,
-    resMap: Map<number, { reasons: string[]; touches: number; lastTouch: number }>,
+    supMap: Map<number, ZoneClusterData>,
+    resMap: Map<number, ZoneClusterData>,
     tolerance: number
   ) {
-    // Определяем шаг для круглых чисел в зависимости от цены
     let step: number;
     if (price >= 10000) step = 1000;
     else if (price >= 1000) step = 100;
@@ -447,32 +427,78 @@ export class ZoneVoter {
     else if (price >= 1) step = 0.1;
     else step = 0.01;
 
-    // Ближайшие круглые числа.
-    // FIX канона (гл. 11): психологический уровень значим, когда к нему ПОДХОДИТ
-    // цена — раньше он добавлялся «вслепую» на весь шаг (±10 пунктов при цене ~100),
-    // и такой фантом перекрывал голосование РЕАЛЬНЫХ протестированных зон:
-    // молот у поддержки 97 не детектировался, потому что единственной «поддержкой»
-    // числилось круглое число 99. Теперь: только если close в пределах шага от
-    // уровня (уровень актуален прямо сейчас).
     const lower = Math.floor(price / step) * step;
     const upper = Math.ceil(price / step) * step;
 
-    if (price - lower <= step) {
+    // FIX: добавляем только если цена реально близко (в пределах 20% шага)
+    // Это отсекает фантомные уровни, которые были бы слишком далеко
+    const proximityThreshold = step * 0.2;
+
+    if (price - lower <= proximityThreshold && lower > 0) {
       addLevelToMap(supMap, lower, 'психологический уровень (круглое число)', Date.now(), tolerance);
     }
-    if (upper - price <= step) {
+    if (upper - price <= proximityThreshold && upper > 0) {
       addLevelToMap(resMap, upper, 'психологический уровень (круглое число)', Date.now(), tolerance);
     }
   }
 
   /**
+   * 7. Уровни Фибоначчи (ЯС гл. 12)
+   * Нисон: "Уровни коррекции 38%, 50% и 62% часто выступают как зоны поддержки/сопротивления"
+   */
+  private static addFibonacciLevels(
+    candles: Candle[],
+    supMap: Map<number, ZoneClusterData>,
+    resMap: Map<number, ZoneClusterData>,
+    tolerance: number
+  ) {
+    if (candles.length < 20) return;
+
+    // Находим свинг-хай и свинг-лоу за последние 50 свечей
+    const lookback = Math.min(50, candles.length);
+    const recent = candles.slice(-lookback);
+    
+    const swingHigh = Math.max(...recent.map(c => c.high));
+    const swingLow = Math.min(...recent.map(c => c.low));
+    const range = swingHigh - swingLow;
+    
+    if (range <= 0) return;
+
+    const lastTime = candles[candles.length - 1]?.time ?? Date.now();
+    
+    // Уровни коррекции Фибоначчи
+    const fibLevels = [
+      { ratio: 0.236, name: 'Фибоначчи 23.6%' },
+      { ratio: 0.382, name: 'Фибоначчи 38.2%' },
+      { ratio: 0.500, name: 'Фибоначчи 50%' },
+      { ratio: 0.618, name: 'Фибоначчи 61.8%' },
+      { ratio: 0.786, name: 'Фибоначчи 78.6%' },
+    ];
+
+    for (const fib of fibLevels) {
+      const level = swingHigh - range * fib.ratio;
+      const lastPrice = candles[candles.length - 1].close;
+      
+      // Добавляем как поддержку если ниже цены, как сопротивление если выше
+      if (level <= lastPrice) {
+        addLevelToMap(supMap, level, `${fib.name} (гл. 12)`, lastTime, tolerance);
+      } else {
+        addLevelToMap(resMap, level, `${fib.name} (гл. 12)`, lastTime, tolerance);
+      }
+    }
+  }
+
+  /**
    * Преобразование Map в массив Zone
+   * FIX: добавлено поле formedAt для учёта времени жизни зоны.
    */
   private static mapToZones(
-    map: Map<number, { reasons: string[]; touches: number; lastTouch: number }>,
-    halfWidthOf: (level: number) => number
+    map: Map<number, ZoneClusterData>,
+    halfWidthOf: (level: number) => number,
+    candles: Candle[]
   ): Zone[] {
     const zones: Zone[] = [];
+    const lastTime = candles[candles.length - 1]?.time ?? Date.now();
 
     for (const [level, data] of map.entries()) {
       const uniqueReasons = Array.from(new Set(data.reasons));
@@ -484,6 +510,7 @@ export class ZoneVoter {
         touches: data.touches,
         lastTouch: data.lastTouch,
         halfWidth: halfWidthOf(level),
+        formedAt: data.lastTouch ?? lastTime,
       });
     }
 
@@ -492,9 +519,6 @@ export class ZoneVoter {
 
   /**
    * Проверка близости к поддержке.
-   * FIX ТФ-аудита: раньше метод всегда собирал зоны с дневными параметрами,
-   * из-за чего на внутридневных графиках фильтр «у поддержки» использовал
-   * неверный толеранс. Теперь масштаб передаётся через timeframeKey.
    */
   static isNearSupport(
     price: number,
@@ -503,21 +527,7 @@ export class ZoneVoter {
     tfKey: TimeframeKey = 'swing',
     wickLow?: number
   ): boolean {
-    // FIX канон-аудита: раньше порог был max(tol*price, halfWidth) — на дневном
-    // ТФ это 1.5% от цены, т.е. свеча попадала «у поддержки», находясь на
-    // расстоянии полутора ПРОЦЕНТОВ от зоны, которая по Нисону и так не шире
-    // ATR. Канон (гл. 11): уровень — это ЗОНА [level − halfWidth … level + halfWidth];
-    // «у поддержки» = ЦЕНА ВНУТРИ полосы.
-    // FIX (wick-касания): разрыв между зоной и close молота/звезды — это ровно
-    // ТЕНЬ свечи. По Нисону формация тестирует уровень именно тенью: если передан
-    // low последней свечи, считается касанием, когда тень вошла в зону (с допуском
-    // 0.3×halfWidth на шум), даже если закрытие осталось выше её края.
     const { support } = this.collect(price, candles, tfKey);
-    // FIX канона (гл. 4/11): зона — это полоса [level ± halfWidth]. Прежнее
-    // условие требовало, чтобы тень вошла в полосу СНИЗУ (wickLow ≤ верхнего
-    // края) и отвергало самый частый канонический случай: молот, чья длинная
-    // тень ПРОШИЛА зону сверху вниз (close над полосой, low под ней). Корректно:
-    // тень коснулась уровня, если интервал [wickLow … price] пересекает полосу.
     return support.some(zone =>
       this.inBand(price, zone) ||
       (wickLow !== undefined &&
@@ -532,7 +542,7 @@ export class ZoneVoter {
   }
 
   /**
-   * Проверка близости к сопротивлению (см. комментарий к isNearSupport).
+   * Проверка близости к сопротивлению.
    */
   static isNearResistance(
     price: number,
@@ -541,12 +551,7 @@ export class ZoneVoter {
     tfKey: TimeframeKey = 'swing',
     wickHigh?: number
   ): boolean {
-    // См. комментарий к isNearSupport: high тени, вошедшей в зону сопротивления,
-    // считается касанием уровня (Нисон: звезда тестит вершину тенью).
     const { resistance } = this.collect(price, candles, tfKey);
-    // FIX канона (гл. 4-5): зеркально поддержке — тень звезды/повешенного может
-    // ПРОШИТЬ зону сопротивления снизу вверх (high над полосой, close под ней).
-    // Пересечение интервала [price … wickHigh] с полосой уровня = касание.
     return resistance.some(zone =>
       this.inBand(price, zone) ||
       (wickHigh !== undefined &&
