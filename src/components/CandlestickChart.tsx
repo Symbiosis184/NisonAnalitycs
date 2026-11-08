@@ -260,9 +260,9 @@ export default function CandlestickChart({
       };
     }
 
-    // ── Сигналы: линии входа/стопа/цели + стрелка фактического входа ──
-    // Pending — только гипотетический сценарий: у него нет фактического бара
-    // входа, поэтому он не должен выглядеть на графике как состоявшийся сигнал.
+    // ── Сигналы: только компактная стрелка фактического входа ──
+    // Ценовые линии входа, стопа и цели намеренно не рисуются: они захламляют
+    // график. Pending не имеет фактического входа и также не создаёт маркер.
     const enteredSignals = signals.filter((s) => {
       const status = s.lifecycle_status ?? (s.confirmed ? 'confirmed' : 'pending');
       return status === 'confirmed' && s.confirmed && s.entry_index !== null;
@@ -272,31 +272,6 @@ export default function CandlestickChart({
     // при конфликте long/short ставим круг.
     const markerByTime = new Map<number, { dir: 'long' | 'short' | 'mixed' }>();
     for (const sig of enteredSignals.slice(-5)) {
-      const isLong = sig.direction === 'long';
-      candlestickSeries.createPriceLine({
-        price: sig.entry_price,
-        color: 'rgba(148,163,184,0.7)',
-        lineWidth: 1,
-        lineStyle: 1, // пунктир: вход
-        axisLabelVisible: true,
-        title: t(`${isLong ? '▲' : '▼'} ${sig.pattern} · вход`),
-      });
-      candlestickSeries.createPriceLine({
-        price: sig.stop_loss,
-        color: 'rgba(239,68,68,0.6)',
-        lineWidth: 1,
-        lineStyle: 2,
-        axisLabelVisible: true,
-        title: t('стоп'),
-      });
-      candlestickSeries.createPriceLine({
-        price: sig.target,
-        color: 'rgba(34,197,94,0.6)',
-        lineWidth: 1,
-        lineStyle: 2,
-        axisLabelVisible: true,
-        title: t(`цель 1:${sig.rr.toFixed(1)}`),
-      });
       const entryTime = sig.entry_time ?? sig.bar_time;
       if (entryTime) {
         const t = Math.floor(entryTime / 1000);
@@ -310,7 +285,7 @@ export default function CandlestickChart({
       color: dir === 'long' ? '#34d399' : dir === 'short' ? '#fb7185' : '#94a3b8',
       shape: dir === 'long' ? 'arrowUp' as const : dir === 'short' ? 'arrowDown' as const : 'circle' as const,
       text: '',
-      size: 1,
+      size: 0.75,
     })).sort((a, b) => (a.time as number) - (b.time as number));
     // Маркеры регистрируются одним вызовом ниже: повторный createSeriesMarkers
     // на той же серии заменяет предыдущий набор и смешивает сигналы с моделями.
