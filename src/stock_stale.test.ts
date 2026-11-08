@@ -1,6 +1,6 @@
 /**
- * TradFi-акции: serving-stale. Если источник (Twelvedata)/прокси недоступен (429/5xx),
- * fetchKlines для акций отдаёт последние успешные свечи вместо ошибки —
+ * TradFi-акции: serving-stale и объединение запросов. Если оба источника/прокси
+ * недоступны (429/5xx), fetchKlines отдаёт последние успешные свечи вместо ошибки.
  * дашборд показывает карточки с прошлыми ценами, а не «Ошибка загрузки».
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -19,6 +19,26 @@ describe('fetchKlines(:STOCK): serving-stale при недоступном ис�
   afterEach(() => {
     document.head.innerHTML = '';
     vi.unstubAllGlobals();
+  });
+
+  it('объединяет дневные свечи и тикер карточки в один запрос', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: any) => ({
+      ok: true, status: 200, json: async () => ({ data: goodBars }),
+    })) as any;
+    vi.stubGlobal('fetch', fetchMock);
+    const mod = await import('./api/bybit');
+
+    const [bars, ticker] = await Promise.all([
+      mod.fetchKlines('AAPL:STOCK', 'D', 250),
+      mod.fetch24hTicker('AAPL:STOCK'),
+    ]);
+
+    expect(bars).toHaveLength(5);
+    expect(ticker.lastPrice).toBe(100.5);
+    expect(ticker.priceChange).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain('exchange=stocks');
+    expect(String(fetchMock.mock.calls[0][0])).toContain('limit=250');
   });
 
   it('отдаёт протухший кэш, когда прокси отвечает 429', async () => {
