@@ -45,4 +45,24 @@ export default defineConfig({
       port: 3000,
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          // React используется всеми маршрутами и кэшируется отдельно от кода
+          // приложения. Графические библиотеки остаются вне стартового бандла
+          // дашборда и загружаются только страницами, которым они нужны.
+          if (/\/node_modules\/(react|react-dom|scheduler)\//.test(id)) {
+            return "react-vendor";
+          }
+          if (id.includes("/node_modules/lightweight-charts/")) {
+            return "lightweight-charts";
+          }
+          if (id.includes("/node_modules/recharts/")) {
+            return "recharts";
+          }
+        },
+      },
+    },
+  },
 });

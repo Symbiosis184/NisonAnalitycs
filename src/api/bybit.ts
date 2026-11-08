@@ -249,11 +249,15 @@ async function fetchStockKlines(base: string, resolution: string, limit: number,
 export async function fetchMarketOverviewBatch<T>(
   jobs: Array<() => Promise<T>>,
   onItemError?: (index: number, err: unknown) => void,
+  onItem?: (item: T, index: number) => void,
 ): Promise<T[]> {
   const out: T[] = [];
   for (let i = 0; i < jobs.length; i++) {
     try {
-      out.push(await jobs[i]());
+      const item = await jobs[i]();
+      out.push(item);
+      // Дашборд может показать готовую карточку, не дожидаясь остальных тикеров.
+      onItem?.(item, i);
     } catch (err) {
       onItemError?.(i, err);
     }

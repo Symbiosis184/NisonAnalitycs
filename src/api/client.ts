@@ -13,8 +13,7 @@ import { planPosition, toPlanDTO } from '../utils/position_sizing';
 import { loadRiskSettings } from '../utils/risk_settings';
 import { detectPhase } from '../utils/wyckoff';
 import { buildVolumeProfile, summarizeDelta } from '../utils/volume_profile';
-import { runBacktest, type FormationBounds } from '../utils/backtest';
-import { tagTradesByRegime, detectDegradation, statsByRegime, edgeVerdict } from '../utils/edge_verification';
+import type { FormationBounds } from '../utils/backtest';
 import { aggregateConsensus } from '../utils/consensus';
 import { parseMarket } from './market';
 import type {
@@ -125,18 +124,25 @@ function buildEventsByBar(events: BtEvent[]): Map<number, BtEvent[]> {
  * движка utils/backtest.ts (пункты №2/№3 аудита). Возвращает null-компоненты,
  * если наблюдений мало; ошибки прогона не роняют основной отчёт.
  */
-function computeBacktestReports(
+async function computeBacktestReports(
   generator: SignalGenerator,
   candles: Candle[],
   timeframe: string,
   market: 'crypto' | 'stocks',
-): {
+): Promise<{
   edge: EdgeReportDTO | null;
   backtest: BacktestSummaryDTO[] | null;
-} {
+}> {
   const MIN_EVENTS = 5;  // минимум срабатываний для edge-вердикта
   const MIN_TRADES = 3;  // минимум сделок для показа сводки по паре
   try {
+    // Историческая статистика нужна только на странице полного анализа.
+    // Динамический импорт не загружает движок бэктеста вместе с дашбордом.
+    const [{ runBacktest }, { tagTradesByRegime, detectDegradation, statsByRegime, edgeVerdict }] =
+      await Promise.all([
+        import('../utils/backtest'),
+        import('../utils/edge_verification'),
+      ]);
     const events = collectBacktestEvents(generator, candles, timeframe, market);
     if (events.length < MIN_EVENTS) return { edge: null, backtest: null };
 
@@ -307,8 +313,10 @@ export class ApiClient {
   async getAnalysis(symbol: string, timeframe: string = 'D', opts: { force?: boolean } = {}): Promise<AnalysisReport> {
     // Рынок передаётся явно в каждый чистый расчёт, без глобального состояния.
     const patternMarket = parseMarket(symbol).market === 'stock' ? 'stocks' as const : 'crypto' as const;
-    const klines = await fetchKlines(symbol, timeframe, 250, opts);
-    const ticker = await fetch24hTicker(symbol).catch(() => null);
+    const [klines, ticker] = await Promise.all([
+      fetchKlines(symbol, timeframe, 250, opts),
+      fetch24hTicker(symbol).catch(() => null),
+    ]);
 
     const candles = klines.map((k) => new Candle({
       time: k.openTime,
@@ -407,7 +415,7 @@ export class ApiClient {
     // На закрытых барах, без lookahead; при нехватке наблюдений — null-компоненты.
     // One-at-a-time прогон использует отдельный генератор. Свежесть события
     // детерминированно выводится из последнего закрытого бара без скрытого кэша.
-    const { edge: edgeReport, backtest: backtestSummaries } = computeBacktestReports(
+    const { edge: edgeReport, backtest: backtestSummaries } = await computeBacktestReports(
       new SignalGenerator(), closedCandles, timeframe, patternMarket,
     );
 
@@ -726,47 +734,99 @@ export class ApiClient {
 
   /** Одна карточка обзора рынка для конкретного символа (переиспользуется дашбордом). */
   private async buildOverviewItem(symbol: string): Promise<MarketOverviewItem> {
-    const analysis = await this.getAnalysis(symbol, 'D');
-    const volumes = analysis.candles.map((c) => c.volume);
+    // Обзору нужны только текущий дневной контекст, модели, сценарии и S/R.
+    // Старшие ТФ, индикаторы полного отчёта и исторический бэктест здесь не
+    // отображаются, поэтому не запрашиваем и не рассчитываем их для каждой карточки.
+    const [klines, ticker] = await Promise.all([
+      fetchKlines(symbol, 'D', 250),
+      fetch24hTicker(symbol).catch(() => null),
+    ]);
+    const candles = klines.map((k) => new Candle({
+      time: k.openTime,
+      open: k.open,
+      high: k.high,
+      low: k.low,
+      close: k.close,
+      volume: k.volume,
+    }));
+    if (candles.length === 0) throw new Error(`Нет дневных данных по ${symbol}`);
+
+    const { closed: closedCandles } = splitLiveBar(candles);
+    const currentPrice = candles[candles.length - 1].close;
+    const patternMarket = parseMarket(symbol).market === 'stock' ? 'stocks' as const : 'crypto' as const;
+    const trend = getTrendContext(closedCandles);
+    const zones = ZoneVoter.collect(
+      currentPrice,
+      closedCandles,
+      timeframeKey('D'),
+      parseMarket(symbol).market,
+    );
+    const detectedPatterns = detectPatterns(closedCandles, 'D', { market: patternMarket });
+    const vprofile = buildVolumeProfile(closedCandles, 120);
+    const detectedSignals = signalGenerator.findSignals(closedCandles, 'D', {
+      context: { zones, volumeBands: vprofile.bands },
+      market: patternMarket,
+    });
+
+    const volumes = candles.map((c) => c.volume);
     const avgVolume = volumes.reduce((sum, v) => sum + v, 0) / volumes.length;
-    // Для акций change_24h переопределяем изменением за последний закрытый день:
-    // Котировка источника вне сессии может показывать 0%, а Bybit-семантика «24ч»
-    // к акциям неприменима (рынок работает 09:30–16:00 ET).
-    const isStock = parseMarket(symbol).market === 'stock';
-    let stockDayChange = analysis.change_24h;
-    if (isStock) {
-      const dc = analysis.candles;
-      const lastClosed = dc[dc.length - 1];
-      const prevClosed = dc[dc.length - 2];
+    const prevClose = candles.length >= 2 ? candles[candles.length - 2].close : currentPrice;
+    const fallbackChange = currentPrice - prevClose;
+    let change = ticker
+      ? ticker.priceChangePercent
+      : (prevClose > 0 ? (fallbackChange / prevClose) * 100 : 0);
+
+    // Для акций карточка показывает изменение последнего дневного бара, а не
+    // криптовалютную семантику «24 часа» вне торговой сессии.
+    if (parseMarket(symbol).market === 'stock') {
+      const lastClosed = candles[candles.length - 1];
+      const prevClosed = candles[candles.length - 2];
       if (lastClosed && prevClosed && prevClosed.close > 0) {
-        stockDayChange = ((lastClosed.close - prevClosed.close) / prevClosed.close) * 100;
+        change = ((lastClosed.close - prevClosed.close) / prevClosed.close) * 100;
       }
     }
-    const confirmedPatterns = analysis.patterns
-      .filter((p) => p.confirmed)
-      .map((p) => ({ name: p.name, type: p.type, confirmed: p.confirmed, confidence: p.confidence }));
-    const supportLevels = analysis.support.map((s) => s.level);
-    const resistanceLevels = analysis.resistance.map((r) => r.level);
-    const confirmedSignals = analysis.signals
-      .filter((s) => s.confirmed)
-      .map((s) => ({
-        direction: s.direction, pattern: s.pattern, entry_price: s.entry_price,
-        stop_loss: s.stop_loss, target: s.target, risk: s.risk, rr: s.rr,
-        quality: s.quality, confirmed: s.confirmed,
-      }));
+
+    const freshCut = closedCandles.length - 20;
+    const freshConfirmed = detectedSignals.filter((s) => {
+      if (s.status !== 'confirmed') return false;
+      const endIdx = s.meta?.patternEndIdx ?? -1;
+      return endIdx >= 0 ? endIdx >= freshCut : true;
+    });
+
     return {
       symbol,
-      price: analysis.price,
-      change_24h: isStock ? stockDayChange : analysis.change_24h,
-      trend: analysis.trend,
-      regime: analysis.regime,
-      patterns: confirmedPatterns,
-      signals: confirmedSignals,
-      support: supportLevels,
-      resistance: resistanceLevels,
-      volume: analysis.candles[analysis.candles.length - 1]?.volume || 0,
+      price: currentPrice,
+      change_24h: change,
+      trend,
+      regime: trend,
+      patterns: detectedPatterns
+        .filter((p) => p.confirmed)
+        .map((p) => ({
+          name: p.name,
+          type: toPatternDirection(p.type),
+          confirmed: p.confirmed,
+          confidence: p.confidence,
+        })),
+      signals: detectedSignals
+        .filter((s) => s.confirmed)
+        .map((s) => ({
+          direction: s.direction,
+          pattern: s.pattern,
+          entry_price: s.entryPrice,
+          stop_loss: s.stopLoss,
+          target: s.target,
+          risk: s.risk,
+          rr: s.rr,
+          quality: s.quality,
+          confirmed: s.confirmed,
+        })),
+      support: zones.support.map((s) => s.level),
+      resistance: zones.resistance.map((r) => r.level),
+      volume: candles[candles.length - 1]?.volume || 0,
       avgVolume,
-      consensus: analysis.consensus,
+      consensus: aggregateConsensus(
+        freshConfirmed.map((s) => ({ direction: s.direction, quality: s.quality })),
+      ),
     };
   }
 
@@ -774,88 +834,25 @@ export class ApiClient {
   static readonly DEFAULT_CRYPTO_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT'];
   static readonly DEFAULT_STOCK_SYMBOLS = ['AAPL:STOCK', 'MSFT:STOCK', 'NVDA:STOCK', 'AMZN:STOCK', 'META:STOCK', 'TSLA:STOCK', 'GOOGL:STOCK', 'AMD:STOCK'];
 
-  async getMarketOverview(market: 'crypto' | 'stock' = 'crypto'): Promise<MarketOverviewItem[]> {
+  async getMarketOverview(
+    market: 'crypto' | 'stock' = 'crypto',
+    onItem?: (item: MarketOverviewItem) => void,
+  ): Promise<MarketOverviewItem[]> {
     const symbols = market === 'stock' ? ApiClient.DEFAULT_STOCK_SYMBOLS : ApiClient.DEFAULT_CRYPTO_SYMBOLS;
-    
-    // ВАЖНО (фикс «Ошибка загрузки» на акциях): тикеры обрабатываются
-    // ПОСЛЕДОВАТЕЛЬНО, а не Promise.all. Каждый getAnalysis делает ~5 запросов
-    // свечей (текущий ТФ + каскад W/D/4H) + тикер; при параллельном старте
-    // 8 тикеров это волна из ~40 обращений к котировочному прокси каждые 60 с
-    // автообновления — Twelvedata отвечает 429, и без истории кэша падали
-    // СРАЗУ ВСЕ карточки. Последовательный пакет + троттлер в bybit.ts
-    // укладывают нагрузку в лимиты источника.
-    const results = await fetchMarketOverviewBatch<MarketOverviewItem>(
-      symbols.map((symbol) => async (): Promise<MarketOverviewItem> => {
-        try {
-          const analysis = await this.getAnalysis(symbol, 'D');
-          
-          // Рассчитываем средний объём
-          const volumes = analysis.candles.map((c) => c.volume);
-          const avgVolume = volumes.reduce((sum, v) => sum + v, 0) / volumes.length;
 
-          // Изменение для карточки: крипта — 24ч тикер Bybit; акции — изменение
-          // последнего дневного бара (семантика «24 часа» к сессиям NYSE неприменима).
-          let change = analysis.change_24h;
-          if (parseMarket(symbol).market === 'stock') {
-            const dc = analysis.candles;
-            const lastClosed = dc[dc.length - 1];
-            const prevClosed = dc[dc.length - 2];
-            if (lastClosed && prevClosed && prevClosed.close > 0) {
-              change = ((lastClosed.close - prevClosed.close) / prevClosed.close) * 100;
-            }
-          }
+    // Тикеры обрабатываются последовательно: это удерживает Twelvedata в лимите
+    // частоты. Внутри одной карточки свечи и тикер загружаются параллельно, а
+    // onItem отдаёт готовый результат дашборду до завершения остальных задач.
+    const jobs = symbols.map((symbol) => async (): Promise<MarketOverviewItem> => {
+      try {
+        return await this.buildOverviewItem(symbol);
+      } catch (err) {
+        console.error(`Ошибка получения данных для ${symbol}:`, err);
+        throw err; // пакет пропустит этот тикер и продолжит с остальными
+      }
+    });
 
-          // Извлекаем подтверждённые паттерны
-          const confirmedPatterns = analysis.patterns
-            .filter((p) => p.confirmed)
-            .map((p) => ({
-              name: p.name,
-              type: p.type,
-              confirmed: p.confirmed,
-              confidence: p.confidence,
-            }));
-          
-          // Извлекаем уровни поддержки/сопротивления
-          const supportLevels = analysis.support.map((s) => s.level);
-          const resistanceLevels = analysis.resistance.map((r) => r.level);
-          
-          // Извлекаем подтверждённые сигналы
-          const confirmedSignals = analysis.signals
-            .filter((s) => s.confirmed)
-            .map((s) => ({
-              direction: s.direction,
-              pattern: s.pattern,
-              entry_price: s.entry_price,
-              stop_loss: s.stop_loss,
-              target: s.target,
-              risk: s.risk,
-              rr: s.rr,
-              quality: s.quality,
-              confirmed: s.confirmed,
-            }));
-          
-          return {
-            symbol,
-            price: analysis.price,
-            change_24h: change,
-            trend: analysis.trend,
-            regime: analysis.regime,
-            patterns: confirmedPatterns,
-            signals: confirmedSignals,
-            support: supportLevels,
-            resistance: resistanceLevels,
-            volume: analysis.candles[analysis.candles.length - 1]?.volume || 0,
-            avgVolume,
-            consensus: analysis.consensus,
-          };
-        } catch (err) {
-          console.error(`Ошибка получения данных для ${symbol}:`, err);
-          throw err; // пакет пропустит этот тикер и продолжит с остальными
-        }
-      })
-    );
-    
-    return results;
+    return fetchMarketOverviewBatch<MarketOverviewItem>(jobs, undefined, onItem);
   }
 
   /** Аудит №10: пересчёт плана позиции под конкретный капитал/риск (для UI-калькулятора). */

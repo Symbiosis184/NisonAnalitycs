@@ -288,13 +288,26 @@ export default function Dashboard() {
   // иначе запоздалый ответ/тик чужого рынка перетирает уже скрытые карточки.
   const activeMarketRef = useRef<MarketKind>(marketKind);
   activeMarketRef.current = marketKind;
+  const loadRequestRef = useRef(0);
 
   const loadData = async (mk: MarketKind = marketKind) => {
+    const requestId = ++loadRequestRef.current;
+    const isActiveRequest = () => activeMarketRef.current === mk && loadRequestRef.current === requestId;
     try {
       setLoading(true);
       setError(null);
 
-      const data = await api.getMarketOverview(mk);
+      const data = await api.getMarketOverview(mk, (item) => {
+        if (!isActiveRequest()) return;
+        setMarketData(prev => {
+          const next = prev.some(existing => existing.symbol === item.symbol)
+            ? prev.map(existing => existing.symbol === item.symbol ? item : existing)
+            : [...prev, item];
+          marketCache.current[mk] = next;
+          return next;
+        });
+        setLastUpdate(new Date());
+      });
 
       if (data.length === 0) {
         throw new Error(mk === 'stock'
@@ -302,17 +315,17 @@ export default function Dashboard() {
           : 'Не удалось получить данные с Bybit API');
       }
 
-      // Пользователь мог переключить рынок, пока запрос шёл — не перезаписываем
-      // чужими карточками; в кэш своего рынка пишем в любом случае.
-      if (activeMarketRef.current !== mk) return;
+      // Пользователь мог переключить рынок или запустить новое обновление, пока
+      // запрос шёл — устаревший пакет не перезаписывает более свежее состояние.
+      if (!isActiveRequest()) return;
       marketCache.current[mk] = data;
       setMarketData(data);
       setLastUpdate(new Date());
     } catch (err) {
       console.error('Ошибка загрузки:', err);
-      if (activeMarketRef.current === mk) setError(describeNetworkError(err));
+      if (isActiveRequest()) setError(describeNetworkError(err));
     } finally {
-      if (activeMarketRef.current === mk) setLoading(false);
+      if (isActiveRequest()) setLoading(false);
     }
   };
 
@@ -367,7 +380,7 @@ export default function Dashboard() {
             )}
           </div>
         </div>
-        <div className="flex items-center gap-2 self-start sm:self-auto">
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
           <MarketTabs value={marketKind} onChange={handleMarketChange} />
           <button
             onClick={() => loadData()}

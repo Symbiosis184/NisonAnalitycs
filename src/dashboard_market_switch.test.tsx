@@ -45,6 +45,7 @@ vi.mock('./api/bybit', async () => {
 vi.mock('./hooks/useBinanceWebSocket', () => ({ useBinanceWebSocket: () => ({}) }));
 
 import Dashboard from './pages/Dashboard';
+import { fetchKlines } from './api/bybit';
 
 afterEach(cleanup);
 
@@ -79,5 +80,12 @@ describe('Dashboard: переключение рынков Crypto/TradFi', () =>
     expect(stockCard()).toBeNull();    // акции скрыты синхронно
     await waitFor(() => expect(cryptoCard()).toBeTruthy(), { timeout: 8000 });
     expect(onlyCryptoCards()).toBe(true);
+
+    // Карточкам нужен только текущий дневной ТФ: старшие ТФ и бэктест относятся
+    // к полной странице анализа и не должны замедлять первый экран дашборда.
+    await waitFor(() => expect(links()).toHaveLength(8), { timeout: 8000 });
+    const klineCalls = vi.mocked(fetchKlines).mock.calls;
+    expect(klineCalls.length).toBeGreaterThan(0);
+    expect(klineCalls.every(([, timeframe]) => timeframe === 'D')).toBe(true);
   }, 30000);
 });

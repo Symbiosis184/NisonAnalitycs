@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { Candle } from '../../utils/candle';
 import { scanPatternCandidates } from '../../utils/pattern_scanner';
 import { parseMarket } from '../../api/market';
+import { fetchMarketOverviewBatch } from '../../api/bybit';
 
 const c = (o: number, h: number, l: number, cl: number, v = 100): Candle =>
   new Candle({ time: 1, open: o, high: h, low: l, close: cl, volume: v });
@@ -22,5 +23,26 @@ describe('Рыночный контекст передаётся в общий �
     const crypto = scanPatternCandidates(sideBySide, { context: { market: 'crypto' } });
     expect(stocks.some(p => p.name.startsWith('ГЭП СМЕЖНЫХ'))).toBe(true);
     expect(crypto.some(p => p.name.startsWith('ГЭП СМЕЖНЫХ'))).toBe(false);
+  });
+});
+
+describe('Пакетная загрузка обзора рынка', () => {
+  it('отдаёт первую готовую карточку до завершения остальных запросов', async () => {
+    let finishSecond!: () => void;
+    const secondPending = new Promise<void>((resolve) => { finishSecond = resolve; });
+    const visible: string[] = [];
+
+    const batch = fetchMarketOverviewBatch<string>([
+      async () => 'BTCUSDT',
+      async () => {
+        await secondPending;
+        return 'ETHUSDT';
+      },
+    ], undefined, (item) => visible.push(item));
+
+    await vi.waitFor(() => expect(visible).toEqual(['BTCUSDT']));
+    finishSecond();
+    await expect(batch).resolves.toEqual(['BTCUSDT', 'ETHUSDT']);
+    expect(visible).toEqual(['BTCUSDT', 'ETHUSDT']);
   });
 });
