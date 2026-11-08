@@ -65,15 +65,15 @@ export const PATTERN_NAMES_EN: Record<string, string> = {
   'ГЭП НА МАКСИМУМАХ': 'Gapping Play (High)',
   'ГЭП НА МИНИМУМАХ': 'Gapping Play (Low)',
   'ПРОРЫВ КОНСОЛИДАЦИИ (БЫЧИЙ)': 'Consolidation Breakout (Bullish)',
-  'ПРОРЫВ КОНСОЛИДАЦИИ (МЕДВЕЖИЙ)': 'Consolidation Breakout (Bearish)',
+  'ПРОРЫВ КОНСОЛИДАЦИИ (МЕДВЕЖЬИЙ)': 'Consolidation Breakout (Bearish)',
   'КЛЮЧЕВОЙ РАЗВОРОТ (БЫЧИЙ)': 'Key Reversal (Bullish)',
-  'КЛЮЧЕВОЙ РАЗВОРОТ (МЕДВЕЖИЙ)': 'Key Reversal (Bearish)',
+  'КЛЮЧЕВОЙ РАЗВОРОТ (МЕДВЕЖЬИЙ)': 'Key Reversal (Bearish)',
   'ПОСЛЕДНЕЕ ПОГЛОЩЕНИЕ (ОСНОВАНИЕ)': 'Last Engulfing Position (Bottom)',
   'ПОСЛЕДНЕЕ ПОГЛОЩЕНИЕ (ВЕРШИНА)': 'Last Engulfing Position (Top)',
   'НАКОПЛЕНИЕ': 'Accumulation',
   'РАСПРЕДЕЛЕНИЕ': 'Distribution',
   'ТЕСТ ПОДДЕРЖКИ (БЫЧИЙ)': 'Support Test (Bullish)',
-  'ТЕСТ СОПРОТИВЛЕНИЯ (МЕДВЕЖИЙ)': 'Resistance Test (Bearish)',
+  'ТЕСТ СОПРОТИВЛЕНИЯ (МЕДВЕЖЬИЙ)': 'Resistance Test (Bearish)',
   'ДЛИННАЯ БЕЛАЯ НА ОТКАТЕ': 'Long White Line on Retreat',
   'ДЛИННАЯ ЧЁРНАЯ НА ОТКАТЕ': 'Long Black Line on Retreat',
 };
@@ -188,7 +188,7 @@ export const UI_STRINGS: Record<string, string> = {
   'Для формаций, которым нужно подтверждение, ждём закрытой свечи; остальные завершаются последним баром модели.': 'Formations that need confirmation wait for a closed candle; the others complete on the final bar of the pattern.',
   '4. Правило множества': '4. Rule of Confluence',
   'Несколько независимых методов могут усиливать вывод; числовой Consensus — эвристика проекта.': 'Multiple independent methods can strengthen a conclusion; the numeric Consensus score is a project heuristic.',
-  'Не удалось получить данные по акциям (Twelvedata). Котировочный прокси недоступен — попробуйте позже.': 'Failed to fetch stock data (Twelvedata). The quote proxy is unavailable — please try again later.',
+  'Не удалось получить данные по акциям. Основной и резервный источники недоступны — попробуйте позже.': 'Failed to fetch stock data. Both primary and backup sources are unavailable — please try again later.',
   'Не удалось получить данные с Bybit API': 'Failed to fetch data from the Bybit API',
   'Загрузка анализа...': 'Loading analysis...',
   'Ошибка': 'Error',
@@ -302,7 +302,7 @@ export const UI_STRINGS: Record<string, string> = {
   'Сервер биржи не ответил вовремя. Попробуйте обновить страницу.': 'The exchange server did not respond in time. Try refreshing the page.',
   'Нет соединения с API биржи. Проверьте интернет или зайдите позже.': 'No connection to the exchange API. Check your internet or come back later.',
   'Не удалось получить данные с биржи. Попробуйте обновить страницу.': 'Failed to fetch data from the exchange. Try refreshing the page.',
-  'Акция не найдена (Twelvedata). Проверьте тикер — доступны только котировки США.': 'Stock not found (Twelvedata). Check the ticker — only US quotes are available.',
+  'Акция не найдена. Проверьте тикер — доступны только котировки США.': 'Stock not found. Check the ticker — only US quotes are available.',
   'Что-то пошло не так': 'Something went wrong',
   'Произошла непредвиденная ошибка в интерфейсе. Попробуйте обновить страницу — если проблема повторяется, подробности видны в консоли браузера (F12).': 'An unexpected interface error occurred. Try refreshing the page — if it repeats, details are visible in the browser console (F12).',
   'Обновить страницу': 'Reload page',
@@ -658,16 +658,15 @@ export const UI_STRINGS: Record<string, string> = {
   'Боковик': 'Sideways',
 
   // --- API / хуки (ошибки источников данных) ---
-  'Twelvedata временно ограничил запросы (лимит частоты). Попробуйте через минуту.': 'Twelvedata temporarily rate-limited your requests. Try again in a minute.',
-  'Акция не найдена на Twelvedata — проверьте тикер.': 'Stock not found on Twelvedata — check the ticker.',
-  'Источник данных по акциям не настроен на сервере (нет ключа Twelvedata). Обратитесь в поддержку.': 'The stock data source is not configured on the server (missing Twelvedata key). Contact support.',
+  'Источники данных по акциям временно ограничили запросы. Попробуйте через минуту.': 'Stock data sources temporarily rate-limited requests. Try again in a minute.',
+  'Акция не найдена — проверьте тикер.': 'Stock not found — check the ticker.',
   'Источник данных по акциям недоступен (HTTP ${res.status}). Попробуйте позже.': 'Stock data source unavailable (HTTP ${res.status}). Try again later.',
-  'Источник данных по акциям недоступен: котировочный прокси (Twelvedata) вернул неожиданный ответ. Попробуйте позже.': 'Stock data source unavailable: the quote proxy (Twelvedata) returned an unexpected response. Try again later.',
-  'Источник данных по акциям недоступен: котировочный прокси (Twelvedata) не отвечает. Попробуйте позже.': 'Stock data source unavailable: the quote proxy (Twelvedata) is not responding. Try again later.',
-  'Источник данных по акциям недоступен: нет серверного прокси (Twelvedata работает только на боевом домене).': 'Stock data source unavailable: no server proxy (Twelvedata works only on the production domain).',
+  'Источники данных по акциям вернули неожиданный ответ. Попробуйте позже.': 'Stock data sources returned an unexpected response. Try again later.',
+  'Источники данных по акциям временно недоступны: котировочный прокси не отвечает. Попробуйте позже.': 'Stock data sources are temporarily unavailable: the quote proxy is not responding. Try again later.',
+  'Источник данных по акциям недоступен: серверный котировочный прокси не подключён.': 'Stock data source unavailable: the server quote proxy is not connected.',
   'Ошибка источника данных (${res.status}): ${detail}': 'Data source error (${res.status}): ${detail}',
   'Сессия истекла — обновите страницу и войдите заново.': 'Session expired — refresh the page and sign in again.',
-  'Акция ${base} не найдена (Twelvedata). Проверьте тикер — доступны только котировки США.': 'Stock ${base} not found (Twelvedata). Check the ticker — only US quotes are available.',
+  'Акция ${base} не найдена. Проверьте тикер — доступны только котировки США.': 'Stock ${base} not found. Check the ticker — only US quotes are available.',
   'Инструмент ${symbol} не найден среди спотовых USDT-пар Bybit': 'Instrument ${symbol} not found among Bybit spot USDT pairs',
   'Не удалось получить данные по ${symbol}. Попробуйте ещё раз.': 'Failed to fetch data for ${symbol}. Please try again.',
   'Ошибка получения данных для ${symbol}:': 'Error fetching data for ${symbol}:',
@@ -842,7 +841,7 @@ export function translateString(s: string, lang: Lang): string {
   }
   // 6) Короткие токены причин зон + счётчики
   for (const [ru, en] of Object.entries(ZONE_REASONS_EN)) {
-    out = out.replace(new RegExp(`(^|[\\s,;(])${ru.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[\\s,;)\\.])`, 'gi'), `$1${en}$2`);
+    out = out.replace(new RegExp(`(^|[\\s,;(])${ru.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[\\s,)\\.])`, 'gi'), `$1${en}$2`);
   }
   out = out.replace(/(\d+)\s*касаний/g, '$1 touches').replace(/(\d+)\s*голосов/g, '$1 votes');
   return out;
