@@ -208,7 +208,7 @@ describe('CandlestickChart отличает модели от фактическ
     confidence: 72, confirmed: true, hasVolume: false, atLevel: false, story: '',
   };
 
-  it('pending не рисует стрелку и линии входа, модель не маскируется под вход', async () => {
+  it('показывает только тонкие стрелки входов без линий входа, стопа и цели', async () => {
     const candles = [
       bar(0, 100, 101, 99, 100),
       bar(86400000, 101, 105, 100, 104),
@@ -226,9 +226,9 @@ describe('CandlestickChart отличает модели от фактическ
     const arrows = calls.markers.filter((m: any) => m.shape === 'arrowUp' || m.shape === 'arrowDown');
     expect(arrows).toHaveLength(1);
     expect(Number(arrows[0].time)).toBe(172800);
+    expect(arrows[0].size).toBe(0.75);
     expect(calls.markers.filter((m: any) => m.shape === 'circle')).toHaveLength(1);
-    expect(calls.priceLines.some((line: any) => line.price === 103)).toBe(false);
-    expect(calls.priceLines.some((line: any) => line.price === 106)).toBe(true);
+    expect(calls.priceLines).toHaveLength(0);
   });
 
   it('на баре фактического входа стрелка имеет приоритет над кругом модели', async () => {
