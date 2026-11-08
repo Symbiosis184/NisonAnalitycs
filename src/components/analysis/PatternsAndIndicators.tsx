@@ -127,7 +127,7 @@ export function IndicatorsSection({ report }: { report: AnalysisReport }) {
         </div>
         <div className="text-xs text-gray-600 mt-2 leading-relaxed flex items-start gap-1.5">
           <Icon name="warning" className="text-amber-500/80 mt-0.5" />
-          <span>{t('Контекстный индикатор (лагирует). Вход по Нисону определяется свечами + объёмом + уровнями, а не MACD.')}</span>
+          <span>{t('Контекстный индикатор (лагирует). Нисон сочетает свечи с другими техническими факторами; MACD сам по себе не является входом.')}</span>
         </div>
       </div>
 

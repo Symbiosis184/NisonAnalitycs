@@ -205,10 +205,10 @@ describe('CandlestickChart отличает модели от фактическ
 
   const pattern: PatternDTO = {
     name: 'БЫЧЬЕ ПОГЛОЩЕНИЕ', type: 'bullish', candleIndex: 1,
-    confidence: 72, confirmed: true, hasVolume: false, atLevel: false, story: '',
+    confidence: 72, confirmed: true, priceConfirmed: true, hasVolume: false, atLevel: false, story: '',
   };
 
-  it('показывает только тонкие стрелки моделей, игнорируя фактические входы', async () => {
+  it('рисует только подтверждённые ценой направленные модели, без входов и S/R', async () => {
     const candles = [
       bar(0, 100, 101, 99, 100),
       bar(86400000, 101, 105, 100, 104),
@@ -217,8 +217,16 @@ describe('CandlestickChart отличает модели от фактическ
     calls.priceLines.length = 0; calls.markers.length = 0;
     render(
       <CandlestickChart
-        candles={candles} patterns={[pattern]} signals={[makeSignal(false), makeSignal(true)]}
-        support={[]} resistance={[]} gaps={[]}
+        candles={candles}
+        patterns={[
+          pattern,
+          { ...pattern, name: 'ДОДЖИ', type: 'neutral', candleIndex: 2 },
+          { ...pattern, name: 'БЫЧЬЕ ПОГЛОЩЕНИЕ', candleIndex: 2, priceConfirmed: false },
+        ]}
+        signals={[makeSignal(false), makeSignal(true)]}
+        support={[{ level: 99, votes: 3, strong: true, reasons: ['swing'], touches: 3 }]}
+        resistance={[{ level: 107, votes: 4, strong: true, reasons: ['window'], touches: 2 }]}
+        gaps={[]}
       />,
     );
     await new Promise((r) => setTimeout(r, 0));
@@ -230,6 +238,38 @@ describe('CandlestickChart отличает модели от фактическ
     expect(calls.markers.filter((m: any) => m.shape === 'circle')).toHaveLength(0);
     expect(calls.markers.some((m: any) => Number(m.time) === 172800)).toBe(false);
     expect(calls.priceLines).toHaveLength(0);
+  });
+
+  it('подтверждённый дожи на вершине рисует красную стрелку без смены типа', async () => {
+    const candles = [
+      bar(0, 100, 101, 99, 100),
+      bar(86400000, 101, 105, 100, 104),
+      bar(172800000, 105, 107, 104, 106),
+    ];
+    calls.priceLines.length = 0; calls.markers.length = 0;
+    render(
+      <CandlestickChart
+        candles={candles}
+        patterns={[{
+          ...pattern,
+          name: 'ДОДЖИ',
+          type: 'neutral',
+          candleIndex: 1,
+          priceConfirmed: true,
+          priceDirection: 'bearish',
+        }]}
+        signals={[]}
+        support={[]}
+        resistance={[]}
+        gaps={[]}
+      />,
+    );
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(calls.markers).toHaveLength(1);
+    expect(calls.markers[0].shape).toBe('arrowDown');
+    expect(calls.markers[0].position).toBe('aboveBar');
+    expect(calls.markers[0].color).toBe('#fb7185');
   });
 
   it('вход на баре модели не создаёт отдельный маркер', async () => {

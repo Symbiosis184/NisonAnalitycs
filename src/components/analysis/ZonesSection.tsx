@@ -38,7 +38,7 @@ function ZoneList({ zones, side }: { zones: ZoneDTO[]; side: keyof typeof SIDE_S
     <div className={`p-4 rounded-xl border ${s.panel}`}>
       <h3 className={`text-sm font-semibold mb-3 flex items-center gap-2 ${s.title}`}>
         <Shield className="w-4 h-4" />
-        {lang === 'en' ? `Zones (${s.labelEn}, per Nison)` : `Зоны ${s.labelRu} (по Нисону)`}
+        {lang === 'en' ? `Zones (${s.labelEn}, Nison + project heuristics)` : `Зоны ${s.labelRu} (Нисон + эвристики)`}
       </h3>
       <div className="space-y-3">
         {zones.slice(0, 5).map((zone, idx: number) => (

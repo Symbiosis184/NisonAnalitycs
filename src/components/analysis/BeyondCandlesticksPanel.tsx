@@ -98,10 +98,19 @@ export function BeyondCandlesticksPanel({ candles }: { candles: CandleDTO[] }) {
     { id: 'renko', label: 'Renko' },
     { id: 'kagi', label: 'Kagi' },
   ];
+  const descriptions: Record<Method, string> = {
+    disparity: t('Значение выше нуля — закрытие выше SMA, ниже нуля — закрытие ниже SMA. Чем дальше значение от нуля, тем сильнее цена отклонилась от средней. Экстремальное отклонение само по себе не означает разворот; период SMA — настройка проекта.'),
+    break: t('Новая линия появляется только при закрытии за соответствующим экстремумом предыдущих линий, поэтому мелкие откаты отбрасываются. Смена направления подтверждает разворот по правилам этого метода, но сама по себе не является входом.'),
+    renko: t('Кирпич строится только после движения закрытия на заданный размер: время и незначительные колебания отбрасываются. Для разворотного кирпича требуется обратное движение на два размера кирпича. Процентный размер — настройка проекта.'),
+    kagi: t('Линия разворачивается после обратного движения на заданный порог. Превышение предыдущего плеча делает линию толстой (ян), пробой предыдущей талии — тонкой (инь). Фиксированный или процентный порог — настройка проекта.'),
+  };
   const color = (direction: ChartDirection) => direction === 'up' ? '#34d399' : '#fb7185';
 
   return (
     <div className="panel p-4 sm:p-6">
+      <p className="mb-4 text-xs leading-relaxed text-gray-400">
+        {t('Инструменты из книги С. Нисона «За гранью японских свечей» дополняют свечной анализ: индекс разницы оценивает отклонение цены от средней, а three-line break, Renko и Kagi отфильтровывают незначительные колебания и нагляднее показывают смену направления. Их используют вместе с трендом, свечными моделями и уровнями S/R.')}
+      </p>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap gap-1 rounded-lg bg-gray-800/50 p-1">
           {methods.map(item => (
@@ -233,6 +242,13 @@ export function BeyondCandlesticksPanel({ candles }: { candles: CandleDTO[] }) {
             </svg>
           );
         })()}
+      </div>
+
+      <div className="mt-3 rounded-lg border border-gray-800/70 bg-gray-900/30 p-3 text-xs leading-relaxed" aria-live="polite">
+        <div className="mb-1 font-medium text-gray-300">
+          {t('Как читать выбранный метод')} · {methods.find(item => item.id === method)?.label}
+        </div>
+        <p className="text-gray-400">{descriptions[method]}</p>
       </div>
 
       <div className="mt-3 flex flex-col gap-1 text-xs text-gray-500 sm:flex-row sm:items-center sm:justify-between">

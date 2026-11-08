@@ -17,9 +17,9 @@ export function nisonSma(values: number[], period: number): number[] {
   return sma(values, period);
 }
 
-// Структурный тренд по канону Нисона (гл. 13): направление определяется
-// последовательностью свингов — Higher High/Higher Low (бычий) или
-// Lower High/Lower Low (медвежий), а не расположением цены относительно MA.
+// Воспроизводимая проектная формализация структуры рынка: HH/HL (бычий
+// контекст) или LH/LL (медвежий). Параметр k и порядок свингов не заданы
+// книгами; MA остаётся отдельным техническим подтверждением (гл. 13).
 export function getSwingTrend(candles: Candle[], k: number = 3): TrendContext {
   if (candles.length < 2 * k + 3) return 'БОКОВИК';
 
@@ -72,7 +72,7 @@ function isFlatMarket(candles: Candle[]): boolean {
   return slopePct < 0.005; // Проектный порог горизонтальности MA65.
 }
 
-// Контекст тренда: структура свингов (первична по Нисону) с MA-подтверждением.
+// Контекст тренда: проектное сочетание структуры свингов и MA-подтверждения.
 // Свечи опережают индикаторы, поэтому расхождение со скользящими трактуется
 // как ранний признак нового тренда, а не шум; БОКОВИК — при отсутствии обоих.
 // В явном флэте (узкий диапазон + горизонтальная MA65) MA-фильтр отключается:
@@ -166,20 +166,21 @@ export function detectTrendStart(candles: Candle[], price: number): {
     }
   }
   
-  // 3) Полярность уровней
+  // 3) Удержание цены за прежним уровнем — проектный признак. Без отдельного
+  // возврата и теста уровня это ещё не подтверждённая смена полярности.
   const levels = findLevels(candles);
   const lastClose = candles[candles.length - 1].close;
   
   for (const r of levels.resistance) {
     if (lastClose > r && candles.slice(-3).every(c => c.close > r * 0.995)) {
-      bull.push('полярность: пробитый уровень стал поддержкой (гл. 11)');
+      bull.push('закрытия удерживаются выше прежнего сопротивления (проектный признак)');
       break;
     }
   }
   
   for (const s of levels.support) {
     if (lastClose < s && candles.slice(-3).every(c => c.close < s * 1.005)) {
-      bear.push('полярность: пробитый уровень стал сопротивлением (гл. 11)');
+      bear.push('закрытия удерживаются ниже прежней поддержки (проектный признак)');
       break;
     }
   }
@@ -199,9 +200,9 @@ export function detectTrendStart(candles: Candle[], price: number): {
     }
   }
   
-  // 5) MA65 и пересечения (по канону Нисона: MA10 пересекает MA65; сигнал —
-  //    ФАКТ пересечения за последние бары, а не «линия выше линии», которая
-  //    срабатывала на всём протяжении уже существующего тренда).
+  // 5) MA65 и пересечения. Нисон описывает общий принцип пересечения короткой
+  //    и длинной SMA и часто использует SMA65; конкретная пара SMA10/SMA65 и
+  //    окно свежести — проектная настройка, а не универсальное правило книги.
   const MA_CROSS_WINDOW = 8; // окно поиска факта пересечения (в барах)
   const ma65 = nisonSma(closes, 65); // Нисон гл. 13: SMA65
   const ma65Val = ma65[ma65.length - 1];
@@ -323,26 +324,26 @@ export function detectTrendStart(candles: Candle[], price: number): {
 }
 
 // ============================================================
-// Каскад таймфреймов (по книгам Стива Нисона)
+// Каскад таймфреймов — проектная агрегация независимых контекстов
 // ============================================================
-// «Торгуй в направлении тренда» для Нисона означает тренд СТАРШЕГО ТФ:
-// старший интервал задаёт направление (context), младший даёт точку входа.
-// Поэтому контекст определяется не одним ТФ, а каскадом всех доступных
-// интервалов — от старшего к младшему:
-//   • голос самого старшего ТФ с выраженной структурой (не БОКОВИК) — решающий;
-//   • БОКОВИК на старших ТФ не блокирует сигнал с младших, но помечает его
-//     как неподтверждённый (higherConfirmed = false);
-//   • если все ТФ в боковике — рынок без направления, торговать продолжение
-//     нельзя (только развороты у границ диапазона).
+// Нисон применяет одни и те же свечные принципы на разных ТФ и сочетает
+// сигналы с техническим контекстом, но не задаёт алгоритм «самый старший
+// направленный ТФ перекрывает все младшие». Поэтому этот каскад — отдельная
+// эвристика проекта, а не книжное правило и не обязательный фильтр входа:
+//   • направление каждого ТФ рассчитывается независимо;
+//   • context показывает первый направленный ТФ от старшего к младшему;
+//   • higherConfirmed означает, что тренд ТЕКУЩЕГО (последнего) ТФ совпадает
+//     хотя бы с одним старшим ТФ;
+//   • несовпадение не отменяет сигнал текущего ТФ.
 export interface TimeframeTrendVote {
   timeframe: string;
   trend: TrendContext;
 }
 
 export interface TrendCascadeResult {
-  /** Итоговый контекст каскада: направление со старшего значимого ТФ */
+  /** Проектный контекст: первое направление от старшего ТФ к младшему */
   context: TrendContext;
-  /** Есть ли подтверждение на ТФ старше того, что дал направление */
+  /** Тренд последнего (текущего) ТФ подтверждён хотя бы одним старшим ТФ */
   higherConfirmed: boolean;
   /** Голоса по каждому ТФ (от старшего к младшему) */
   votes: TimeframeTrendVote[];
@@ -358,18 +359,33 @@ export interface TrendCascadeResult {
  */
 export function getTrendCascade(
   entries: Array<[string, Candle[]]>,
+  currentTrendOverride?: TrendContext,
 ): TrendCascadeResult {
   const votes: TimeframeTrendVote[] = [];
 
-  for (const [tf, candles] of entries) {
+  for (const [index, [tf, candles]] of entries.entries()) {
+    const isCurrent = index === entries.length - 1;
+    if (isCurrent && currentTrendOverride !== undefined) {
+      // Голос текущего графика обязан совпадать с основным regime/bookTrend.
+      // Иначе k=4 и MA65-фолбэк getTrendMacro могли показать в строке текущего
+      // ТФ направление, противоположное рассчитанному getTrendContext режиму.
+      votes.push({ timeframe: tf, trend: currentTrendOverride });
+      continue;
+    }
     if (!candles || candles.length < 40) {
       votes.push({ timeframe: tf, trend: 'БОКОВИК' });
       continue;
     }
-    // Структура первична (гл. 13); price передаём через getTrendMacro internally.
+    // Старшие ступени остаются самостоятельным макроконтекстом. Текущая
+    // ступень выше заменяется ровно тем результатом, который видит график.
     const t = getTrendMacro(candles, candles[candles.length - 1].close);
     votes.push({ timeframe: tf, trend: t });
   }
+
+  const currentTrend = votes.length > 0 ? votes[votes.length - 1].trend : 'БОКОВИК';
+  const higherConfirmed = currentTrend !== 'БОКОВИК' && votes
+    .slice(0, -1)
+    .some(v => v.trend === currentTrend);
 
   const decisiveIdx = votes.findIndex(v => v.trend !== 'БОКОВИК');
   if (decisiveIdx === -1) {
@@ -377,11 +393,6 @@ export function getTrendCascade(
   }
 
   const decisive = votes[decisiveIdx];
-  // Подтверждение «сверху»: любой ТФ СТАРШЕ решающего согласен с направлением.
-  const higherConfirmed = votes
-    .slice(0, decisiveIdx)
-    .some(v => v.trend === decisive.trend);
-
   return {
     context: decisive.trend,
     higherConfirmed,

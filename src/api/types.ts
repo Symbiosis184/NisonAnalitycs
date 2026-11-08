@@ -47,6 +47,10 @@ export interface PatternDTO {
   candleIndex: number;
   confidence: number;
   confirmed: boolean;
+  /** Ценовое подтверждение для стрелки на графике; не заменяет статус модели. */
+  priceConfirmed?: boolean;
+  /** Направление стрелки; позволяет показать подтверждённый дожи без смены типа. */
+  priceDirection?: 'bullish' | 'bearish';
   hasVolume: boolean;
   atLevel: boolean;
   /** Краткое «повествование» по методологии книги */
@@ -164,7 +168,7 @@ export interface ConsensusDTO {
   confidence: number;   // 0–100
 }
 
-/** Голос одной ступени каскада таймфреймов (по Нисону контекст задаёт старший ТФ) */
+/** Голос одной ступени проектного каскада; тренд каждого ТФ независим. */
 export interface TimeframeTrendVoteDTO {
   timeframe: string;
   trend: TrendContext;

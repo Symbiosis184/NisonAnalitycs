@@ -32,7 +32,7 @@ export function SignalsSection({ report, riskSettings, showRiskPanel, onToggleRi
     <div className="panel p-6 ">
       <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
         <Target className="w-5 h-5 text-amber-400" />
-        {t('Сценарии (Нисон: ожидание → подтверждение)')}
+        {t('Свечные сценарии · подтверждение')}
         <span className="text-xs text-gray-400 font-normal ml-2">
           {t('подтверждено')} {confirmedCount} · {t('ждёт')} {pendingCount} {t('из')} {report.signals.length}
         </span>

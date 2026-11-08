@@ -50,7 +50,7 @@ export function patternDirection(name: string): CandidateDirection {
     'TOWER_TOP', 'BEAR_HARAMI', 'BEAR_HARAMI_CROSS', 'TWEEZER_TOP',
     'BELT_HOLD_BEAR', 'COUNTERATTACK_BEAR', 'SEPARATING_LINE_BEAR',
     'LAST_ENGULFING_TOP', 'KEY_REVERSAL_BEAR', 'FALL_THREE_METHODS',
-    'TASUKI_DOWN_GAP', 'GAPPING_PLAY_LOW', 'THRUSTING', 'IN_NECK', 'ON_NECK',
+    'SIDE_BY_SIDE_GAP_DOWN', 'TASUKI_DOWN_GAP', 'GAPPING_PLAY_LOW', 'THRUSTING', 'IN_NECK', 'ON_NECK',
     'UPTHRUST',
   ]);
   return bearish.has(id) ? 'short' : 'long';

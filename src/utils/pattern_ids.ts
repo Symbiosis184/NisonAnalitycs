@@ -25,7 +25,7 @@ export type PatternId =
   | 'KEY_REVERSAL_BULL' | 'KEY_REVERSAL_BEAR'
   // гл. 7 ЯС: продолжения
   | 'RISE_THREE_METHODS' | 'FALL_THREE_METHODS' | 'TATAMI'
-  | 'SIDE_BY_SIDE_GAP' | 'TASUKI_UP_GAP' | 'TASUKI_DOWN_GAP'
+  | 'SIDE_BY_SIDE_GAP' | 'SIDE_BY_SIDE_GAP_DOWN' | 'TASUKI_UP_GAP' | 'TASUKI_DOWN_GAP'
   | 'GAPPING_PLAY_HIGH' | 'GAPPING_PLAY_LOW'
   | 'THRUSTING' | 'IN_NECK' | 'ON_NECK' | 'DOUBLE_THRUSTING_BULL'
   // гл. 7 ЯС: ослабленные формы (нейтральные предупреждения)
@@ -90,6 +90,7 @@ export const CANONICAL_PATTERN_NAMES: ReadonlyArray<[string, PatternId]> = [
   ['НА ШЕЕ', 'ON_NECK'],
   ['ТОЛЧОК', 'THRUSTING'],
   ['ДВОЙНОЙ ТОЛЧОК (БЫЧИЙ)', 'DOUBLE_THRUSTING_BULL'],
+  ['ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ (ВНИЗ)', 'SIDE_BY_SIDE_GAP_DOWN'],
   ['ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ', 'SIDE_BY_SIDE_GAP'],
   ['ВОСХОДЯЩИЕ ТРИ МЕТОДА', 'RISE_THREE_METHODS'],
   ['НИСХОДЯЩИЕ ТРИ МЕТОДА', 'FALL_THREE_METHODS'],
@@ -165,11 +166,21 @@ export function isReversalPatternName(patternName: string): boolean {
   return matchesPatternId(patternName, REVERSAL_PATTERN_IDS);
 }
 
+/** Дожи остаются нейтральными моделями; направление задаёт только контекст. */
+export const DOJI_PATTERN_IDS: readonly PatternId[] = [
+  'DOJI', 'DRAGONFLY_DOJI', 'GRAVESTONE_DOJI', 'LONG_LEGGED_DOJI', 'RICKSHAW_MAN',
+];
+
+export function isDojiPatternName(patternName: string): boolean {
+  return matchesPatternId(patternName, DOJI_PATTERN_IDS);
+}
+
 /**
  * Модели, требующие подтверждения следующей закрытой свечой.
  * ИСПРАВЛЕНО по канону:
- *  - «две взлетевшие вороны», «ключевой разворот», «спружинивания» —
- *    завершённые формации, НЕ требуют подтверждения;
+ *  - «две взлетевшие вороны» требуют оценки четвёртой сессии;
+ *  - смежные белые свечи подтверждаются следующей сессией;
+ *  - «ключевой разворот» и «спружинивания» — завершённые формации;
  *  - «три белых солдата / чёрных вороны», звёзды, поглощения — завершённые;
  *  - односвечные гл. 3, харами, твизеры, пояс, контратака, разделение,
  *    татами, толчок/шея — требуют подтверждения.
@@ -183,6 +194,7 @@ export const CONFIRMATION_REQUIRED_IDS: readonly PatternId[] = [
   // гл. 6 ЯС: неполные формации
   'BULL_HARAMI', 'BEAR_HARAMI', 'BULL_HARAMI_CROSS', 'BEAR_HARAMI_CROSS',
   'TATAMI', 'SEPARATING_LINE_BULL', 'SEPARATING_LINE_BEAR',
+  'TWO_CROWS', 'SIDE_BY_SIDE_GAP', 'SIDE_BY_SIDE_GAP_DOWN',
   'THRUSTING', 'IN_NECK', 'ON_NECK', 'DOUBLE_THRUSTING_BULL',
   'COUNTERATTACK_BULL', 'COUNTERATTACK_BEAR',
   'TWEEZER_BOTTOM', 'TWEEZER_TOP',
@@ -218,7 +230,7 @@ export const PATTERN_CANDLE_COUNTS: Readonly<Record<PatternId, number>> = {
   BULL_HARAMI: 2, BEAR_HARAMI: 2,
   BULL_HARAMI_CROSS: 2, BEAR_HARAMI_CROSS: 2,
   TWEEZER_BOTTOM: 2, TWEEZER_TOP: 2,
-  BELT_HOLD_BULL: 2, BELT_HOLD_BEAR: 2,
+  BELT_HOLD_BULL: 1, BELT_HOLD_BEAR: 1,
   COUNTERATTACK_BULL: 2, COUNTERATTACK_BEAR: 2,
   SEPARATING_LINE_BULL: 2, SEPARATING_LINE_BEAR: 2,
   IN_NECK: 2, ON_NECK: 2, THRUSTING: 2,
@@ -228,7 +240,7 @@ export const PATTERN_CANDLE_COUNTS: Readonly<Record<PatternId, number>> = {
   ABANDONED_BABY_BOTTOM: 3, ABANDONED_BABY_TOP: 3,
   THREE_WHITE_SOLDIERS: 3, THREE_BLACK_CROWS: 3, THREE_IDENTICAL_CROWS: 3,
   TWO_CROWS: 3, ADVANCE_BLOCK: 3,
-  SIDE_BY_SIDE_GAP: 3, TASUKI_UP_GAP: 3, TASUKI_DOWN_GAP: 3,
+  SIDE_BY_SIDE_GAP: 3, SIDE_BY_SIDE_GAP_DOWN: 3, TASUKI_UP_GAP: 3, TASUKI_DOWN_GAP: 3,
   DOUBLE_THRUSTING_BULL: 4,
   RISE_THREE_METHODS: 5, FALL_THREE_METHODS: 5,
   TATAMI: 5, LADDER_BOTTOM: 5,

@@ -284,12 +284,12 @@ export function higherTimeframe(tf: string): string | null {
 }
 
 /**
- * Каскад СТАРШИХ таймфреймов для определения тренда-контекста (по книгам
- * Нисона: направление задаёт старший ТФ, младший даёт вход). Возвращает
- * цепочку строго старше текущего — от самого старшего к самому младшему
- * из старших (например, для 1H: ['W', 'D', '4H']). Упорядочено по убыванию ТФ.
- * В каскаде участвуют только разрешённые проектом ТФ ≥30 минут; глубина
- * ограничена тремя ступенями, чтобы не раздувать число сетевых запросов.
+ * Проектный каскад старших таймфреймов для дополнительного контекста.
+ * Возвращает цепочку строго старше текущего — от самого старшего к самому
+ * младшему из старших (например, для 1H: ['W', 'D', '4H']). Каждый ТФ
+ * анализируется независимо; каскад не является дословным правилом Нисона и
+ * не заменяет тренд текущего графика. Глубина ограничена тремя ступенями,
+ * чтобы не раздувать число сетевых запросов.
  */
 export function timeframeCascade(tf: string): string[] {
   const ORDER = TF_ALLOWED_ORDER;
@@ -347,7 +347,7 @@ export class ApiClient {
     // по подтверждённым сценариям (свечи + объём + уровни S/R).
     // Режим рынка/тренд — структурный: свинги HH/HL vs LH/LL (гл. 13), MA — вторичны.
     const trend = getTrendContext(closedCandles);
-    // Сила тренда — структурная (по Нисону): насколько выражен направленный
+    // Сила направленного движения — проектная структурная метрика:
     // импульс относительно шума. Считается по последним 20 барам: суммарное
     // перемещение цены (net move) против суммарных внутрибарных диапазонов.
     // Направленный тренд => близко к 100%; флэт/шум => близко к 0%.
@@ -370,7 +370,12 @@ export class ApiClient {
     const trendStrengthPct = Math.min(100, Math.max(0, rawStrength));
     
     // Определение зон поддержки/сопротивления по методологии Нисона
-    const zones = ZoneVoter.collect(currentPrice, closedCandles, timeframeKey(timeframe));
+    const zones = ZoneVoter.collect(
+      currentPrice,
+      closedCandles,
+      timeframeKey(timeframe),
+      parseMarket(symbol).market,
+    );
     
     // Детекция паттернов по Нисону — только по закрытым барам (подтверждение
     // формации фактом закрытия; незакрытый бар порождает призрачные паттерны).
@@ -381,6 +386,8 @@ export class ApiClient {
       candleIndex: p.candleIndex,
       confidence: p.confidence,
       confirmed: p.confirmed,
+      priceConfirmed: p.priceConfirmed,
+      priceDirection: p.priceDirection,
       hasVolume: p.hasVolume,
       atLevel: p.atLevel,
       story: patternStory(p.name),
@@ -418,11 +425,9 @@ export class ApiClient {
     // Аудит №10: план размера позиции по правилу фиксированного риска.
     // Настройки (капитал/риск) берутся из localStorage; риск-расчёт учитывает издержки цикла.
     const riskSettings = loadRiskSettings();
-    // Каскад ТФ по книгам Нисона (пункт 1 «Контекст»): направление задаёт СТАРШИЙ
-    // ТФ, младший даёт вход. Раньше использовался только один HTF; теперь
-    // опрашиваются все доступные старшие ступени (до 3 вверх), и итоговый
-    // контекст определяется голосом самого старшего ТФ с выраженной структурой.
-    // Всего в каскаде до 4 таймфреймов: текущий + W/D/4H (или D/4H/1H и т.д.).
+    // Проектный каскад: независимо опрашиваются до трёх старших ступеней.
+    // Он добавляет сравнительный контекст, но не «разрешает» и не отменяет
+    // сигналы текущего ТФ — такого универсального правила в книгах нет.
     const cascadeTfs = timeframeCascade(timeframe);
     const higherSeries: Array<[string, Candle[]]> = [];
     await Promise.all(
@@ -446,7 +451,7 @@ export class ApiClient {
       ...higherSeries,
       [timeframe, closedCandles], // текущий ТФ — последняя (младшая) ступень
     ];
-    const trendCascade: TrendCascadeResult = getTrendCascade(cascadeEntries);
+    const trendCascade: TrendCascadeResult = getTrendCascade(cascadeEntries, trend);
     // Обратная совместимость: одиночный HTF = ближайшая старшая ступень.
     const htfTf = higherTimeframe(timeframe);
     const htfCandles = higherSeries.find(([tf]) => tf === htfTf)?.[1] ?? null;
@@ -528,21 +533,21 @@ export class ApiClient {
     // getTrendColor сравнивают именно их; английские значения detectRegime —
     // внутренний слой (edge_verification когорты), в DTO попадать не должны.
     const regimeInfo = detectRegime(closedCandles);
-    // Итоговый тренд-контекст — по КАСКАДУ ТФ (по Нисону направление задаёт
-    // старший интервал), а не по одному текущему ТФ. Текущий ТФ остаётся
-    // младшей ступенью каскада и влияет на контекст только когда старшие
-    // молчат (БОКОВИК).
-    const regime: Regime = trendCascade.context;
+    // Основной режим относится к ТФ текущего графика. Каскад остаётся отдельным
+    // проектным контекстом: старший ТФ не должен переименовывать локальный
+    // восходящий тренд в нисходящий (и наоборот).
+    const regime: Regime = trend;
     const regimeLabel =
       regime === 'БОКОВИК' ? 'Боковик (флэт)' : regime === 'ВОСХОДЯЩИЙ' ? 'Восходящий тренд' : 'Нисходящий тренд';
     const regimeDescription =
       regime === 'БОКОВИК'
-        ? `Режим: ${regimeLabel}. Структура вершин/впадин не сформирована — разворотные паттерны надёжны только у границ диапазона (уровни S/R), продолжение тренда торговать нельзя.`
-        : `Режим: ${regimeLabel}. Подтверждённые свинги ${trend === 'ВОСХОДЯЩИЙ' ? 'HH/HL' : 'LH/LL'}${
+        ? `Текущий ТФ: ${regimeLabel}. Структура вершин/впадин не сформирована — разворотные модели оцениваются вместе с границами диапазона и другими техническими факторами.`
+        : `Текущий ТФ: ${regimeLabel}. Подтверждённые свинги ${regime === 'ВОСХОДЯЩИЙ' ? 'HH/HL' : 'LH/LL'}${
             regimeInfo.regime === 'volatile-breakout' ? '; повышенная волатильность (ATR выше среднего) — риск шумовых ложных пробоев' : ''
           }.`;
 
-    // Consensus по Нисону: свечные паттерны + объём + уровни S/R.
+    // Consensus — проектная оценка согласия сценариев на книжных факторах:
+    // свечные модели, объём и уровни S/R. Числовые веса не взяты из книг.
     // Агрегируем ПОДТВЁЖДЁННЫЕ разворотные сценарии последних 20 баров.
     // Консенсус = СОГЛАСИЕ факторов в одну сторону, а не сумма голосов
     // (см. src/utils/consensus.ts): противоречивые long+short гасят друг друга
@@ -629,8 +634,9 @@ export class ApiClient {
       trend_analysis: {
         // Реальная детекция старта тренда (движок trend_detection)
         trendStart: detectTrendStart(closedCandles, currentPrice),
-        bookTrend: regime,
-        // Бета: каскад ТФ (4 ступени: текущий + до 3 старших) — контекст по книгам Нисона
+        bookTrend: trend,
+        // Проектная бета-агрегация: текущий ТФ + до 3 старших, без переноса
+        // свечной модели с одного ТФ на другой.
         cascade: {
           context: trendCascade.context,
           higherConfirmed: trendCascade.higherConfirmed,
@@ -667,7 +673,12 @@ export class ApiClient {
           const price = candles[candles.length - 1].close;
           // Зоны — по закрытым барам: незакрытый хвостовой бар смещал свинги и
           // зоны «дёргались» между обновлениями мульти-ТФ.
-          const zones = ZoneVoter.collect(price, splitLiveBar(candles).closed, timeframeKey(tf));
+          const zones = ZoneVoter.collect(
+            price,
+            splitLiveBar(candles).closed,
+            timeframeKey(tf),
+            parseMarket(symbol).market,
+          );
           return {
             timeframe: tf,
             scale: timeframeKey(tf),

@@ -13,6 +13,13 @@ interface Pattern {
   candleIndex: number;
   confidence: number;
   confirmed: boolean;
+  priceConfirmed?: boolean;
+  priceDirection?: 'bullish' | 'bearish';
+}
+
+function getPriceDirection(pattern: Pattern): 'bullish' | 'bearish' | null {
+  if (pattern.priceDirection) return pattern.priceDirection;
+  return pattern.type === 'bullish' || pattern.type === 'bearish' ? pattern.type : null;
 }
 
 /** Живая (незакрытая) свеча из WebSocket-потока Bybit */
@@ -46,8 +53,6 @@ export default function CandlestickChart({
   ema50, 
   ema200,
   patterns = [],
-  support = [],
-  resistance = [],
   gaps = [],
   height = 500,
   live = null,
@@ -174,27 +179,9 @@ export default function CandlestickChart({
     // Публикуем серии для «тихого» live-обновления последнего бара без пересоздания графика
     seriesRef.current = { candle: candlestickSeries, volume: volumeSeries };
 
-    // ── Уровни S/R: тонкие линии, без зашумлённых подписей на полотне ────
-    // Сильные поддержки — зелёные сплошные 1px, сопротивления — красные;
-    // слабые (если попадут в список) — полупрозрачные штриховые.
-    // axisLabel показывает короткую метку прямо на ценовой оси — так подписи
-    // не перекрывают свечи и не наезжают друг на друга.
-    const addZoneLines = (zones: Zone[], kind: 'support' | 'resistance') => {
-      zones.forEach((zone, idx) => {
-        candlestickSeries.createPriceLine({
-          price: zone.level,
-          color: kind === 'support'
-            ? (zone.strong ? 'rgba(34,197,94,0.8)' : 'rgba(34,197,94,0.4)')
-            : (zone.strong ? 'rgba(239,68,68,0.8)' : 'rgba(239,68,68,0.4)'),
-          lineWidth: 1,
-          lineStyle: zone.strong ? 0 : 2, // сильные сплошные, остальные штрих-пунктир
-          axisLabelVisible: true,
-          title: `${kind === 'support' ? 'S' : 'R'}${idx + 1}`,
-        });
-      });
-    };
-    addZoneLines(support.filter(z => z.strong), 'support');
-    addZoneLines(resistance.filter(z => z.strong), 'resistance');
+    // Зоны S/R остаются в аналитических данных и отдельных панелях страницы.
+    // На ценовом графике их линии и подписи намеренно не рисуются: даже
+    // несколько кластеров на мобильном экране перекрывают свечи и стрелки.
 
     // ── Гэпы Нисона (гл. 7): разрыв ДИАПАЗОНОВ предыдущей и текущей свечи
     // (low(i) > high(i-1) либо high(i) < low(i-1)) — только для акций
@@ -269,12 +256,13 @@ export default function CandlestickChart({
     let hideTimer: ReturnType<typeof setTimeout> | null = null;
 
     if (patterns.length > 0) {
-      // На графике показываются завершённые и подтверждённые формации.
-      // Отдельное подтверждение требуется только моделям из pattern_ids.ts;
-      // остальные завершаются собственным последним закрытым баром.
+      // Стрелки обозначают только модели с ценовым подтверждением. Дожи
+      // сохраняют нейтральный книжный тип, но получают priceDirection из
+      // предшествующего тренда; неподтверждённые дожи и высокая волна скрыты.
       // При равном эвристическом балле выше паттерн с объёмом или уровнем S/R.
       const confirmedPatterns = patterns
-        .filter(p => p.confirmed && p.candleIndex >= 0 && p.candleIndex < candles.length)
+        .filter(p => p.confirmed && p.priceConfirmed === true && getPriceDirection(p) !== null
+          && p.candleIndex >= 0 && p.candleIndex < candles.length)
         .sort(
           (a, b) =>
             b.confidence - a.confidence ||
@@ -318,11 +306,12 @@ export default function CandlestickChart({
 
         const markers = [...byTime.values()].map(({ pattern, count }) => {
           const candle = candles[pattern.candleIndex];
+          const direction = getPriceDirection(pattern)!;
           return {
             time: Math.floor(candle.time / 1000) as any,
-            position: pattern.type === 'bullish' ? 'belowBar' as const : 'aboveBar' as const,
-            color: pattern.type === 'bullish' ? '#34d399' : pattern.type === 'bearish' ? '#fb7185' : '#94a3b8',
-            shape: pattern.type === 'bearish' ? 'arrowDown' as const : 'arrowUp' as const,
+            position: direction === 'bullish' ? 'belowBar' as const : 'aboveBar' as const,
+            color: direction === 'bullish' ? '#34d399' : '#fb7185',
+            shape: direction === 'bearish' ? 'arrowDown' as const : 'arrowUp' as const,
             text: '', // название только в tooltip — чистый график без наложений
             size: 0.75,
             __count: count,
@@ -406,7 +395,7 @@ export default function CandlestickChart({
         chartRef.current = null;
       }
     };
-  }, [candles, ema20, ema50, ema200, patterns, support, resistance, gaps, height, t]);
+  }, [candles, ema20, ema50, ema200, patterns, gaps, height, t]);
 
   // ── Тихое live-обновление последнего бара (WebSocket) ─────────────────────
   // Не пересоздаём график: обновляем только OHLCV текущего незакрытого бара

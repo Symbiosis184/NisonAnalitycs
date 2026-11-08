@@ -56,7 +56,8 @@ describe('ZoneVoter.collect', () => {
     const zones = ZoneVoter.collect(96, candles);
     const near89 = zones.support.filter((z) => Math.abs(z.level - 89) < 1.5);
     expect(near89.length).toBe(1); // все три низа слились в один кластер
-    expect(near89[0].touches).toBeGreaterThanOrEqual(3);
+    // Первый экстремум формирует зону; два последующих отскока — ровно два теста.
+    expect(near89[0].touches).toBe(2);
     // голоса — по уникальным источникам: свинги дают 1 голос при 3 касаниях
     expect(near89[0].votes).toBeGreaterThanOrEqual(1);
   });
@@ -168,7 +169,7 @@ describe('Аудит №1: единый источник S/R — транзит�
     const zones = ZoneVoter.collect(95, candles);
     const near90 = zones.support.filter((z) => Math.abs(z.level - 90) < 1.2);
     expect(near90.length).toBe(1);
-    expect(near90[0].touches).toBeGreaterThanOrEqual(3);
+    expect(near90[0].touches).toBe(2);
   });
 });
 

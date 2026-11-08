@@ -1,7 +1,7 @@
 import { Candle } from './candle';
-import type { PatternContext } from './pattern_engine';
+import { PatternDetector, type PatternContext } from './pattern_engine';
 import { ZoneVoter, timeframeKey } from './zone_voter';
-import { requiresNextCandleConfirmation } from './pattern_ids';
+import { isDojiPatternName, isReversalPatternName, requiresNextCandleConfirmation } from './pattern_ids';
 import { resolveSignalLifecycle } from './signal_lifecycle';
 import { scanPatternCandidates } from './pattern_scanner';
 
@@ -13,6 +13,14 @@ export interface PatternResult {
   candleIndex: number;
   confidence: number;
   confirmed: boolean;
+  /**
+   * Отдельный фильтр стрелки на графике: после завершённой разворотной модели
+   * последующая закрытая свеча должна выйти за её границу. Не меняет книжный
+   * статус confirmed самой формации и не участвует в торговом бэктесте.
+   */
+  priceConfirmed: boolean;
+  /** Направление стрелки; у дожи определяется контекстом, не меняя их тип. */
+  priceDirection?: 'bullish' | 'bearish';
   status?: PatternStatus;
   hasVolume: boolean;
   atLevel: boolean;
@@ -99,6 +107,8 @@ export function detectPatterns(
         candle.close,
         candidate,
         candles.length,
+        3,
+        candidate.name,
       );
       if (lifecycle.status === 'confirmed') {
         status = 'confirmed';
@@ -109,6 +119,45 @@ export function detectPatterns(
     }
 
     const confirmed = status === 'confirmed';
+    let priceConfirmed = false;
+    let priceDirection: 'bullish' | 'bearish' | undefined;
+    const reactionDirection = type === 'нейтральный'
+      ? isDojiPatternName(candidate.name)
+        ? PatternDetector.getDojiContextDirection(prior)
+        : null
+      : candidate.direction === 'short' ? 'short' : 'long';
+
+    if (confirmed && reactionDirection !== null) {
+      // Для моделей, которые по книге завершаются собственным последним баром,
+      // confirmed означает именно завершение формации. Стрелка на графике — более
+      // строгое отображение: ждём реакцию следующей закрытой свечи. Для дожи
+      // на вершине это консервативное проектное подтверждение медвежьей реакции;
+      // одиночный дожи в основании направленной стрелки не получает (см. гл. 8).
+      // Этот фильтр не меняет книжную модель и не создаёт торговый сигнал.
+      const needsPriceReaction = type === 'нейтральный' || (
+        isReversalPatternName(candidate.name)
+        && !requiresNextCandleConfirmation(candidate.name)
+      );
+      if (needsPriceReaction) {
+        const reaction = resolveSignalLifecycle(
+          candles,
+          i,
+          reactionDirection,
+          candle.close,
+          candidate,
+          candles.length,
+          3,
+          candidate.name,
+        );
+        priceConfirmed = reaction.status === 'confirmed';
+      } else {
+        priceConfirmed = true;
+      }
+      if (priceConfirmed) {
+        priceDirection = reactionDirection === 'long' ? 'bullish' : 'bearish';
+      }
+    }
+
     const confirmBar = confirmationIndex === null ? null : candles[confirmationIndex];
     const confirmedTime = confirmBar ? barCloseTime(confirmBar, tfMs) : null;
     const volumePeriod = Math.min(20, prior.length);
@@ -121,10 +170,11 @@ export function detectPatterns(
     else if (candidate.formationSize === 2 && candidate.name.includes('ПОГЛОЩЕНИЕ')) confidence = 62;
     else if (candidate.name.includes('ЗВЕЗДА')) confidence = 63;
 
+    const zoneMarket = context.market === 'stocks' ? 'stock' : 'crypto';
     const atLevel = type === 'бычий'
-      ? ZoneVoter.isNearSupport(candle.close, zonePrev, 0.015, timeframeKey(timeframe), candle.low)
+      ? ZoneVoter.isNearSupport(candle.close, zonePrev, 0.015, timeframeKey(timeframe), candle.low, zoneMarket)
       : type === 'медвежий'
-        ? ZoneVoter.isNearResistance(candle.close, zonePrev, 0.015, timeframeKey(timeframe), candle.high)
+        ? ZoneVoter.isNearResistance(candle.close, zonePrev, 0.015, timeframeKey(timeframe), candle.high, zoneMarket)
         : false;
 
     if (confirmed) confidence += 15;
@@ -141,6 +191,8 @@ export function detectPatterns(
       candleIndex: i,
       confidence,
       confirmed,
+      priceConfirmed,
+      priceDirection,
       status,
       hasVolume,
       atLevel,
@@ -149,7 +201,9 @@ export function detectPatterns(
     });
   }
 
-  const filtered = patterns.filter(p => p.confidence >= 55 && p.status !== 'cancelled');
+  const filtered = patterns.filter(p =>
+    (p.confidence >= 55 || (p.priceConfirmed && p.priceDirection !== undefined))
+    && p.status !== 'cancelled');
   return sortPatternsForDisplay(filtered, candles.length).slice(0, 24);
 }
 

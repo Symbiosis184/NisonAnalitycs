@@ -245,7 +245,7 @@ export default function Analysis() {
         storageKey="chart"
         icon={<ChartIcon className="w-5 h-5 text-amber-400" />}
         title={`${t('График')} ${displayPair} · ${timeframe}`}
-        badge={<span className="text-xs text-gray-400">{report.patterns.length}{t(' паттернов')} · {report.support.length + report.resistance.length}{t(' зон')}</span>}
+        badge={<span className="text-xs text-gray-400">{report.patterns.filter(p => p.confirmed && p.priceConfirmed === true && (p.priceDirection !== undefined || p.type !== 'neutral')).length}{t(' паттернов')}</span>}
       >
         <CandlestickChart
           candles={report.candles}
@@ -326,7 +326,7 @@ export default function Analysis() {
         <Collapsible
           storageKey="signals"
           icon={<Target className="w-5 h-5 text-amber-400" />}
-          title={t('Сценарии (Нисон: ожидание → подтверждение)')}
+          title={t('Свечные сценарии · подтверждение')}
           badge={
             <>
               <span className="text-xs text-green-400">✓ {report.signals.filter((s) => s.lifecycle_status === 'confirmed').length}</span>
@@ -374,7 +374,7 @@ export default function Analysis() {
         <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 flex-shrink-0" />
         <div>
           <p className="text-xs text-gray-400 leading-relaxed">
-            <strong className="text-amber-400">{t('Внимание:')}</strong> {t('Данный анализ основан на методологии Стива Нисона.')}{' '}
+            <strong className="text-amber-400">{t('Внимание:')}</strong> {t('Свечные модели — по С. Нисону; числовые фильтры, каскад ТФ и оценки — проектные эвристики.')}{' '}
             {t('Контекст рынка важнее отдельных паттернов. Всегда используйте подтверждение и управление рисками.')}{' '}
             {t('Это не является финансовой рекомендацией.')}
           </p>

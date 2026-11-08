@@ -68,6 +68,7 @@ export class SignalGenerator {
     closedCount: number,
     timeframe: string,
     context: MarketContext | null,
+    market: PatternMarket,
   ): Signal | null {
     const direction = candidate.direction;
     if (direction !== 'long' && direction !== 'short') return null;
@@ -86,6 +87,8 @@ export class SignalGenerator {
         patternCandle.close,
         candidate,
         closedCount,
+        3,
+        candidate.name,
       );
       if (lifecycle.status === 'invalidated' || lifecycle.status === 'expired') return null;
       status = lifecycle.status;
@@ -117,6 +120,7 @@ export class SignalGenerator {
       noiseFloor,
       maxReward,
       timeframe,
+      market: market === 'stocks' ? 'stock' : 'crypto',
     });
     if (!structural || !Number.isFinite(structural.level) || structural.level <= 0) return null;
 
@@ -187,13 +191,14 @@ export class SignalGenerator {
   ): Signal[] {
     if (candles.length < 6) return [];
     const context = opts?.context ?? null;
+    const market = opts?.market ?? 'crypto';
     const last = candles[candles.length - 1];
     const forming = (last as unknown as { isForming?: boolean }).isForming === true;
     const closedCount = forming ? candles.length - 1 : candles.length;
     if (closedCount < 6) return [];
 
     const candidates = scanPatternCandidates(candles, {
-      context: { timeframe, market: opts?.market ?? 'crypto' },
+      context: { timeframe, market },
       fromIndex: Math.max(1, closedCount - 20),
       toIndex: closedCount - 1,
     });
@@ -201,7 +206,7 @@ export class SignalGenerator {
     const seen = new Set<string>();
     for (const candidate of candidates) {
       if (!candidate.tradeable) continue;
-      const signal = this.makeSignal(candidate, candles, closedCount, timeframe, context);
+      const signal = this.makeSignal(candidate, candles, closedCount, timeframe, context, market);
       if (!signal) continue;
       const key = `${signal.pattern}|${signal.direction}|${signal.meta.patternEndIdx}`;
       if (seen.has(key)) continue;

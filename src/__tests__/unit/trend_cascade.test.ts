@@ -1,5 +1,5 @@
-// Каскад таймфреймов по книгам Стива Нисона (пункт 1 «Контекст»):
-// направление задаёт СТАРШИЙ ТФ с выраженной структурой, младший даёт вход.
+// Проектный каскад таймфреймов: независимые голоса и дополнительный контекст,
+// а не дословный алгоритм из книг Нисона.
 import { describe, it, expect } from 'vitest';
 import { Candle } from '../../utils/candle';
 import { getTrendCascade, detectTrendStart, nisonSma } from '../../utils/trend_detection';
@@ -75,32 +75,25 @@ describe('getTrendCascade (контекст по каскаду ТФ)', () => {
     expect(res.higherConfirmed).toBe(false);
   });
 
-  it('higherConfirmed = true, когда более старшая ступень согласна', () => {
-    // Самый старший W — короткий (<40 баров) -> БОКОВИК без голоса;
-    // D даёт направление; старше решающего D стоит только W (БОКОВИК) -> false?
-    // Нет: по каскаду подтверждение «сверху» ищется среди голосов СТАРШЕ
-    // решающего. Возьмём W(вниз) + M(короткий, не решает)… проще:
-    // решающий — второй значимый, первый значимый согласен с ним невозможно
-    // (первый значимый и есть решающий). Значит higherConfirmed=true тогда,
-    // когда над РЕШАЮЩИМ есть согласный голос, а сам он не первый значимый —
-    // это достижимо, когда самая старшая ступень согласна, но короче порога…
-    // Честная конструкция: ['W', down], ['D', down] -> решающий W, выше никого.
-    // Поэтому для true нужен как минимум один ТФ СТАРШЕ решающего с тем же
-    // направлением, а решающий при этом НЕ первый значимый — противоречие.
-    // Реализация трактует «выше» как индекс раньше решающего; единственный
-    // рабочий путь: первый ТФ даёт БОКОВИК из-за <40 баров, второй вниз —
-    // решающий, третий… всё равно старше решающего только БОКОВИК.
-    // => В текущей реализации higherConfirmed может быть true только если
-    // порядок entries НЕ от старшего к младшему (ошибка вызывающего) —
-    // поэтому проверяем инвариант согласия всех голосов вместо флага:
+  it('higherConfirmed = true, когда тренд текущего ТФ совпадает со старшим', () => {
     const res = getTrendCascade([
       ['W', mkCandles(downStructure(80, 300, 2))],
       ['D', mkCandles(downStructure())],
-      ['1H', mkCandles(flatSeries())],
+      ['1H', mkCandles(downStructure(80, 150, 0.8))],
     ]);
     expect(res.decidedByTimeframe).toBe('W');
     expect(res.context).toBe('НИСХОДЯЩИЙ');
-    expect(res.votes[1].trend).toBe('НИСХОДЯЩИЙ'); // следующий уровень согласен
+    expect(res.higherConfirmed).toBe(true);
+  });
+
+  it('higherConfirmed = false при конфликте текущего и всех старших ТФ', () => {
+    const res = getTrendCascade([
+      ['W', mkCandles(downStructure(80, 300, 2))],
+      ['D', mkCandles(downStructure())],
+      ['1H', mkCandles(upStructure())],
+    ]);
+    expect(res.context).toBe('НИСХОДЯЩИЙ');
+    expect(res.higherConfirmed).toBe(false);
   });
 
   it('все ТФ в боковике -> БОКОВИК без решения (торговать продолжение нельзя)', () => {
@@ -111,6 +104,17 @@ describe('getTrendCascade (контекст по каскаду ТФ)', () => {
     expect(res.context).toBe('БОКОВИК');
     expect(res.decidedByTimeframe).toBeNull();
     expect(res.higherConfirmed).toBe(false);
+  });
+
+  it('голос текущего ТФ совпадает с основным режимом графика', () => {
+    const res = getTrendCascade([
+      ['W', mkCandles(downStructure())],
+      ['D', mkCandles(upStructure())],
+    ], 'БОКОВИК');
+
+    expect(res.votes.map((v) => v.trend)).toEqual(['НИСХОДЯЩИЙ', 'БОКОВИК']);
+    expect(res.higherConfirmed).toBe(false);
+    expect(res.context).toBe('НИСХОДЯЩИЙ');
   });
 
   it('недостаточная история (<40 баров) помечается БОКОВИКом и не решает', () => {
