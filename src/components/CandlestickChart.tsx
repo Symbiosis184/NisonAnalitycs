@@ -46,7 +46,6 @@ export default function CandlestickChart({
   ema50, 
   ema200,
   patterns = [],
-  signals = [],
   support = [],
   resistance = [],
   gaps = [],
@@ -260,40 +259,11 @@ export default function CandlestickChart({
       };
     }
 
-    // ── Сигналы: только компактная стрелка фактического входа ──
-    // Ценовые линии входа, стопа и цели намеренно не рисуются: они захламляют
-    // график. Pending не имеет фактического входа и также не создаёт маркер.
-    const enteredSignals = signals.filter((s) => {
-      const status = s.lifecycle_status ?? (s.confirmed ? 'confirmed' : 'pending');
-      return status === 'confirmed' && s.confirmed && s.entry_index !== null;
-    });
-    // lightweight-charts не допускает двух маркеров с одинаковым time —
-    // на одном баре может быть несколько сигналов: объединяем в один,
-    // при конфликте long/short ставим круг.
-    const markerByTime = new Map<number, { dir: 'long' | 'short' | 'mixed' }>();
-    for (const sig of enteredSignals.slice(-5)) {
-      const entryTime = sig.entry_time ?? sig.bar_time;
-      if (entryTime) {
-        const t = Math.floor(entryTime / 1000);
-        const prev = markerByTime.get(t);
-        markerByTime.set(t, !prev ? { dir: sig.direction } : prev.dir === sig.direction ? prev : { dir: 'mixed' });
-      }
-    }
-    const signalMarkers = [...markerByTime.entries()].map(([t, { dir }]) => ({
-      time: t as any,
-      position: (dir === 'short' ? 'aboveBar' : 'belowBar') as 'aboveBar' | 'belowBar',
-      color: dir === 'long' ? '#34d399' : dir === 'short' ? '#fb7185' : '#94a3b8',
-      shape: dir === 'long' ? 'arrowUp' as const : dir === 'short' ? 'arrowDown' as const : 'circle' as const,
-      text: '',
-      size: 0.75,
-    })).sort((a, b) => (a.time as number) - (b.time as number));
-    // Маркеры регистрируются одним вызовом ниже: повторный createSeriesMarkers
-    // на той же серии заменяет предыдущий набор и смешивает сигналы с моделями.
-    const chartMarkers: any[] = [...signalMarkers];
+    // ── Только модели: компактные стрелки БЕЗ текста, название — в tooltip ──
+    // Торговые входы, стопы и цели намеренно не отображаются на графике.
+    // Маркеры всех моделей регистрируются одним вызовом createSeriesMarkers.
+    const chartMarkers: any[] = [];
 
-    // ── Паттерны: компактные маркеры БЕЗ текста, название — в tooltip ─────
-    // Модель — ещё не торговый вход, поэтому обозначается маленьким кругом,
-    // а не стрелкой. Стрелки зарезервированы для фактических входов выше.
     // При наведении мыши (или касании на мобильных) рядом с маркером
     // всплывает тёмная плашка с названием паттерна и эвристическим баллом.
     let hideTimer: ReturnType<typeof setTimeout> | null = null;
@@ -352,17 +322,14 @@ export default function CandlestickChart({
             time: Math.floor(candle.time / 1000) as any,
             position: pattern.type === 'bullish' ? 'belowBar' as const : 'aboveBar' as const,
             color: pattern.type === 'bullish' ? '#34d399' : pattern.type === 'bearish' ? '#fb7185' : '#94a3b8',
-            shape: 'circle' as const,
+            shape: pattern.type === 'bearish' ? 'arrowDown' as const : 'arrowUp' as const,
             text: '', // название только в tooltip — чистый график без наложений
-            size: 0.5,
+            size: 0.75,
             __count: count,
           };
         });
 
-        // Если на баре есть фактический вход, сохраняем его стрелку; модель
-        // того же бара остаётся доступна в tooltip и не создаёт второй маркер.
-        const signalTimes = new Set(chartMarkers.map(marker => Number(marker.time)));
-        chartMarkers.push(...markers.filter(marker => !signalTimes.has(Number(marker.time))));
+        chartMarkers.push(...markers);
 
         // lightweight-charts рисует маркеры на canvas — ловим mousemove по
         // контейнеру и находим ближайший маркер по X-координате.
@@ -439,7 +406,7 @@ export default function CandlestickChart({
         chartRef.current = null;
       }
     };
-  }, [candles, ema20, ema50, ema200, patterns, signals, support, resistance, gaps, height, t]);
+  }, [candles, ema20, ema50, ema200, patterns, support, resistance, gaps, height, t]);
 
   // ── Тихое live-обновление последнего бара (WebSocket) ─────────────────────
   // Не пересоздаём график: обновляем только OHLCV текущего незакрытого бара
