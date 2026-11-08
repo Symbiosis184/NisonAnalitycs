@@ -65,15 +65,15 @@ export const PATTERN_NAMES_EN: Record<string, string> = {
   'ГЭП НА МАКСИМУМАХ': 'Gapping Play (High)',
   'ГЭП НА МИНИМУМАХ': 'Gapping Play (Low)',
   'ПРОРЫВ КОНСОЛИДАЦИИ (БЫЧИЙ)': 'Consolidation Breakout (Bullish)',
-  'ПРОРЫВ КОНСОЛИДАЦИИ (МЕДВЕЖЬИЙ)': 'Consolidation Breakout (Bearish)',
+  'ПРОРЫВ КОНСОЛИДАЦИИ (МЕДВЕЖИЙ)': 'Consolidation Breakout (Bearish)',
   'КЛЮЧЕВОЙ РАЗВОРОТ (БЫЧИЙ)': 'Key Reversal (Bullish)',
-  'КЛЮЧЕВОЙ РАЗВОРОТ (МЕДВЕЖЬИЙ)': 'Key Reversal (Bearish)',
+  'КЛЮЧЕВОЙ РАЗВОРОТ (МЕДВЕЖИЙ)': 'Key Reversal (Bearish)',
   'ПОСЛЕДНЕЕ ПОГЛОЩЕНИЕ (ОСНОВАНИЕ)': 'Last Engulfing Position (Bottom)',
   'ПОСЛЕДНЕЕ ПОГЛОЩЕНИЕ (ВЕРШИНА)': 'Last Engulfing Position (Top)',
   'НАКОПЛЕНИЕ': 'Accumulation',
   'РАСПРЕДЕЛЕНИЕ': 'Distribution',
   'ТЕСТ ПОДДЕРЖКИ (БЫЧИЙ)': 'Support Test (Bullish)',
-  'ТЕСТ СОПРОТИВЛЕНИЯ (МЕДВЕЖЬИЙ)': 'Resistance Test (Bearish)',
+  'ТЕСТ СОПРОТИВЛЕНИЯ (МЕДВЕЖИЙ)': 'Resistance Test (Bearish)',
   'ДЛИННАЯ БЕЛАЯ НА ОТКАТЕ': 'Long White Line on Retreat',
   'ДЛИННАЯ ЧЁРНАЯ НА ОТКАТЕ': 'Long Black Line on Retreat',
 };
@@ -841,7 +841,7 @@ export function translateString(s: string, lang: Lang): string {
   }
   // 6) Короткие токены причин зон + счётчики
   for (const [ru, en] of Object.entries(ZONE_REASONS_EN)) {
-    out = out.replace(new RegExp(`(^|[\\s,;(])${ru.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[\\s,)\\.])`, 'gi'), `$1${en}$2`);
+    out = out.replace(new RegExp(`(^|[\\s,;(])${ru.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[\\s,;)\\.])`, 'gi'), `$1${en}$2`);
   }
   out = out.replace(/(\d+)\s*касаний/g, '$1 touches').replace(/(\d+)\s*голосов/g, '$1 votes');
   return out;
