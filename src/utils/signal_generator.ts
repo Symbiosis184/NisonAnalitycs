@@ -187,7 +187,7 @@ export class SignalGenerator {
   findSignals(
     candles: Candle[],
     timeframe: string = 'D',
-    opts?: { context?: MarketContext; market?: PatternMarket },
+    opts?: { context?: MarketContext; market?: PatternMarket; maxResults?: number },
   ): Signal[] {
     if (candles.length < 6) return [];
     const context = opts?.context ?? null;
@@ -247,7 +247,10 @@ export class SignalGenerator {
       || Number(b.confirmed) - Number(a.confirmed)
       || b.quality - a.quality
       || b.rr - a.rr);
-    return deduped.slice(0, 8);
+    // UI по умолчанию получает компактный топ-8. Consensus запрашивает
+    // maxResults: 0, чтобы отбрасывание хвоста списка не искажало статистику.
+    const maxResults = opts?.maxResults ?? 8;
+    return maxResults === 0 ? deduped : deduped.slice(0, Math.max(0, maxResults));
   }
 
   findSignal(candles: Candle[], timeframe: string = 'D'): Signal | null {
