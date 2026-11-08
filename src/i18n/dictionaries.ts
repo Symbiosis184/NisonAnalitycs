@@ -224,7 +224,7 @@ export const UI_STRINGS: Record<string, string> = {
   'Бычий консенсус': 'Bullish consensus',
   'Медвежий консенсус': 'Bearish consensus',
   'Нейтральный': 'Neutral',
-  'Оценка согласия подтверждённых свечных сценариев (последние 20 баров) в одну сторону. Противоречивые сигналы (long+short одновременно) дают низкий балл даже при их большом количестве — это шум, а не консенсус. Высокая оценка = несколько независимых паттернов, усиленных объёмом и уровнями S/R.': 'Agreement of confirmed candlestick scenarios (last 20 bars) in one direction. Conflicting signals (long+short at once) score low even when numerous — that is noise, not consensus. A high score means several independent patterns reinforced by volume and S/R levels.',
+  'Оценка согласия подтверждённых свечных сценариев за последние 20 баров. Один сигнал не даёт высокого консенсуса; повторы одной модели считаются одним фактором. Противоречивые направления снижают балл, а качество и несколько независимых моделей — повышают. Это эвристика, не вероятность прибыли.': 'Agreement of confirmed candlestick scenarios over the last 20 bars. One signal does not make a strong consensus; repeated occurrences of the same pattern count as one factor. Conflicting directions reduce the score, while quality and several independent patterns increase it. This is a heuristic, not a probability of profit.',
   'Повышенный объём - подтверждение': 'Elevated volume — confirmation',
   'Низкий объём - слабость': 'Low volume — weakness',
   'Нормальный объём': 'Normal volume',
@@ -841,7 +841,7 @@ export function translateString(s: string, lang: Lang): string {
   }
   // 6) Короткие токены причин зон + счётчики
   for (const [ru, en] of Object.entries(ZONE_REASONS_EN)) {
-    out = out.replace(new RegExp(`(^|[\\s,;(])${ru.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[\\s,;)\\.])`, 'gi'), `$1${en}$2`);
+    out = out.replace(new RegExp(`(^|[\\s,;(])${ru.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[\\s;)\\.])`, 'gi'), `$1${en}$2`);
   }
   out = out.replace(/(\d+)\s*касаний/g, '$1 touches').replace(/(\d+)\s*голосов/g, '$1 votes');
   return out;
