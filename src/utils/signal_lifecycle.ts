@@ -18,6 +18,7 @@
 // (см. тесты property-based сверки).
 
 import { Candle } from './candle';
+import { getPatternId } from './pattern_ids';
 
 export type SignalStatus = 'pending' | 'confirmed' | 'invalidated' | 'expired';
 
@@ -80,9 +81,24 @@ export function resolveSignalLifecycle(
   bounds: FormationBoundsLite,
   closedCount: number,
   timeoutBars: number = 3,
+  patternName?: string,
 ): SignalLifecycle {
   let status: SignalStatus = 'pending';
   const lastClosedIdx = Math.min(candles.length - 1, closedCount - 1);
+
+  if (getPatternId(patternName ?? '') === 'TWO_CROWS') {
+    // ЯС гл. 6: именно четвёртая сессия показывает, вернулась ли цена к
+    // недавним максимумам. Общее требование закрыться ниже всей формации
+    // здесь неприменимо — оно искусственно откладывает книжное подтверждение.
+    if (lastClosedIdx <= idx) {
+      return { status: 'pending', confirmationIndex: null, invalidationIndex: null, expirationIndex: null };
+    }
+    const fourthIndex = idx + 1;
+    return candles[fourthIndex].high < bounds.patternHigh
+      ? { status: 'confirmed', confirmationIndex: fourthIndex, invalidationIndex: null, expirationIndex: null }
+      : { status: 'invalidated', confirmationIndex: null, invalidationIndex: fourthIndex, expirationIndex: null };
+  }
+
   for (let i = idx + 1; i <= lastClosedIdx; i++) {
     status = stepSignal(status, direction, signalClose, bounds, candles[i]);
     if (status === 'confirmed') {
@@ -107,9 +123,10 @@ export function resolveSignalStatus(
   bounds: FormationBoundsLite,
   closedCount: number,
   timeoutBars: number = 3,
+  patternName?: string,
 ): SignalStatus {
   return resolveSignalLifecycle(
-    candles, idx, direction, signalClose, bounds, closedCount, timeoutBars,
+    candles, idx, direction, signalClose, bounds, closedCount, timeoutBars, patternName,
   ).status;
 }
 

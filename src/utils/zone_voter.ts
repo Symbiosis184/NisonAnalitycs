@@ -11,7 +11,10 @@
 
 import { Candle } from './candle';
 import { sma } from './indicators';
-import { findSwings, addLevelToMap, dedupeZones, ZoneClusterData } from './levels';
+import { findSwings, addLevelToMap, dedupeZones, type ZoneClusterData, type ZoneSource } from './levels';
+import { detectGaps } from './gaps';
+
+export type ZoneMarket = 'stock' | 'crypto';
 
 /** Wilder ATR (последнее значение) по закрытым свечам; 0 при нехватке данных. */
 function atrWilder(candles: Candle[], period = 14): number {
@@ -35,6 +38,8 @@ export interface Zone {
   votes: number;
   strong: boolean;
   reasons: string[];
+  /** Независимые книжные/проектные источники; один источник даёт один голос. */
+  sources: ZoneSource[];
   touches: number;
   lastTouch?: number;
   /**
@@ -134,12 +139,14 @@ export class ZoneVoter {
   static collect(
     price: number,
     candles: Candle[],
-    tfKey: TimeframeKey = 'swing'
+    tfKey: TimeframeKey = 'swing',
+    market: ZoneMarket = 'crypto',
   ): { support: Zone[]; resistance: Zone[] } {
     const lastCandle = candles[candles.length - 1];
     const cacheKey = [
       price,
       tfKey,
+      market,
       candles.length,
       this.historyFingerprint(candles),
     ].join('_');
@@ -171,6 +178,10 @@ export class ZoneVoter {
     // 7. Уровни Фибоначчи (глава 12)
     this.addFibonacciLevels(candles, supMap, resMap, params.tolerance);
 
+    // 8. Нисон: окно — будущая зона поддержки/сопротивления. Сохраняем его
+    // фактические границы; закрытие за дальней границей отменяет сценарий.
+    this.addWindowLevels(candles, supMap, resMap, params.tolerance, market);
+
     // Финальная транзитивная дедупликация
     dedupeZones(supMap, params.tolerance);
     dedupeZones(resMap, params.tolerance);
@@ -178,8 +189,10 @@ export class ZoneVoter {
     // Ширина зоны привязана к волатильности ТФ (ATR)
     const atrWindow = candles.length > 74 ? candles.slice(-60) : candles;
     const atrVal = atrWilder(atrWindow, 14);
-    const zoneHalfWidth = (level: number) =>
-      Math.max(params.tolerance * level, atrVal * 0.25);
+    const zoneHalfWidth = (level: number) => {
+      const base = Math.max(params.tolerance * level, atrVal * 0.25);
+      return atrVal > 0 ? Math.min(base, atrVal * 2) : base;
+    };
 
     // FIX: значимость определяется в первую очередь votes (независимые источники),
     // затем touches (касания), затем расстояние до цены.
@@ -192,7 +205,8 @@ export class ZoneVoter {
     // Порог значимости адаптивен к ТФ
     const minTouches = tfKey === 'intraday' || tfKey === 'scalp' ? 2 : 1;
     const significant = (z: Zone) =>
-      z.touches >= minTouches || z.votes >= this.STRONG_ZONE_MIN_VOTES;
+      z.sources.includes('window') || z.touches >= minTouches ||
+      z.votes >= this.STRONG_ZONE_MIN_VOTES;
 
     const support = this.mapToZones(supMap, zoneHalfWidth, candles)
       .filter(z => z.level <= price)
@@ -272,18 +286,19 @@ export class ZoneVoter {
 
       for (let j = zone.firstIndex + 1; j < candles.length; j++) {
         const c = candles[j];
-        for (const m of zone.members) {
-          // FIX: проверяем касание по halfWidth, а не по проценту
-          // Поддержка: low вошёл в зону [m - halfWidth, m + halfWidth] и close > m
-          if (c.low <= m + halfWidth && c.low >= m - halfWidth && c.close > m) {
-            supTouches++;
-            lastSupTime = c.time;
-          }
-          // Сопротивление: high вошёл в зону и close < m
-          if (c.high >= m - halfWidth && c.high <= m + halfWidth && c.close < m) {
-            resTouches++;
-            lastResTime = c.time;
-          }
+        // Одна закрытая свеча — не больше одного касания зоны. При нескольких
+        // близких членах кластера старый вложенный цикл считал один тест 2–3 раза.
+        const hitSupport = zone.members.some((m) =>
+          c.low <= m + halfWidth && c.low >= m - halfWidth && c.close > m);
+        const hitResistance = zone.members.some((m) =>
+          c.high >= m - halfWidth && c.high <= m + halfWidth && c.close < m);
+        if (hitSupport) {
+          supTouches++;
+          lastSupTime = c.time;
+        }
+        if (hitResistance) {
+          resTouches++;
+          lastResTime = c.time;
         }
       }
 
@@ -291,10 +306,18 @@ export class ZoneVoter {
       const asResistance = resTouches > 0 && zone.level >= price;
 
       if (asSupport) {
-        addLevelToMap(supMap, zone.level, `свинг-зона: ${supTouches} касание(й) поддержки`, lastSupTime, tol, supTouches);
+        addLevelToMap(
+          supMap, zone.level, `свинг-зона: ${supTouches} касание(й) поддержки`,
+          lastSupTime, tol, supTouches,
+          { source: 'swing', halfWidth, formedAt: zone.formedAt },
+        );
       }
       if (asResistance) {
-        addLevelToMap(resMap, zone.level, `свинг-зона: ${resTouches} касание(й) сопротивления`, lastResTime, tol, resTouches);
+        addLevelToMap(
+          resMap, zone.level, `свинг-зона: ${resTouches} касание(й) сопротивления`,
+          lastResTime, tol, resTouches,
+          { source: 'swing', halfWidth, formedAt: zone.formedAt },
+        );
       }
     }
   }
@@ -318,33 +341,40 @@ export class ZoneVoter {
 
     for (const swing of swings) {
       const fromIdx = Math.max(swing.index + 1, candles.length - 40);
+      const formedAt = candles[swing.index]?.time ?? swing.time;
       if (swing.type === 'high') {
-        // Проверяем: был ли пробой вверх И возврат к уровню сверху
-        const brokeUp = candles.slice(fromIdx).some(
-          (c) => c.close > swing.level * (1 + BREAK_PCT)
-        );
-        // Возврат: цена была выше уровня и вернулась к нему
-        const returnedToLevel = candles.slice(fromIdx).some(
-          (c) => c.high >= swing.level * (1 - BREAK_PCT) && 
-                 c.low <= swing.level * (1 + BREAK_PCT) &&
-                 c.close > swing.level
-        );
-        
-        if (brokeUp && returnedToLevel && last.close > swing.level) {
-          addLevelToMap(supMap, swing.level, 'полярность: пробитое сопротивление → поддержка', last.time, params.tolerance);
+        // Строгая хронология Нисона: сначала закрытие выше сопротивления,
+        // затем (не раньше) возврат и удержание его как поддержки.
+        const breakIndex = candles.findIndex((c, index) =>
+          index >= fromIdx && c.close > swing.level * (1 + BREAK_PCT));
+        if (breakIndex < 0) continue;
+        const returnIndex = candles.findIndex((c, index) =>
+          index > breakIndex &&
+          c.high >= swing.level * (1 - BREAK_PCT) &&
+          c.low <= swing.level * (1 + BREAK_PCT) &&
+          c.close > swing.level);
+        if (returnIndex >= 0 && last.close > swing.level) {
+          addLevelToMap(
+            supMap, swing.level, 'полярность: пробитое сопротивление → поддержка',
+            candles[returnIndex].time, params.tolerance, 1,
+            { source: 'polarity', formedAt },
+          );
         }
       } else {
-        const brokeDown = candles.slice(fromIdx).some(
-          (c) => c.close < swing.level * (1 - BREAK_PCT)
-        );
-        const returnedToLevel = candles.slice(fromIdx).some(
-          (c) => c.low <= swing.level * (1 + BREAK_PCT) && 
-                 c.high >= swing.level * (1 - BREAK_PCT) &&
-                 c.close < swing.level
-        );
-        
-        if (brokeDown && returnedToLevel && last.close < swing.level) {
-          addLevelToMap(resMap, swing.level, 'полярность: пробитая поддержка → сопротивление', last.time, params.tolerance);
+        const breakIndex = candles.findIndex((c, index) =>
+          index >= fromIdx && c.close < swing.level * (1 - BREAK_PCT));
+        if (breakIndex < 0) continue;
+        const returnIndex = candles.findIndex((c, index) =>
+          index > breakIndex &&
+          c.low <= swing.level * (1 + BREAK_PCT) &&
+          c.high >= swing.level * (1 - BREAK_PCT) &&
+          c.close < swing.level);
+        if (returnIndex >= 0 && last.close < swing.level) {
+          addLevelToMap(
+            resMap, swing.level, 'полярность: пробитая поддержка → сопротивление',
+            candles[returnIndex].time, params.tolerance, 1,
+            { source: 'polarity', formedAt },
+          );
         }
       }
     }
@@ -371,9 +401,9 @@ export class ZoneVoter {
         if (Number.isNaN(maVal)) continue;
 
         if (maVal <= price) {
-          addLevelToMap(supMap, maVal, `MA${period}`, lastTime, tolerance);
+          addLevelToMap(supMap, maVal, `MA${period}`, lastTime, tolerance, 1, { source: 'ma' });
         } else {
-          addLevelToMap(resMap, maVal, `MA${period}`, lastTime, tolerance);
+          addLevelToMap(resMap, maVal, `MA${period}`, lastTime, tolerance, 1, { source: 'ma' });
         }
       }
     }
@@ -396,9 +426,9 @@ export class ZoneVoter {
       if (c.volume > avgVolume * 2) {
         const level = c.isBullish ? c.low : c.high;
         if (c.isBullish) {
-          addLevelToMap(supMap, level, 'объёмный климакс (гл. 15)', c.time, tolerance);
+          addLevelToMap(supMap, level, 'объёмный климакс (гл. 15)', c.time, tolerance, 1, { source: 'volume', formedAt: c.time });
         } else {
-          addLevelToMap(resMap, level, 'объёмный климакс (гл. 15)', c.time, tolerance);
+          addLevelToMap(resMap, level, 'объёмный климакс (гл. 15)', c.time, tolerance, 1, { source: 'volume', formedAt: c.time });
         }
       }
     }
@@ -422,11 +452,11 @@ export class ZoneVoter {
         const mid = (c.open + c.close) / 2;
 
         if (c.isBullish) {
-          addLevelToMap(supMap, mid, 'середина длинного белого тела (гл. 2)', c.time, tolerance);
-          addLevelToMap(supMap, c.low, 'основание длинного белого тела (гл. 2)', c.time, tolerance);
+          addLevelToMap(supMap, mid, 'середина длинного белого тела (гл. 2)', c.time, tolerance, 1, { source: 'long-body', formedAt: c.time });
+          addLevelToMap(supMap, c.low, 'основание длинного белого тела (гл. 2)', c.time, tolerance, 1, { source: 'long-body', formedAt: c.time });
         } else {
-          addLevelToMap(resMap, mid, 'середина длинного чёрного тела (гл. 2)', c.time, tolerance);
-          addLevelToMap(resMap, c.high, 'вершина длинного чёрного тела (гл. 2)', c.time, tolerance);
+          addLevelToMap(resMap, mid, 'середина длинного чёрного тела (гл. 2)', c.time, tolerance, 1, { source: 'long-body', formedAt: c.time });
+          addLevelToMap(resMap, c.high, 'вершина длинного чёрного тела (гл. 2)', c.time, tolerance, 1, { source: 'long-body', formedAt: c.time });
         }
       }
     }
@@ -459,10 +489,10 @@ export class ZoneVoter {
     const proximityThreshold = step * 0.2;
 
     if (price - lower <= proximityThreshold && lower > 0) {
-      addLevelToMap(supMap, lower, 'психологический уровень (круглое число)', formedAt, tolerance);
+      addLevelToMap(supMap, lower, 'психологический уровень (круглое число)', formedAt, tolerance, 1, { source: 'round-number', formedAt });
     }
     if (upper - price <= proximityThreshold && upper > 0) {
-      addLevelToMap(resMap, upper, 'психологический уровень (круглое число)', formedAt, tolerance);
+      addLevelToMap(resMap, upper, 'психологический уровень (круглое число)', formedAt, tolerance, 1, { source: 'round-number', formedAt });
     }
   }
 
@@ -492,11 +522,11 @@ export class ZoneVoter {
     
     // Уровни коррекции Фибоначчи
     const fibLevels = [
-      { ratio: 0.236, name: 'Фибоначчи 23.6%' },
+      { ratio: 0.236, name: 'Фибоначчи 23.6% (проектное дополнение)' },
       { ratio: 0.382, name: 'Фибоначчи 38.2%' },
       { ratio: 0.500, name: 'Фибоначчи 50%' },
       { ratio: 0.618, name: 'Фибоначчи 61.8%' },
-      { ratio: 0.786, name: 'Фибоначчи 78.6%' },
+      { ratio: 0.786, name: 'Фибоначчи 78.6% (проектное дополнение)' },
     ];
 
     for (const fib of fibLevels) {
@@ -505,10 +535,35 @@ export class ZoneVoter {
       
       // Добавляем как поддержку если ниже цены, как сопротивление если выше
       if (level <= lastPrice) {
-        addLevelToMap(supMap, level, `${fib.name} (гл. 12)`, lastTime, tolerance);
+        addLevelToMap(supMap, level, `${fib.name} (гл. 12)`, lastTime, tolerance, 1, { source: 'fibonacci', formedAt: lastTime });
       } else {
-        addLevelToMap(resMap, level, `${fib.name} (гл. 12)`, lastTime, tolerance);
+        addLevelToMap(resMap, level, `${fib.name} (гл. 12)`, lastTime, tolerance, 1, { source: 'fibonacci', formedAt: lastTime });
       }
+    }
+  }
+
+  /** Активные окна: вверх — поддержка, вниз — сопротивление (гл. 7 ЯС). */
+  private static addWindowLevels(
+    candles: Candle[],
+    supMap: Map<number, ZoneClusterData>,
+    resMap: Map<number, ZoneClusterData>,
+    tolerance: number,
+    market: ZoneMarket,
+  ): void {
+    for (const gap of detectGaps(candles, market)) {
+      if (gap.broken) continue;
+      const level = (gap.bottom + gap.top) / 2;
+      const halfWidth = (gap.top - gap.bottom) / 2;
+      const target = gap.direction === 'up' ? supMap : resMap;
+      addLevelToMap(
+        target,
+        level,
+        `окно ${gap.direction === 'up' ? 'вверх → поддержка' : 'вниз → сопротивление'}${gap.filled ? ' (заполнено, не пробито)' : ''}`,
+        gap.time,
+        tolerance,
+        1,
+        { source: 'window', halfWidth, formedAt: gap.time },
+      );
     }
   }
 
@@ -526,15 +581,18 @@ export class ZoneVoter {
 
     for (const [level, data] of map.entries()) {
       const uniqueReasons = Array.from(new Set(data.reasons));
+      const sources = Array.from(new Set(data.sources ?? []));
+      const votes = sources.length || (uniqueReasons.length > 0 ? 1 : 0);
       zones.push({
         level,
-        votes: uniqueReasons.length,
-        strong: uniqueReasons.length >= this.STRONG_ZONE_MIN_VOTES,
+        votes,
+        strong: votes >= this.STRONG_ZONE_MIN_VOTES,
         reasons: uniqueReasons,
+        sources,
         touches: data.touches,
         lastTouch: data.lastTouch,
-        halfWidth: halfWidthOf(level),
-        formedAt: data.lastTouch ?? lastTime,
+        halfWidth: Math.max(halfWidthOf(level), data.halfWidth ?? 0),
+        formedAt: data.formedAt ?? data.lastTouch ?? lastTime,
       });
     }
 
@@ -549,9 +607,10 @@ export class ZoneVoter {
     candles: Candle[],
     _tolerance: number = 0.015,
     tfKey: TimeframeKey = 'swing',
-    wickLow?: number
+    wickLow?: number,
+    market: ZoneMarket = 'crypto',
   ): boolean {
-    const { support } = this.collect(price, candles, tfKey);
+    const { support } = this.collect(price, candles, tfKey, market);
     return support.some(zone =>
       this.inBand(price, zone) ||
       (wickLow !== undefined &&
@@ -573,9 +632,10 @@ export class ZoneVoter {
     candles: Candle[],
     _tolerance: number = 0.015,
     tfKey: TimeframeKey = 'swing',
-    wickHigh?: number
+    wickHigh?: number,
+    market: ZoneMarket = 'crypto',
   ): boolean {
-    const { resistance } = this.collect(price, candles, tfKey);
+    const { resistance } = this.collect(price, candles, tfKey, market);
     return resistance.some(zone =>
       this.inBand(price, zone) ||
       (wickHigh !== undefined &&

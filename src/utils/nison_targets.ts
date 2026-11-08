@@ -58,14 +58,19 @@ export function nearestStructuralTarget(
   entryPrice: number,
   direction: 'long' | 'short',
   closedCandles: Candle[],
-  opts?: { noiseFloor?: number; maxReward?: number; timeframe?: string },
+  opts?: { noiseFloor?: number; maxReward?: number; timeframe?: string; market?: 'stock' | 'crypto' },
 ): StructuralTarget | null {
   const noiseFloor = opts?.noiseFloor ?? Math.max(entryPrice * 0.01, atr(closedCandles, 14));
   const maxReward = opts?.maxReward ?? entryPrice * 0.20;
 
   // FIX ТФ-аудита: зоны собираются с параметрами того таймфрейма, на котором
   // строится цель (раньше всегда использовались дневные настройки).
-  const zones = ZoneVoter.collect(entryPrice, closedCandles, timeframeKey(opts?.timeframe ?? 'D'));
+  const zones = ZoneVoter.collect(
+    entryPrice,
+    closedCandles,
+    timeframeKey(opts?.timeframe ?? 'D'),
+    opts?.market ?? 'crypto',
+  );
   const zoneLevels =
     direction === 'long' ? zones.resistance.filter((z) => z.strong) : zones.support.filter((z) => z.strong);
 

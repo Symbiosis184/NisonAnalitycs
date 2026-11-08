@@ -219,8 +219,8 @@ export default function Layout() {
             </div>
           )}
 
-          {/* Мобильная горизонтальная навигация (под шапкой, скроллится) */}
-          <nav className="md:hidden flex items-center gap-1 pb-2 overflow-x-auto -mx-3 px-3">
+          {/* Мобильная навигация переносится на следующую строку без обрезки и горизонтального скролла. */}
+          <nav className="md:hidden flex flex-wrap items-center gap-1 pb-2">
             <Link
               to="/"
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
