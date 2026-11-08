@@ -67,7 +67,7 @@ export const PATTERN_NAMES_EN: Record<string, string> = {
   'ПРОРЫВ КОНСОЛИДАЦИИ (БЫЧИЙ)': 'Consolidation Breakout (Bullish)',
   'ПРОРЫВ КОНСОЛИДАЦИИ (МЕДВЕЖИЙ)': 'Consolidation Breakout (Bearish)',
   'КЛЮЧЕВОЙ РАЗВОРОТ (БЫЧИЙ)': 'Key Reversal (Bullish)',
-  'КЛЮЧЕВОЙ РАЗВОРОТ (МЕДВЕЖЬЙ)': 'Key Reversal (Bearish)',
+  'КЛЮЧЕВОЙ РАЗВОРОТ (МЕДВЕЖИЙ)': 'Key Reversal (Bearish)',
   'ПОСЛЕДНЕЕ ПОГЛОЩЕНИЕ (ОСНОВАНИЕ)': 'Last Engulfing Position (Bottom)',
   'ПОСЛЕДНЕЕ ПОГЛОЩЕНИЕ (ВЕРШИНА)': 'Last Engulfing Position (Top)',
   'НАКОПЛЕНИЕ': 'Accumulation',
