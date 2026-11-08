@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Kairi Analytics — обновление и перезапуск котировочного сервиса kairi-api
-# (FastAPI quotes-proxy: Bybit + Twelvedata / американские акции).
+# (FastAPI quotes-proxy: Bybit + Cboe/Twelve Data для американских акций).
 #
 # Использование (на боевом сервере под root):
 #   curl -fsSL https://raw.githubusercontent.com/Symbiosis184/NisonAnalitycs/main/deploy/restart_kairi_api.sh | bash
@@ -43,14 +43,15 @@ else
     chmod 644 "$APP_DIR"/*.py
 fi
 
-echo "==> 1.5 Ключ Twelve Data и секреты"
+echo "==> 1.5 Резервный ключ Twelve Data и секреты"
 mkdir -p /etc/kairi
-if [ ! -s /etc/kairi/twelvedata.key ]; then
-    echo "091e319b4dba4cd9a25e02f65cbe9b54" > /etc/kairi/twelvedata.key
+# Cboe — основной источник акций и ключа не требует. Не создаём и не храним
+# резервный ключ в репозитории: его задаёт администратор через защищённый файл.
+if [ -s /etc/kairi/twelvedata.key ]; then
     chmod 600 /etc/kairi/twelvedata.key
-    echo "    создан /etc/kairi/twelvedata.key (из vps_setup.sh)"
+    echo "    резерв Twelve Data настроен; существующий ключ не изменён"
 else
-    echo "    /etc/kairi/twelvedata.key уже существует — не трогаю"
+    echo "    резерв Twelve Data без ключа (необязательно): задайте TWELVEDATA_API_KEY при vps_setup.sh"
 fi
 # X-Kairi-Key (HMAC-секрет доступа к прокси): если ещё нет — сгенерировать через vps_setup.sh
 SECRET_LINE=$(grep -h '^KAIRI_SECRET=' /opt/kairi-api/.env /etc/kairi/env 2>/dev/null | head -1 || true)
@@ -82,13 +83,12 @@ for i in $(seq 1 20); do
 done
 if [ -n "$UP" ]; then
     echo "    OK: Commerce API работает (127.0.0.1:8000)"
-    # быстрая самопроверка TradFi-ветки (Twelvedata): 200/401/429/503 => обработчик жив
+    # быстрая самопроверка TradFi-ветки (Cboe + резерв Twelve Data)
     code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 \
-        "http://127.0.0.1:8000/api/quotes/klines?symbol=AAPL:STOCK&interval=d&limit=5&exchange=twelvedata" || echo "000")
+        "http://127.0.0.1:8000/api/quotes/klines?symbol=AAPL:STOCK&interval=d&limit=5&exchange=stocks" || echo "000")
     case "$code" in
-        200|401|429) echo "    OK: TradFi-эндпоинт отвечает (HTTP $code; 401 = нужен X-Kairi-Key — норма для curl)" ;;
-        503) echo "    !! TradFi вернул 503: на сервере не задан ключ Twelvedata."
-           echo "       Исправьте: echo ВАШ_КЛЮЧ > /etc/kairi/twelvedata.key && chmod 600 /etc/kairi/twelvedata.key && systemctl restart kairi-api" ;;
+        200|401) echo "    OK: TradFi-эндпоинт отвечает (HTTP $code; 401 = нужен X-Kairi-Key — норма для curl)" ;;
+        503) echo "    !! Оба источника акций недоступны; проверьте исходящий HTTPS и журнал kairi-api." ;;
         *) echo "    ВНИМАНИЕ: TradFi-эндпоинт вернул HTTP $code — смотрите journalctl -u kairi-api -n 20" ;;
     esac
     # Инъекция свежих браузерных токенов в index.html: старый JSON-формат

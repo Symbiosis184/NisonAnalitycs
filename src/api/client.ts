@@ -705,7 +705,7 @@ export class ApiClient {
 
   /**
    * Анализ произвольного инструмента с дашборда: проверяем существование
-   * тикера (Bybit спот USDT-пара для крипты; Twelvedata — для акций США),
+   * тикера (Bybit спот USDT-пара для крипты; Cboe/Twelve Data — для акций США),
    * нормализуем символ (TAO -> TAOUSDT, AAPL + рынок stock -> AAPL:STOCK)
    * и возвращаем карточку в формате MarketOverviewItem.
    */
@@ -715,11 +715,11 @@ export class ApiClient {
     const symbol = market === 'stock' ? `${base}:STOCK` : (base.endsWith('USDT') ? base : `${base}USDT`);
 
     // Проверяем наличие инструмента (крипто — instruments-info Bybit; акции —
-    // живой ответ /quote (Twelvedata) через прокси; кэш/троттлинг общие)
+    // живой ответ через прокси; кэш/троттлинг общие)
     const info = await fetchInstrumentInfo(symbol);
     if (!info || !info.is_trading) {
       throw new Error(market === 'stock'
-        ? `Акция ${base} не найдена (Twelvedata). Проверьте тикер — доступны только котировки США.`
+        ? `Акция ${base} не найдена. Проверьте тикер — доступны только котировки США.`
         : `Инструмент ${symbol} не найден среди спотовых USDT-пар Bybit`);
     }
 
@@ -830,7 +830,7 @@ export class ApiClient {
     };
   }
 
-  /** Дефолтный топ-8 крипто (Bybit спот) и топ-8 акций США (Twelvedata, бесплатный тариф). */
+  /** Дефолтный топ-8 крипто (Bybit спот) и топ-8 акций США (Cboe + резерв). */
   static readonly DEFAULT_CRYPTO_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT'];
   static readonly DEFAULT_STOCK_SYMBOLS = ['AAPL:STOCK', 'MSFT:STOCK', 'NVDA:STOCK', 'AMZN:STOCK', 'META:STOCK', 'TSLA:STOCK', 'GOOGL:STOCK', 'AMD:STOCK'];
 
@@ -840,8 +840,8 @@ export class ApiClient {
   ): Promise<MarketOverviewItem[]> {
     const symbols = market === 'stock' ? ApiClient.DEFAULT_STOCK_SYMBOLS : ApiClient.DEFAULT_CRYPTO_SYMBOLS;
 
-    // Тикеры обрабатываются последовательно: это удерживает Twelvedata в лимите
-    // частоты. Внутри одной карточки свечи и тикер загружаются параллельно, а
+    // Тикеры обрабатываются последовательно: это ограничивает нагрузку на оба
+    // источника. Внутри одной карточки история и тикер используют общий запрос,
     // onItem отдаёт готовый результат дашборду до завершения остальных задач.
     const jobs = symbols.map((symbol) => async (): Promise<MarketOverviewItem> => {
       try {

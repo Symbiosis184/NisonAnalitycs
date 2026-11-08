@@ -44,8 +44,11 @@ import sqlite3
 import threading
 import time
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Query, Request
@@ -60,7 +63,10 @@ TOKEN_TTL_S = int(os.environ.get("KAIRI_TOKEN_TTL", "900"))
 ALLOWED_EXCHANGES = {
     "bybit": "https://api.bybit.com",
     "binance": "https://api.binance.com",
-    # TradFi: американские акции — Twelvedata (бесплатный тариф, API-ключ на сервере).
+    # Акции США: официальные публичные delayed-quote endpoints Cboe — основной
+    # источник без ключа; Twelve Data — независимый резерв (ключ на сервере).
+    "stocks": "https://cdn-api.cboe.com/api/global/delayed_quotes",
+    "cboe": "https://cdn-api.cboe.com/api/global/delayed_quotes",
     "twelvedata": "https://api.twelvedata.com",
 }
 # SSRF-защита: хост котировочных источников фиксируется списком из env.
@@ -68,14 +74,14 @@ ALLOWED_HOSTS = {
     h.strip().lower()
     for h in os.environ.get(
         "KAIRI_QUOTES_ALLOWED_HOSTS",
-        "api.bybit.com,api.binance.com,api.twelvedata.com",
+        "api.bybit.com,api.binance.com,api.twelvedata.com,cdn-api.cboe.com",
     ).split(",")
     if h.strip()
 }
 
-# Twelvedata требует API-ключ (бесплатный тариф: 800 запросов/мин, 8000/сутки).
-# Ключ задаётся ТОЛЬКО на сервере: env KAIRI_TWELVEDATA_API_KEY или файл
-# /etc/kairi/twelvedata.key (см. deploy/vps_setup.sh). В браузер он не попадает.
+# Twelve Data требует API-ключ только для резервной ветки. Ключ задаётся ТОЛЬКО
+# на сервере: env KAIRI_TWELVEDATA_API_KEY или файл /etc/kairi/twelvedata.key.
+# В браузер он не попадает; для основного источника Cboe ключ не нужен.
 TWELVEDATA_API_KEY_FILE = os.environ.get("KAIRI_TWELVEDATA_KEY_FILE", "/etc/kairi/twelvedata.key")
 
 
@@ -92,9 +98,10 @@ def _load_twelvedata_key() -> str:
 
 TWELVEDATA_API_KEY = _load_twelvedata_key()
 
-# Серверная пауза между исходящими запросами к источнику акций (страховка
-# поверх клиентского троттлера во фронтенде; дефицит ключа тоже считается).
-TWELVEDATA_MIN_INTERVAL_S = float(os.environ.get("KAIRI_TWELVEDATA_MIN_INTERVAL", "0.25"))
+# Серверная пауза между обращениями к резервному Twelve Data. Бесплатный Basic
+# допускает 8 кредитов в минуту, поэтому безопасный дефолт — 7.5 с, а не 250 мс.
+# Платный тариф можно ускорить через env; Cboe этим троттлером не ограничивается.
+TWELVEDATA_MIN_INTERVAL_S = float(os.environ.get("KAIRI_TWELVEDATA_MIN_INTERVAL", "7.5"))
 _td_lock = threading.Lock()
 _td_last_at = [0.0]
 
@@ -332,8 +339,8 @@ class QuoteCache:
     # Короткий TTL для неудачных обращений к источнику: без него каждая
     # перезагрузка страницы снова «долбит» источник заведомо падающим
     # запросом (429-спирали, неизвестные тикеры). Для rate-limit ошибок
-    # (429) держим троттл дольше — 80 секунд, чтобы успел восстановиться
-    # лимит Twelvedata (~800 запросов/мин); прочие ошибки — 20 секунд.
+    # (429) держим троттл дольше — 80 секунд, чтобы восстановился минутный
+    # лимит резервного Twelve Data; прочие ошибки — 20 секунд.
     ERROR_TTL_S = 20
     RATE_LIMIT_TTL_S = 80
 
@@ -547,6 +554,234 @@ def _normalize_td_klines(raw: Any) -> list[dict]:
     return out
 
 
+NY_TZ = ZoneInfo("America/New_York")
+CBOE_INTRADAY_MINUTES = {
+    "1": 1, "5": 5, "15": 15, "30": 30,
+    "60": 60, "120": 120, "240": 240, "480": 480,
+}
+
+
+def _finite_float(value: Any) -> Optional[float]:
+    try:
+        number = float(value)
+        return number if number == number and abs(number) != float("inf") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_cboe_historical(raw: Any) -> list[dict]:
+    """Cboe historical chart -> полный хронологический ряд дневных OHLCV."""
+    rows = raw.get("data") if isinstance(raw, dict) else None
+    if not isinstance(rows, list):
+        raise HTTPException(status_code=404, detail="unknown symbol")
+    out = []
+    for row in rows:
+        try:
+            day = time.strptime(str(row["date"]), "%Y-%m-%d")
+            values = [_finite_float(row.get(k)) for k in ("open", "high", "low", "close")]
+            if any(v is None or v <= 0 for v in values):
+                continue
+            out.append({
+                "openTime": calendar.timegm(day) * 1000,
+                "open": values[0], "high": values[1],
+                "low": values[2], "close": values[3],
+                "volume": _finite_float(row.get("volume")) or 0.0,
+            })
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not out:
+        raise HTTPException(status_code=404, detail="empty candle series")
+    return out
+
+
+def _cboe_quote_data(raw: Any) -> dict:
+    data = raw.get("data") if isinstance(raw, dict) else None
+    if not isinstance(data, dict) or not data.get("symbol"):
+        raise HTTPException(status_code=404, detail="unknown symbol")
+    return data
+
+
+def _normalize_cboe_quote(raw: Any) -> dict:
+    """Regular-session quote Cboe; after-hours current_price не смешиваем с close."""
+    data = _cboe_quote_data(raw)
+    last = _finite_float(data.get("close")) or _finite_float(data.get("current_price"))
+    if last is None or last <= 0:
+        raise HTTPException(status_code=404, detail="unknown symbol")
+    change = _finite_float(data.get("price_change"))
+    pct = _finite_float(data.get("price_change_percent"))
+    prev = _finite_float(data.get("prev_day_close"))
+    if change is None and prev is not None and prev > 0:
+        change = last - prev
+    if pct is None and prev is not None and prev > 0:
+        pct = (last - prev) / prev * 100
+    return {
+        "lastPrice": last,
+        "priceChange": round(change or 0.0, 8),
+        "priceChangePercent": round(pct or 0.0, 4),
+    }
+
+
+def _fetch_cboe_daily(base: str) -> list[dict]:
+    """История + последняя regular-session свеча, полученные параллельно.
+
+    Historical chart Cboe может обновиться позже последней сессии. Quote содержит
+    OHLCV этой сессии: добавляем/заменяем её по last_trade_time, не дублируя дату.
+    """
+    root = ALLOWED_EXCHANGES["cboe"]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        history_req = pool.submit(_http_get, f"{root}/charts/historical/{base}.json", {})
+        quote_req = pool.submit(_http_get, f"{root}/quotes/{base}.json", {})
+        bars = _normalize_cboe_historical(history_req.result())
+        try:
+            quote_raw = quote_req.result()
+            quote = _cboe_quote_data(quote_raw)
+        except Exception:
+            quote = None
+    if quote:
+        close = _finite_float(quote.get("close")) or _finite_float(quote.get("current_price"))
+        values = [_finite_float(quote.get(k)) for k in ("open", "high", "low")]
+        day_text = str(quote.get("last_trade_time") or "")[:10]
+        try:
+            day = time.strptime(day_text, "%Y-%m-%d")
+        except ValueError:
+            day = None
+        if day is not None and close is not None and close > 0 \
+                and all(v is not None and v > 0 for v in values):
+            current = {
+                "openTime": calendar.timegm(day) * 1000,
+                "open": values[0], "high": values[1], "low": values[2], "close": close,
+                "volume": _finite_float(quote.get("volume")) or 0.0,
+            }
+            if bars and bars[-1]["openTime"] == current["openTime"]:
+                bars[-1] = current
+            elif not bars or bars[-1]["openTime"] < current["openTime"]:
+                bars.append(current)
+    return bars
+
+
+def _aggregate_stock_daily(bars: list[dict], interval: str) -> list[dict]:
+    """W/M собираются из одного дневного ряда — без лишних запросов к провайдеру."""
+    if interval == "d":
+        return bars
+    groups: dict[tuple, list[dict]] = {}
+    for bar in bars:
+        dt = datetime.fromtimestamp(bar["openTime"] / 1000, timezone.utc)
+        key = (dt.year, dt.month) if interval == "m" else dt.isocalendar()[:2]
+        groups.setdefault(key, []).append(bar)
+    out = []
+    for rows in groups.values():
+        out.append({
+            "openTime": rows[0]["openTime"], "open": rows[0]["open"],
+            "high": max(r["high"] for r in rows), "low": min(r["low"] for r in rows),
+            "close": rows[-1]["close"], "volume": sum(r["volume"] for r in rows),
+        })
+    return out
+
+
+def _normalize_cboe_intraday(raw: Any, interval: str) -> list[dict]:
+    """Минутные OHLCV regular-сессии Cboe -> запрошенный внутридневной ТФ."""
+    rows = raw.get("data") if isinstance(raw, dict) else None
+    step = CBOE_INTRADAY_MINUTES.get(interval)
+    if not isinstance(rows, list) or step is None:
+        raise HTTPException(status_code=400, detail="bad stock interval")
+    groups: dict[tuple[str, int], dict] = {}
+    for row in rows:
+        try:
+            # Cboe передаёт локальное время Нью-Йорка без смещения. Метка 09:31
+            # описывает минуту 09:30–09:31, поэтому openTime сдвигаем на минуту.
+            dt = datetime.fromisoformat(str(row["datetime"])).replace(tzinfo=NY_TZ)
+            local_minute = dt.hour * 60 + dt.minute
+            if local_minute < 571 or local_minute > 960:
+                continue
+            price = row["price"]
+            values = [_finite_float(price.get(k)) for k in ("open", "high", "low", "close")]
+            if any(v is None or v <= 0 for v in values):
+                continue
+            bucket = (local_minute - 571) // step
+            key = (dt.date().isoformat(), bucket)
+            volume = _finite_float((row.get("volume") or {}).get("stock_volume")) or 0.0
+            bar = groups.get(key)
+            if bar is None:
+                groups[key] = {
+                    "openTime": int(dt.timestamp() * 1000) - 60_000,
+                    "open": values[0], "high": values[1], "low": values[2],
+                    "close": values[3], "volume": volume,
+                }
+            else:
+                bar["high"] = max(bar["high"], values[1])
+                bar["low"] = min(bar["low"], values[2])
+                bar["close"] = values[3]
+                bar["volume"] += volume
+        except (KeyError, TypeError, ValueError):
+            continue
+    out = sorted(groups.values(), key=lambda b: b["openTime"])
+    if not out:
+        raise HTTPException(status_code=404, detail="empty candle series")
+    return out
+
+
+def _td_stock_klines(base: str, interval: str, limit: int) -> list[dict]:
+    wire = _td_wire(interval)[0]
+    body = _td_get("/time_series", {
+        "symbol": base, "interval": wire,
+        "outputsize": str(min(5000, limit + 10)), "format": "JSON",
+    })
+    return _normalize_td_klines(body)
+
+
+def _fetch_stock_klines(base: str, interval: str, limit: int) -> list[dict]:
+    """Два независимых источника; ни один сбой не должен пустить дашборд."""
+    if interval in ("d", "w", "m"):
+        try:
+            return _aggregate_stock_daily(_fetch_cboe_daily(base), interval)
+        except HTTPException as cboe_error:
+            try:
+                return _td_stock_klines(base, interval, limit)
+            except HTTPException as td_error:
+                raise td_error from cboe_error
+    try:
+        # Для интрадея Twelve Data даёт глубокую историю, необходимую бэктесту.
+        return _td_stock_klines(base, interval, limit)
+    except HTTPException as td_error:
+        try:
+            # Резерв без ключа: OHLCV текущей regular-сессии Cboe.
+            raw = _http_get(
+                f"{ALLOWED_EXCHANGES['cboe']}/charts/intraday/{base}.json", {})
+            return _normalize_cboe_intraday(raw, interval)
+        except HTTPException as cboe_error:
+            raise cboe_error from td_error
+
+
+def _td_stock_ticker(base: str) -> dict:
+    body = _td_get("/quote", {"symbol": base})
+    if not isinstance(body, dict) or body.get("status") == "error" \
+            or body.get("symbol") is None:
+        raise HTTPException(status_code=404, detail="unknown symbol")
+    last = _finite_float(body.get("close"))
+    if last is None or last <= 0:
+        raise HTTPException(status_code=404, detail="unknown symbol")
+    pct = _finite_float(body.get("percent_change"))
+    change = _finite_float(body.get("change"))
+    prev = _finite_float(body.get("previous_close"))
+    if change is None and prev is not None:
+        change = last - prev
+    if pct is None and prev is not None and prev > 0:
+        pct = (last - prev) / prev * 100
+    return {"lastPrice": last, "priceChange": round(change or 0.0, 8),
+            "priceChangePercent": round(pct or 0.0, 4)}
+
+
+def _fetch_stock_ticker(base: str) -> dict:
+    try:
+        raw = _http_get(f"{ALLOWED_EXCHANGES['cboe']}/quotes/{base}.json", {})
+        return _normalize_cboe_quote(raw)
+    except HTTPException as cboe_error:
+        try:
+            return _td_stock_ticker(base)
+        except HTTPException as td_error:
+            raise td_error from cboe_error
+
+
 def _td_get(path: str, params: dict) -> Any:
     """GET к Twelvedata API с серверным ключом, троттлингом и разбором ошибок."""
     if not TWELVEDATA_API_KEY:
@@ -630,21 +865,13 @@ def quotes_klines(
     if not (SYMBOL_RE.match(symbol) or is_stock):
         raise HTTPException(status_code=400, detail="bad symbol")
     iv = interval.lower()  # канон для кэша/проверок; TD_INTERVAL содержит и 'D'/'W'/'M'
-    if exchange == "twelvedata":
+    stock_exchanges = {"stocks", "cboe", "twelvedata"}
+    if exchange in stock_exchanges:
         if not is_stock:
-            raise HTTPException(status_code=400, detail="twelvedata requires TICKER:STOCK")
-        # Wire-формы интервалов Twelvedata (проверено живым запросом): 5min,
-        # 15min, 30min, 1h, 2h, 4h, 8h, 1day, 1week, 1month. Формы вида
-        # '60'/'240'/'d' — внутренний канон приложения, эндпоинт их НЕ знает:
-        # раньше их отправляли как есть -> 400 "invalid interval" на всех ТФ
-        # акций, кроме дневного (для D канон совпадал с wire-формой).
-        # Неподдерживаемые у источника формы ('1'/'3'/'1m' — 1min у Twelvedata
-        # недоступен) фолбэчатся на ближайший больший ТФ (_td_wire), а не
-        # падают ошибкой: часть истории лучше «ошибки загрузки» карточки.
-        td_iv = _td_wire(iv)[0]  # wire-форма для запроса к источнику ('5min','1h','1day',...)
-        # Внутренний канон — для ключа кэша и TTL: '1day' иначе попадал в
-        # ветку минутных интервалов (TTL 30 с вместо суточного) и дублировал
-        # обращения к лимитированному источнику.
+            raise HTTPException(status_code=400, detail="stock source requires TICKER:STOCK")
+        # Канонизируем wire-формы обоих провайдеров. Неподдерживаемый 1m на
+        # Twelve Data по-прежнему повышается до 5m; Cboe умеет исходные минуты.
+        td_iv = _td_wire(iv)[0]
         iv = {"5min": "5", "15min": "15", "30min": "30", "45min": "45",
               "1h": "60", "2h": "120", "4h": "240", "8h": "480",
               "1day": "d", "1week": "w", "1month": "m"}.get(td_iv, td_iv)
@@ -656,16 +883,8 @@ def quotes_klines(
     key = f"k:{exchange}:{symbol}:{iv}:{limit}"
 
     def fetch():
-        if exchange == "twelvedata":
-            base = symbol.split(":")[0]
-            tv = td_iv  # wire-форма Twelvedata; iv остаётся каноном для кэша
-            # time_series отдаёт последние outputsize баров — окно не нужно;
-            # запас +10 на случай отброшенных битых строк, режем по limit ниже.
-            body = _td_get("/time_series", {
-                "symbol": base, "interval": tv,
-                "outputsize": str(min(5000, limit + 10)),
-                "format": "JSON"})
-            return _normalize_td_klines(body)
+        if exchange in stock_exchanges:
+            return _fetch_stock_klines(symbol.split(":")[0], iv, limit)
         if exchange == "bybit":
             data = _http_get(f"{ALLOWED_EXCHANGES[exchange]}/v5/market/kline", {
                 "category": "spot", "symbol": symbol,
@@ -675,10 +894,10 @@ def quotes_klines(
             "symbol": symbol, "interval": BINANCE_INTERVAL[iv], "limit": limit})
         return _normalize_binance_klines(data)
 
-    value, from_cache = cache.get_or_fetch(
-        key, cache.kline_ttl(interval.lower()), fetch, force=_t is not None)
-    if exchange == "twelvedata" and isinstance(value, list) and len(value) > limit:
-        value = value[-limit:]  # outputsize даёт запас сверху — режем по limit
+    ttl = 300 if exchange in stock_exchanges and iv == "d" else cache.kline_ttl(interval.lower())
+    value, from_cache = cache.get_or_fetch(key, ttl, fetch, force=_t is not None)
+    if exchange in stock_exchanges and isinstance(value, list) and len(value) > limit:
+        value = value[-limit:]  # Cboe отдаёт полную историю — режем последние limit
     return {"data": value, "cached": from_cache, "exchange": exchange}
 
 
@@ -694,40 +913,14 @@ def quotes_ticker(
         raise HTTPException(status_code=400, detail="bad symbol")
     if exchange not in ALLOWED_EXCHANGES:
         raise HTTPException(status_code=400, detail="unknown exchange")
+    if exchange in {"stocks", "cboe", "twelvedata"} and not is_stock:
+        raise HTTPException(status_code=400, detail="stock source requires TICKER:STOCK")
 
     key = f"t:{exchange}:{symbol}"
 
     def fetch():
-        if exchange == "twelvedata":
-            # /quote: percent_change уже в процентах (-1.18655 => -1.18655%).
-            base = symbol.split(":")[0]
-            body = _td_get("/quote", {"symbol": base})
-            if not isinstance(body, dict) or body.get("status") == "error" \
-                    or body.get("symbol") is None:
-                raise HTTPException(status_code=404, detail="unknown symbol")
-            try:
-                last_f = float(body["close"])
-            except (KeyError, TypeError, ValueError):
-                raise HTTPException(status_code=404, detail="unknown symbol")
-            if last_f <= 0:
-                raise HTTPException(status_code=404, detail="unknown symbol")
-
-            def _f(name):
-                try:
-                    return float(body[name])
-                except (KeyError, TypeError, ValueError):
-                    return None
-
-            pct = _f("percent_change")
-            change = _f("change")
-            prev = _f("previous_close")
-            if change is None and prev is not None:
-                change = last_f - prev
-            if pct is None and prev and prev > 0:
-                pct = (last_f - prev) / prev * 100
-            return {"lastPrice": last_f,
-                    "priceChange": round(change if change is not None else 0.0, 8),
-                    "priceChangePercent": round(pct if pct is not None else 0.0, 4)}
+        if exchange in {"stocks", "cboe", "twelvedata"}:
+            return _fetch_stock_ticker(symbol.split(":")[0])
         if exchange == "bybit":
             rows = _http_get(f"{ALLOWED_EXCHANGES[exchange]}/v5/market/tickers",
                              {"category": "spot", "symbol": symbol}
