@@ -72,6 +72,17 @@ describe('signalGenerator.findSignals — инварианты', () => {
     expect(total).toBeGreaterThanOrEqual(0);
   });
 
+  it('maxResults: 0 сохраняет полное окно для Consensus, UI по умолчанию получает топ-8', () => {
+    for (const seed of [1, 7, 42, 99, 2024]) {
+      const candles = seededSeries(150, seed);
+      const all = signalGenerator.findSignals(candles, 'D', { maxResults: 0 });
+      const top = signalGenerator.findSignals(candles, 'D');
+      const topTwo = signalGenerator.findSignals(candles, 'D', { maxResults: 2 });
+      expect(top).toEqual(all.slice(0, 8));
+      expect(topTwo).toEqual(all.slice(0, 2));
+    }
+  });
+
   it('findSignal возвращает null или валидный сигнал', () => {
     const s = signalGenerator.findSignal(seededSeries(150, 42), 'D');
     if (s) assertSignalInvariants(s);

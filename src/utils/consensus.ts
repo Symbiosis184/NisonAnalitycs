@@ -4,6 +4,8 @@
 export interface ConsensusInput {
   direction: 'long' | 'short';
   quality: number; // 0..1 — качество сигнала (объём/уровень/форма)
+  /** Повторы одной модели в окне — один фактор, а не новый независимый голос. */
+  pattern?: string;
 }
 
 export interface ConsensusResult {
@@ -15,12 +17,8 @@ export interface ConsensusResult {
 /** Приведение качества к безопасному диапазону [0, 1] (защита от NaN/misfire). */
 const safeQuality = (q: number): number => (Number.isFinite(q) ? Math.min(1, Math.max(0, q)) : 0);
 
-/** Взвешенный вес сигнала: базовый + буст за сильное подтверждение объёмом. */
-const weight = (s: ConsensusInput): number => {
-  const q = safeQuality(s.quality);
-  const volBoost = q >= 0.75 ? 1.25 : q >= 0.6 ? 1.0 : 0.8;
-  return (0.5 + q) * volBoost;
-};
+/** Непрерывный вес направления: качество усиливает сигнал без скачков по порогам. */
+const weight = (s: ConsensusInput): number => 0.5 + safeQuality(s.quality);
 
 export function aggregateConsensus(signals: ConsensusInput[]): ConsensusResult {
   // Пропускаем сигналы с нечисловым качеством/направлением — иначе один
@@ -28,30 +26,51 @@ export function aggregateConsensus(signals: ConsensusInput[]): ConsensusResult {
   const valid = signals.filter(
     (s) => Number.isFinite(s.quality) && (s.direction === 'long' || s.direction === 'short'),
   );
+
+  // Один тип модели в одну сторону — один независимый фактор. Повторы не должны
+  // накапливать «широту»; оставляем наиболее качественное подтверждение фактора.
+  const independent = new Map<string, ConsensusInput>();
+  valid.forEach((signal, index) => {
+    const pattern = signal.pattern?.trim().toUpperCase();
+    const key = pattern ? `${signal.direction}:${pattern}` : `${signal.direction}:anonymous:${index}`;
+    const previous = independent.get(key);
+    if (!previous || safeQuality(signal.quality) > safeQuality(previous.quality)) {
+      independent.set(key, signal);
+    }
+  });
+  const factors = [...independent.values()];
+
   let bullW = 0;
   let bearW = 0;
-  for (const s of valid) {
+  for (const s of factors) {
     if (s.direction === 'long') bullW += weight(s); else bearW += weight(s);
   }
   const totalW = bullW + bearW;
-  const ratio = totalW === 0 ? 0 : Math.abs(bullW - bearW) / totalW; // 0..1 согласие
+  const ratio = totalW === 0 ? 0 : Math.abs(bullW - bearW) / totalW;
 
   // Порог согласия: ниже 20% — направления нет (взаимное гашение сигналов).
   if (totalW === 0 || ratio < 0.2) {
     return { score: 0, confidence: 0, direction: 'neutral' };
   }
 
-  const agreeCount = Math.max(
-    valid.filter((s) => s.direction === 'long').length,
-    valid.filter((s) => s.direction === 'short').length,
-  );
-
-  // Базовый балл за силу согласия (max 4) + небольшой бонус за «широту
-  // консенсуса» (несколько независимых сигналов в одну сторону, max 1).
-  const score = Math.min(5, ratio * 4 + Math.min(1, (agreeCount - 1) * 0.25));
-  // Балл согласия начинается с нуля; это не оценка вероятности исхода сделки.
-  const confidence = Math.min(95, Math.round(ratio * 70 + Math.min(25, agreeCount * 5)));
   const direction: ConsensusResult['direction'] = bullW > bearW ? 'buy' : 'sell';
+  const dominantDirection = direction === 'buy' ? 'long' : 'short';
+  const agreeing = factors.filter((s) => s.direction === dominantDirection);
+  const agreeCount = agreeing.length;
+  const meanQuality = agreeing.reduce((sum, s) => sum + safeQuality(s.quality), 0) / agreeCount;
+
+  // Консенсус требует нескольких независимых подтверждений. Один сигнал даёт
+  // лишь треть возможной широты, два — две трети, три и больше — полную широту.
+  const breadth = Math.min(1, agreeCount / 3);
+  const qualityFactor = 0.5 + meanQuality / 2;
+
+  // Score учитывает направленное согласие, независимую широту и качество.
+  // Поэтому одиночный сигнал не может получить 4/5, а слабые и сильные наборы
+  // одинакового направления больше не выглядят одинаково.
+  const score = 5 * ratio * breadth * qualityFactor;
+  // Confidence — согласие с учётом широты, но без премии за качество: это
+  // отдельная метрика, а не вероятность прибыли или успешной сделки.
+  const confidence = Math.min(95, Math.round(ratio * breadth * 100));
 
   return { score, confidence, direction };
 }

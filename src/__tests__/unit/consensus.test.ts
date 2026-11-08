@@ -33,12 +33,44 @@ describe('aggregateConsensus (проектная эвристика: согла�
     expect(r.confidence).toBeGreaterThan(60);
   });
 
-  it('один сильный сигнал без поддержки других → умеренный балл (не максимум)', () => {
+  it('один сильный сигнал без поддержки других → низкий балл, не консенсус 4/5', () => {
     const r = aggregateConsensus([sig('long', 0.9)]);
     expect(r.direction).toBe('buy');
-    expect(r.score).toBeLessThanOrEqual(4.3);
-    // Балл ограничен: ratio*4 + бонус ≤ 4 + 0 (бонус за широту = 0 при одном сигнале)
-    expect(r.score).toBeCloseTo(4, 5);
+    expect(r.score).toBeCloseTo(1.5833, 3);
+    expect(r.confidence).toBe(33);
+  });
+
+  it('качество влияет на силу даже при одинаковом направлении сигналов', () => {
+    const weak = aggregateConsensus([sig('long', 0.1), sig('long', 0.2), sig('long', 0.15)]);
+    const strong = aggregateConsensus([sig('long', 0.9), sig('long', 0.85), sig('long', 0.8)]);
+    expect(strong.score).toBeGreaterThan(weak.score);
+    expect(weak.score).toBeLessThan(3);
+    expect(strong.score).toBeGreaterThan(4);
+  });
+
+  it('повторы одной модели не раздувают независимую широту консенсуса', () => {
+    const repeated = aggregateConsensus([
+      { ...sig('long', 0.7), pattern: 'МОЛОТ' },
+      { ...sig('long', 0.9), pattern: 'МОЛОТ' },
+      { ...sig('long', 0.8), pattern: 'МОЛОТ' },
+    ]);
+    const single = aggregateConsensus([{ ...sig('long', 0.9), pattern: 'МОЛОТ' }]);
+    const independent = aggregateConsensus([
+      { ...sig('long', 0.9), pattern: 'МОЛОТ' },
+      { ...sig('long', 0.9), pattern: 'БЫЧЬЕ ПОГЛОЩЕНИЕ' },
+      { ...sig('long', 0.9), pattern: 'УТРЕННЯЯ ЗВЕЗДА' },
+    ]);
+    expect(repeated).toEqual(single);
+    expect(independent.score).toBeGreaterThan(repeated.score);
+  });
+
+  it('широта считается по победившему направлению, а не по большей противоположной группе', () => {
+    const r = aggregateConsensus([
+      sig('long', 1), sig('long', 1),
+      sig('short', 0), sig('short', 0), sig('short', 0),
+    ]);
+    expect(r.direction).toBe('buy');
+    expect(r.confidence).toBe(22); // ratio=1/3, два бычьих фактора, а не три медвежьих
   });
 
   it('преобладание быков над медведями → buy, но слабее чистого консенсуса', () => {
