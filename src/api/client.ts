@@ -428,6 +428,7 @@ export class ApiClient {
     const detectedSignals = signalGenerator.findSignals(closedCandles, timeframe, {
       context: { zones, volumeBands: vprofile.bands },
       market: patternMarket,
+      maxResults: 0,
     });
 
     // Аудит №10: план размера позиции по правилу фиксированного риска.
@@ -465,7 +466,7 @@ export class ApiClient {
     const htfCandles = higherSeries.find(([tf]) => tf === htfTf)?.[1] ?? null;
     const htfTrend: TrendContext | null = htfCandles ? getTrendMacro(htfCandles, currentPrice) : null;
 
-    const apiSignals: SignalDTO[] = detectedSignals.map(s => {
+    const apiSignals: SignalDTO[] = detectedSignals.slice(0, 8).map(s => {
       const plan = toPlanDTO(planPosition({
         capitalUsd: riskSettings.capitalUsd,
         riskPct: riskSettings.riskPct,
@@ -567,7 +568,7 @@ export class ApiClient {
       return endIdx >= 0 ? endIdx >= freshCut : true;
     });
     const consensus = aggregateConsensus(
-      freshConfirmed.map((s) => ({ direction: s.direction, quality: s.quality })),
+      freshConfirmed.map((s) => ({ direction: s.direction, quality: s.quality, pattern: s.pattern })),
     );
     const consensusScore = consensus.score;
     const consensusDirection = consensus.direction;
@@ -766,6 +767,7 @@ export class ApiClient {
     const detectedSignals = signalGenerator.findSignals(closedCandles, 'D', {
       context: { zones, volumeBands: vprofile.bands },
       market: patternMarket,
+      maxResults: 0,
     });
 
     const volumes = candles.map((c) => c.volume);
@@ -809,6 +811,7 @@ export class ApiClient {
         })),
       signals: detectedSignals
         .filter((s) => s.confirmed)
+        .slice(0, 8)
         .map((s) => ({
           direction: s.direction,
           pattern: s.pattern,
@@ -825,7 +828,7 @@ export class ApiClient {
       volume: candles[candles.length - 1]?.volume || 0,
       avgVolume,
       consensus: aggregateConsensus(
-        freshConfirmed.map((s) => ({ direction: s.direction, quality: s.quality })),
+        freshConfirmed.map((s) => ({ direction: s.direction, quality: s.quality, pattern: s.pattern })),
       ),
     };
   }
