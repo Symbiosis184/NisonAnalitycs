@@ -64,7 +64,7 @@ async function proxyFetch(path: string, params: Record<string, string | number>,
 
 async function proxyFetchStrict(path: string, params: Record<string, string | number>, force = false): Promise<any> {
   if (!hasBackend()) {
-    throw new Error('Источник данных по акциям недоступен: нет серверного прокси (Twelvedata работает только на боевом домене).');
+    throw new Error('Источник данных по акциям недоступен: серверный котировочный прокси не подключён.');
   }
   const qs = Object.entries(params).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&');
   const token = getApiToken();
@@ -75,21 +75,18 @@ async function proxyFetchStrict(path: string, params: Record<string, string | nu
       signal: (AbortSignal as any)?.timeout ? AbortSignal.timeout(10_000) : undefined,
     });
   } catch {
-    throw new Error('Источник данных по акциям недоступен: котировочный прокси (Twelvedata) не отвечает. Попробуйте позже.');
+    throw new Error('Источники данных по акциям временно недоступны: котировочный прокси не отвечает. Попробуйте позже.');
   }
   if (res.status === 401 || res.status === 403) {
     throw new Error('Сессия истекла — обновите страницу и войдите заново.');
   }
   if (!res.ok) {
     const detail = await readErrorDetail(res);
-    if (res.status === 404 && /unknown symbol/i.test(detail)) {
-      throw new Error('Акция не найдена на Twelvedata — проверьте тикер.');
+    if (res.status === 404 && /unknown symbol|no data/i.test(detail)) {
+      throw new Error('Акция не найдена — проверьте тикер.');
     }
     if (res.status === 429 || /rate.?limit|too many|quota/i.test(detail)) {
-      throw new Error('Twelvedata временно ограничил запросы (лимит частоты). Попробуйте через минуту.');
-    }
-    if (res.status === 503 && /api key/i.test(detail)) {
-      throw new Error('Источник данных по акциям не настроен на сервере (нет ключа Twelvedata). Обратитесь в поддержку.');
+      throw new Error('Источники данных по акциям временно ограничили запросы. Попробуйте через минуту.');
     }
     throw new Error(detail ? `Ошибка источника данных (${res.status}): ${detail}`
                            : `Источник данных по акциям недоступен (HTTP ${res.status}). Попробуйте позже.`);
@@ -167,7 +164,7 @@ async function cachedFetchJson(key: string, url: string, ttlMs: number): Promise
 const KLINES_TTL_MS = 30_000;
 const TICKER_TTL_MS = 10_000;
 
-// --- TradFi: американские акции через Twelvedata ---
+// --- TradFi: Cboe (основной) + Twelve Data (резерв) через серверный прокси ---
 const STOCK_INTERVAL_MAP: Record<string, string> = {
   '1': '1', '3': '5', '5': '5', '15': '15',
   '30': '30', '60': '60', '120': '120', '240': '240', '480': '480',
@@ -206,7 +203,7 @@ function throttledStockFetch<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 const stockCacheKey = (base: string, resolution: string, limit: number) =>
-  `klines:twelvedata:${base}:${String(resolution).toLowerCase()}:${limit}`;
+  `klines:stocks:${base}:${String(resolution).toLowerCase()}:${limit}`;
 
 async function fetchStockKlines(base: string, resolution: string, limit: number, force: boolean): Promise<Kline[]> {
   const cacheKey = stockCacheKey(base, resolution, limit);
@@ -220,9 +217,9 @@ async function fetchStockKlines(base: string, resolution: string, limit: number,
     try {
       const proxied = await throttledStockFetch(() =>
         proxyFetchStrict('/api/quotes/klines',
-          { symbol: `${base}:STOCK`, interval: resolution, limit, exchange: 'twelvedata' }, force));
+          { symbol: `${base}:STOCK`, interval: resolution, limit, exchange: 'stocks' }, force));
       if (!Array.isArray(proxied)) {
-        throw new Error('Источник данных по акциям недоступен: котировочный прокси (Twelvedata) вернул неожиданный ответ. Попробуйте позже.');
+        throw new Error('Источники данных по акциям вернули неожиданный ответ. Попробуйте позже.');
       }
       const klines = proxied as Kline[];
       
@@ -266,20 +263,12 @@ export async function fetchMarketOverviewBatch<T>(
 }
 
 async function fetchStockQuote(base: string): Promise<Ticker24h> {
-  try {
-    const proxied = await throttledStockFetch(() =>
-      proxyFetch('/api/quotes/ticker', { symbol: `${base}:STOCK`, exchange: 'twelvedata' }));
-    if (proxied && Number.isFinite(Number(proxied.lastPrice))) {
-      const q = proxied as { lastPrice: number; priceChange?: number; priceChangePercent?: number };
-      return {
-        lastPrice: Number(q.lastPrice),
-        priceChange: Number.isFinite(Number(q.priceChange)) ? Number(q.priceChange) : 0,
-        priceChangePercent: Number.isFinite(Number(q.priceChangePercent)) ? Number(q.priceChangePercent) : 0,
-      };
-    }
-  } catch { /* падаем на фолбэк по свечам */ }
-  const candles = await fetchStockKlines(base, 'd', 3, false);
+  // Дневная история уже содержит последнюю цену и предыдущее закрытие. Используем
+  // тот же cache/in-flight ключ, что и полный обзор (D, 250): параллельные запросы
+  // свечей и тикера объединяются в ОДНО обращение к источнику на карточку.
+  const candles = await fetchStockKlines(base, 'd', 250, false);
   const last = candles[candles.length - 1];
+  if (!last) throw new Error(`Нет дневных данных по ${base}`);
   const prev = candles.length >= 2 ? candles[candles.length - 2] : last;
   const change = last.close - prev.close;
   return {
