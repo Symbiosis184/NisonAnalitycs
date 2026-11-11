@@ -1,5 +1,5 @@
 import { Candle } from './candle';
-import { ema } from './indicators';
+import { ema, sma } from './indicators';
 import { ZoneVoter, timeframeKey, type TimeframeKey } from './zone_voter';
 import { findSwings } from './levels';
 import { getSwingTrend } from './trend_detection';
@@ -1187,8 +1187,11 @@ export class PatternDetector {
     const pre = candles.slice(0, -1);
     const mid = (last.high + last.low) / 2;
     const closes = pre.map(c => c.close);
-    const m20 = ema(closes, 20);
-    const m65 = ema(closes, 65);
+    // P2-2: канон ЯС, глава «Скользящие средние» — канонические ПРОСТЫЕ средние
+    // (в т.ч. 65-дневная). EMA противоречила каноны и согласованности с zone_voter.ts
+    // («SMA, а не EMA: канон»). Guards на NaN сохранены.
+    const m20 = sma(closes, 20);
+    const m65 = sma(closes, 65);
     const m20Val = m20.length > 0 && Number.isFinite(m20[m20.length - 1]) ? m20[m20.length - 1] : null;
     const m65Val = m65.length > 0 && Number.isFinite(m65[m65.length - 1]) ? m65[m65.length - 1] : null;
 
