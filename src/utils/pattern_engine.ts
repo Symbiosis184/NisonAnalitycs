@@ -122,6 +122,25 @@ export class PatternDetector {
   }
 
   /**
+   * P0-1 (ЯС, гл. «Молот и повешенный»): повешенный имеет ТУ ЖЕ форму, что
+   * молот — малое тело в ВЕРХНЕЙ части диапазона, длинная нижняя тень;
+   * отличие только в контексте (после роста). atLocalHigh написан для
+   * падающей звезды (тело внизу) и давал с isHangingMan пустое пересечение.
+   */
+  private static atLocalHighBodyUp(candle: Candle, prevCandles: Candle[]): boolean {
+    if (prevCandles.length < 5) return true;
+    const seg = prevCandles.slice(-8);
+    const lo = Math.min(...seg.map(c => c.low));
+    const hi = Math.max(...seg.map(c => c.high));
+    if (hi <= lo) return true;
+    const priorBand = hi - (hi - lo) * 0.35; // проектная эвристика (35% окна), в книгах порога нет
+    const bodyAtPriorTop = Math.max(candle.open, candle.close) >= priorBand ||
+      (candle.lowerWick >= candle.body * 2 && candle.high >= lo);
+    const bodyInUpperHalf = candle.close >= (candle.high + candle.low) / 2;
+    return bodyAtPriorTop && bodyInUpperHalf;
+  }
+
+  /**
    * Разворотная модель требует уже существующего движения, которое она может
    * развернуть. Близость к экстремуму сама по себе трендом не является.
    * Сначала используется структура свингов; если её недостаточно — направление
@@ -282,7 +301,8 @@ export class PatternDetector {
     if (candle.lowerWick < candle.body * 2) return { found: false, name: '' };
     if (candle.upperWick > candle.totalRange * 0.2) return { found: false, name: '' };
     if (candle.close < (candle.high + candle.low) / 2) return { found: false, name: '' };
-    if (!this.atLocalHigh(candle, prevCandles)) return { found: false, name: '' };
+    // P0-1: тело ВВЕРХУ диапазона — atLocalHighBodyUp, а не atLocalHigh (падающая звезда).
+    if (!this.atLocalHighBodyUp(candle, prevCandles)) return { found: false, name: '' };
     if (!this.precededByRally(prevCandles)) return { found: false, name: '' };
 
     let name = 'ПОВЕШЕННЫЙ';
@@ -369,14 +389,20 @@ export class PatternDetector {
     return { found: true, name };
   }
 
-  /** Гл. 4 ЯС: открытие второй свечи строго за закрытием первой. */
+  /**
+   * Гл. 4 ЯС: для акций Нисон допускает открытие выше ЦЕНЫ ЗАКРЫТИЯ предыдущей
+   * свечи (не обязательно выше максимума). На непрерывном рынке (крипта) open ≈
+   * prevClose, поэтому жёсткое `open > close` делало модель недостижимой —
+   * используется адаптивный допуск (#P1-1, вариант A; допуск 0.15 — проектная эвристика).
+   */
   static isDarkCloudCover(c1: Candle, c2: Candle, prev: Candle[], context?: PatternContext): PatternDetection {
     if (!(c1.isBullish && c1.isLongCandle)) return { found: false, name: '' };
     if (!(c2.isBearish && c2.isLongCandle)) return { found: false, name: '' };
     if (!this.precededByRally(prev)) return { found: false, name: '' };
     if (c2.close >= c1.bodyMid || c2.close <= c1.open) return { found: false, name: '' };
 
-    if (c2.open <= c1.close) return { found: false, name: '' };
+    const tol = this.adaptiveTol([...prev.slice(-20), c1], 0.15);
+    if (c2.open < c1.close - tol) return { found: false, name: '' };
 
     let name = 'ЗАВЕСА ИЗ ТЁМНЫХ ОБЛАКОВ';
     if (c2.open > c1.high) name += ' (ГЭП ВЫШЕ МАКСИМУМА)';
@@ -385,13 +411,18 @@ export class PatternDetector {
     return { found: true, name };
   }
 
+  /**
+   * Гл. 4 ЯС: зеркально завесе — открытие ниже цены закрытия предыдущей свечи.
+   * Адаптивный допуск вместо жёсткого `open < close` (#P1-1, вариант A).
+   */
   static isPiercingPattern(c1: Candle, c2: Candle, prev: Candle[], context?: PatternContext): PatternDetection {
     if (!(c1.isBearish && c1.isLongCandle)) return { found: false, name: '' };
     if (!(c2.isBullish && c2.isLongCandle)) return { found: false, name: '' };
     if (!this.precededByDecline(prev)) return { found: false, name: '' };
     if (c2.close <= c1.bodyMid || c2.close >= c1.open) return { found: false, name: '' };
 
-    if (c2.open >= c1.close) return { found: false, name: '' };
+    const tol = this.adaptiveTol([...prev.slice(-20), c1], 0.15);
+    if (c2.open > c1.close + tol) return { found: false, name: '' };
 
     let name = 'ПРОСВЕТ В ОБЛАКАХ';
     if (c2.open < c1.low) name += ' (ГЭП НИЖЕ МИНИМУМА)';
@@ -714,13 +745,16 @@ export class PatternDetector {
     if (!(c1.isBearish && c1.isLongCandle)) return { found: false, name: '' };
     if (!c2.isBullish || c2.open >= c1.low) return { found: false, name: '' };
 
-    const tol = c1.totalRange * 0.05;
+    const tol = c1.totalRange * 0.05; // проектная эвристика (5% диапазона)
     const smallWhite = c2.body <= c1.body * 0.5;
-    // «Ниже шеи» — около закрытия чёрной; «на шее» — около её минимума.
-    if (smallWhite && Math.abs(c2.close - c1.close) <= tol) {
+    // ИСПРАВЛЕНО (гл. 4 ЯС, «Другие модели разворота»): привязки были перепутаны.
+    // «Ниже шеи» — белая свеча закрывается ВБЛИЗИ МИНИМУМА предыдущего (медвежьего) дня;
+    // «на шее» — ЧУТЬ ВЫШЕ ЦЕНЫ ЗАКРЫТИЯ предыдущего дня. Проверяем сначала более
+    // низкий уровень (минимум), чтобы не относить «ниже шеи» к «на шее».
+    if (smallWhite && Math.abs(c2.close - c1.low) <= tol) {
       return { found: true, name: 'НИЖЕ ШЕИ' };
     }
-    if (smallWhite && Math.abs(c2.close - c1.low) <= tol) {
+    if (smallWhite && c2.close >= c1.close - tol && c2.close <= c1.close + tol * 2) {
       return { found: true, name: 'НА ШЕЕ' };
     }
     // У толчка белое тело не обязано быть малым, но закрытие не выше середины.
@@ -999,17 +1033,20 @@ export class PatternDetector {
     const c0 = candles[candles.length - 3];
     const c1 = candles[candles.length - 2];
     const c2 = candles[candles.length - 1];
-    if (!(c1.isBullish && c2.isBullish)) return { found: false, name: '' };
+    // Цвета проверяются в ветках по канону: бычья — две белые, медвежья — две чёрные.
     if (Math.abs(c1.open - c2.open) / c1.open > 0.005 ||
       Math.abs(c1.body - c2.body) > Math.max(c1.body, c2.body) * 0.3) {
       return { found: false, name: '' };
     }
 
+    // ЯС, гл. «Окна» / модели продолжения: бычья — гэп вверх и две БЕЛЫЕ свечи;
+    // медвежья — гэп вниз и две ЧЁРНЫЕ свечи. Ранее обе ветки требовали белые свечи.
     if (c0.isBullish && c1.low > c0.high && this.precededByRally(candles.slice(0, -3))) {
       return { found: true, name: 'ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ' };
     }
-    if (c0.isBearish && c1.high < c0.low && this.precededByDecline(candles.slice(0, -3))) {
-      return { found: true, name: 'ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ (ВНИЗ)' };
+    if (c0.isBearish && c1.isBearish && c2.isBearish && c1.high < c0.low &&
+      this.precededByDecline(candles.slice(0, -3))) {
+      return { found: true, name: 'ГЭП СМЕЖНЫХ ЧЁРНЫХ СВЕЧЕЙ (ВНИЗ)' };
     }
     return { found: false, name: '' };
   }
