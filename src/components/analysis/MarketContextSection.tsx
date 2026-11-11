@@ -80,7 +80,7 @@ export function MarketContextSection({ report, volumeRatio }: {
           {num(report.consensus?.score).toFixed(1)}/5
         </div>
         <div className="text-xs text-gray-400 mt-1">
-          {t('Согласие сигналов:')} {num(report.consensus?.confidence).toFixed(0)}%
+          {t('Широта согласия:')} {num(report.consensus?.confidence).toFixed(0)}/95
         </div>
         <div className="text-xs text-gray-400 mt-1">
           {t(report.consensus.direction === 'buy' ? 'Бычий консенсус' :
