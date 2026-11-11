@@ -734,13 +734,16 @@ export class PatternDetector {
     if (!(c1.isBearish && c1.isLongCandle)) return { found: false, name: '' };
     if (!c2.isBullish || c2.open >= c1.low) return { found: false, name: '' };
 
-    const tol = c1.totalRange * 0.05;
+    const tol = c1.totalRange * 0.05; // проектная эвристика (5% диапазона)
     const smallWhite = c2.body <= c1.body * 0.5;
-    // «Ниже шеи» — около закрытия чёрной; «на шее» — около её минимума.
-    if (smallWhite && Math.abs(c2.close - c1.close) <= tol) {
+    // ИСПРАВЛЕНО (гл. 4 ЯС, «Другие модели разворота»): привязки были перепутаны.
+    // «Ниже шеи» — белая свеча закрывается ВБЛИЗИ МИНИМУМА предыдущего (медвежьего) дня;
+    // «на шее» — ЧУТЬ ВЫШЕ ЦЕНЫ ЗАКРЫТИЯ предыдущего дня. Проверяем сначала более
+    // низкий уровень (минимум), чтобы не относить «ниже шеи» к «на шее».
+    if (smallWhite && Math.abs(c2.close - c1.low) <= tol) {
       return { found: true, name: 'НИЖЕ ШЕИ' };
     }
-    if (smallWhite && Math.abs(c2.close - c1.low) <= tol) {
+    if (smallWhite && c2.close >= c1.close - tol && c2.close <= c1.close + tol * 2) {
       return { found: true, name: 'НА ШЕЕ' };
     }
     // У толчка белое тело не обязано быть малым, но закрытие не выше середины.

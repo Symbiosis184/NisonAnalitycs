@@ -47,3 +47,24 @@ describe('P0-1: повешенный (ЯС гл. «Молот и повешен�
     expect(PatternDetector.isHangingMan(hm, prev).found).toBe(false);
   });
 });
+
+describe('P0-2: «ниже шеи» / «на шее» (ЯС гл. 4, «Другие модели разворота»)', () => {
+  const prev = zigDown(80, 200, 0.6); // подтверждённый спад — контекст модели
+  // Медвежья свеча: тело 100→90, low 89 (шея = район минимума/закрытия).
+  // Тело 12 > 0.6*диапазона (14) — требуется гейтом isLongCandle модели.
+  const black = c(102, 103.5, 88.5, 90);
+
+  it('закрытие белой ВБЛИЗИ МИНИМУМА чёрной → НИЖЕ ШЕИ', () => {
+    const white = c(88.2, 89.5, 88.0, 89.1); // close≈low чёрной (tol=0.75)
+    const res = PatternDetector.isNeckFamily(black, white, prev);
+    expect(res.found).toBe(true);
+    expect(res.name).toBe('НИЖЕ ШЕИ');
+  });
+
+  it('закрытие белой ЧУТЬ ВЫШЕ ЗАКРЫТИЯ чёрной → НА ШЕЕ', () => {
+    const white = c(88.2, 90.9, 88.0, 90.4); // close чуть выше закрытия чёрной: [89.25, 91.5]
+    const res = PatternDetector.isNeckFamily(black, white, prev);
+    expect(res.found).toBe(true);
+    expect(res.name).toBe('НА ШЕЕ');
+  });
+});
