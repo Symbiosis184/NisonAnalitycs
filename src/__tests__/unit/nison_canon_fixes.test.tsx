@@ -1,11 +1,18 @@
 // Регрессии методологического канон-аудита (ЯС/ЗГ Стива Нисона).
 // Каждый блок закрепляет исправление одной задачи P0/P1 отдельным тестом.
 import { describe, it, expect } from 'vitest';
+import * as React from 'react';
+import { render } from '@testing-library/react';
 import { Candle } from '../../utils/candle';
 import { PatternDetector } from '../../utils/pattern_engine';
 import {
   getPatternId, requiresNextCandleConfirmation, getPatternCandleCount, isReversalPatternName,
 } from '../../utils/pattern_ids';
+import { aggregateConsensus } from '../../utils/consensus';
+import { translateString } from '../../i18n/dictionaries';
+import { MarketContextSection } from '../../components/analysis/MarketContextSection';
+
+const sig = (direction: 'long' | 'short', quality: number) => ({ direction, quality });
 
 const cc = (o: number, h: number, l: number, cl: number, v = 100): Candle =>
   new Candle({ time: 0, open: o, high: h, low: l, close: cl, volume: v });
@@ -124,5 +131,37 @@ describe('P0-3: гэп смежных свечей (гл. 7 ЯС, «Окна»/�
     expect(requiresNextCandleConfirmation('ГЭП СМЕЖНЫХ ЧЁРНЫХ СВЕЧЕЙ')).toBe(true);
     expect(getPatternCandleCount('ГЭП СМЕЖНЫХ ЧЁРНЫХ СВЕЧЕЙ')).toBe(3);
     expect(isReversalPatternName('ГЭП СМЕЖНЫХ ЧЁРНЫХ СВЕЧЕЙ')).toBe(false); // продолжение
+  });
+});
+
+// P1-4 (вариант, согласованный с владельцем): consensus.test.ts фиксирует
+// confidence, НЕ зависимый от качества (3 сигнала quality=0 → 95), поэтому
+// формула не меняется. Вместо этого метрика в UI переименована в «Широта
+// согласия» и отображается как балл /95, а не процент — см. ЗГ, «правило
+// множества технических приёмов»: количество без качества консенсуса не образует.
+describe('P1-4: широта согласия — метрика без знака процента', () => {
+  it('три сигнала quality=0 одного направления: формула закреплена тестом → 95/95 (не вероятность)', () => {
+    const r = aggregateConsensus([sig('long', 0), sig('long', 0), sig('long', 0)]);
+    // Формулу менять нельзя (consensus.test.ts). Смысл снимает UI-переименование.
+    expect(r.confidence).toBe(95);
+  });
+
+  it('RU/EN строки: прежний процентный ярлык удалён, новый — «Широта согласия» без %', () => {
+    expect(translateString('Согласие сигналов', 'en')).not.toBe('Signal agreement');
+    expect(translateString('Согласие сигналов:', 'en')).not.toBe('Signal agreement:');
+    expect(translateString('Широта согласия', 'en')).toBe('Agreement breadth');
+    expect(translateString('Широта согласия:', 'en')).toBe('Agreement breadth:');
+  });
+
+  it('UI рендерит метрику как N/95, а не N%', () => {
+    const report = {
+      regime: 'БОКОВИК', regime_description: '', trend_analysis: { cascade: null },
+      consensus: { score: 4.5, confidence: 95, direction: 'buy' },
+      volumeAnalysis: null,
+    } as any;
+    const { container } = render(<MarketContextSection report={report} volumeRatio={1} />);
+    expect(container.textContent).toContain('95/95');
+    expect(container.textContent).not.toContain('95%');
+    expect(container.textContent).toContain('Широта согласия');
   });
 });

@@ -103,9 +103,9 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
             </div>
           </div>
           <div className="text-right">
-            <div className="text-xs text-gray-400">{t('Согласие сигналов')}</div>
+            <div className="text-xs text-gray-400" title={t('Эвристическая широта согласия, не вероятность')}>{t('Широта согласия')}</div>
             <div className="text-lg font-bold">
-              {item.consensus.confidence.toFixed(0)}%
+              {item.consensus.confidence.toFixed(0)}/95
             </div>
           </div>
         </div>
