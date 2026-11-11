@@ -90,6 +90,9 @@ export const CANONICAL_PATTERN_NAMES: ReadonlyArray<[string, PatternId]> = [
   ['НА ШЕЕ', 'ON_NECK'],
   ['ТОЛЧОК', 'THRUSTING'],
   ['ДВОЙНОЙ ТОЛЧОК (БЫЧИЙ)', 'DOUBLE_THRUSTING_BULL'],
+  // ЯС, гл. «Окна»: медвежья ветка — гэп вниз и две ЧЁРНЫЕ свечи.
+  // Старое имя сохранено как алиас того же ID: на него завязаны сохранённые журналы сигналов.
+  ['ГЭП СМЕЖНЫХ ЧЁРНЫХ СВЕЧЕЙ (ВНИЗ)', 'SIDE_BY_SIDE_GAP_DOWN'],
   ['ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ (ВНИЗ)', 'SIDE_BY_SIDE_GAP_DOWN'],
   ['ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ', 'SIDE_BY_SIDE_GAP'],
   ['ВОСХОДЯЩИЕ ТРИ МЕТОДА', 'RISE_THREE_METHODS'],

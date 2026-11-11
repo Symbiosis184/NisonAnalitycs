@@ -68,3 +68,37 @@ describe('P0-2: «ниже шеи» / «на шее» (ЯС гл. 4, «Друг�
     expect(res.name).toBe('НА ШЕЕ');
   });
 });
+
+describe('P0-3: гэп смежных свечей (ЯС гл. «Окна» / продолжения)', () => {
+  const cc = (o: number, h: number, l: number, cl: number): Candle =>
+    new Candle({ time: 1, open: o, high: h, low: l, close: cl, volume: 100 });
+  const STOCKS = { market: 'stocks' as const };
+
+  it('нисходящий гэп + две чёрные свечи после спада → ГЭП СМЕЖНЫХ ЧЁРНЫХ СВЕЧЕЙ (ВНИЗ)', () => {
+    const candles = [
+      ...zigDown(40, 130, 1),
+      cc(102, 102.5, 96, 96.5),            // c0 — длинная чёрная со спадом
+      cc(94, 94.5, 90, 90.5),              // c1 — чёрная, гэп вниз (high < c0.low)
+      cc(93.8, 94.4, 90.1, 90.6),          // c2 — чёрная, близкое открытие и тело к c1
+    ];
+    const res = PatternDetector.isGappingSideBySide(candles, STOCKS);
+    expect(res.found).toBe(true);
+    expect(res.name).toBe('ГЭП СМЕЖНЫХ ЧЁРНЫХ СВЕЧЕЙ (ВНИЗ)');
+  });
+
+  it('та же фикстура с белыми свечами в нисходящей ветке → found === false', () => {
+    const candles = [
+      ...zigDown(40, 130, 1),
+      cc(102, 102.5, 96, 96.5),
+      cc(90, 94.5, 89.8, 94.3),            // бычья вместо медвежьей
+      cc(90.2, 94.7, 90, 94.5),            // бычья вместо медвежьей
+    ];
+    expect(PatternDetector.isGappingSideBySide(candles, STOCKS).found).toBe(false);
+  });
+
+  it('старое имя закреплено за тем же ID SIDE_BY_SIDE_GAP_DOWN (алиас для журналов)', async () => {
+    const { getPatternId } = await import('../../utils/pattern_ids');
+    expect(getPatternId('ГЭП СМЕЖНЫХ ЧЁРНЫХ СВЕЧЕЙ (ВНИЗ)')).toBe('SIDE_BY_SIDE_GAP_DOWN');
+    expect(getPatternId('ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ (ВНИЗ)')).toBe('SIDE_BY_SIDE_GAP_DOWN');
+  });
+});

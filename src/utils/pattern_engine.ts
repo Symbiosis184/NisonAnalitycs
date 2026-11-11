@@ -1028,11 +1028,14 @@ export class PatternDetector {
       return { found: false, name: '' };
     }
 
+    // ЯС, гл. «Окна» / модели продолжения: бычья — гэп вверх и две БЕЛЫЕ свечи;
+    // медвежья — гэп вниз и две ЧЁРНЫЕ свечи. Ранее обе ветки требовали белые свечи.
     if (c0.isBullish && c1.low > c0.high && this.precededByRally(candles.slice(0, -3))) {
       return { found: true, name: 'ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ' };
     }
-    if (c0.isBearish && c1.high < c0.low && this.precededByDecline(candles.slice(0, -3))) {
-      return { found: true, name: 'ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ (ВНИЗ)' };
+    if (c0.isBearish && c1.isBearish && c2.isBearish && c1.high < c0.low &&
+      this.precededByDecline(candles.slice(0, -3))) {
+      return { found: true, name: 'ГЭП СМЕЖНЫХ ЧЁРНЫХ СВЕЧЕЙ (ВНИЗ)' };
     }
     return { found: false, name: '' };
   }
