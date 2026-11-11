@@ -393,8 +393,11 @@ export class PatternDetector {
 
   /** Гл. 4 ЯС: открытие второй свечи строго за закрытием первой. */
   static isDarkCloudCover(c1: Candle, c2: Candle, prev: Candle[], context?: PatternContext): PatternDetection {
-    if (!(c1.isBullish && c1.isLongCandle)) return { found: false, name: '' };
-    if (!(c2.isBearish && c2.isLongCandle)) return { found: false, name: '' };
+    // P2-1: канон ЯС гл. «Построение свечей» — длинное тело относительно предшествующих
+    // свечей (OR с абсолютной мерой — как в isTowerFormation; проектная эвристика).
+    const winDCC = this.relWindow([...prev, c1, c2], prev.length);
+    if (!(c1.isBullish && (this.isLongRelative(c1, winDCC) || c1.isLongCandle))) return { found: false, name: '' };
+    if (!(c2.isBearish && (this.isLongRelative(c2, [...winDCC.slice(1), c1]) || c2.isLongCandle))) return { found: false, name: '' };
     if (!this.precededByRally(prev)) return { found: false, name: '' };
     if (c2.close >= c1.bodyMid || c2.close <= c1.open) return { found: false, name: '' };
 
@@ -416,8 +419,10 @@ export class PatternDetector {
   }
 
   static isPiercingPattern(c1: Candle, c2: Candle, prev: Candle[], context?: PatternContext): PatternDetection {
-    if (!(c1.isBearish && c1.isLongCandle)) return { found: false, name: '' };
-    if (!(c2.isBullish && c2.isLongCandle)) return { found: false, name: '' };
+    // P2-1: зеркально завесе — относительная длина тела (канон ЯС, OR-комбинация).
+    const winPP = this.relWindow([...prev, c1, c2], prev.length);
+    if (!(c1.isBearish && (this.isLongRelative(c1, winPP) || c1.isLongCandle))) return { found: false, name: '' };
+    if (!(c2.isBullish && (this.isLongRelative(c2, [...winPP.slice(1), c1]) || c2.isLongCandle))) return { found: false, name: '' };
     if (!this.precededByDecline(prev)) return { found: false, name: '' };
     if (c2.close <= c1.bodyMid || c2.close >= c1.open) return { found: false, name: '' };
 
