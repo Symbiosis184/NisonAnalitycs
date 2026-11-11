@@ -1198,7 +1198,11 @@ export class PatternDetector {
     const avg = VolumeAnalyzer.getAverageVolume(candles.slice(0, -1));
     if (!(avg > 0 && candle.volume > avg * 1.5)) return { found: false, name: '' };
     if (candle.totalRange <= 0 || candle.body > candle.totalRange * 0.3) return { found: false, name: '' };
-    const seg = candles.slice(-20);
+    // P2-5: позиция считается по окну ПРЕДШЕСТВУЮЩИХ свечей — новый экстремум
+    // не должен автоматически давать pos=0/1 (иначе любая свеча за пределами
+    // старого диапазона «накапливается» или «распределяется»).
+    const seg = candles.slice(0, -1).slice(-20);
+    if (seg.length === 0) return { found: false, name: '' };
     const lo = Math.min(...seg.map(c => c.low));
     const hi = Math.max(...seg.map(c => c.high));
     if (hi <= lo) return { found: false, name: '' };
