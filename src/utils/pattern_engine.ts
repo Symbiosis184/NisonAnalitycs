@@ -122,6 +122,28 @@ export class PatternDetector {
   }
 
   /**
+   * ИСПРАВЛЕНО P0-1 (гл. 4 ЯС, «Молот и повешенный»): повешенный имеет ту же
+   * форму, что молот — малое тело в ВЕРХНЕЙ части диапазона и длинная нижняя
+   * тень; отличается только контекстом (формируется после роста). Общий хелпер
+   * atLocalHigh написан для падающей звезды (тело внизу) и с условием
+   * `close >= (high+low)/2` детектора повешенного взаимно исключался — модель
+   * не срабатывала никогда при prevCandles.length >= 5. Здесь та же привязка
+   * к локальному максимуму, но тело проверяется в верхней половине диапазона.
+   */
+  private static atLocalHighBodyUp(candle: Candle, prevCandles: Candle[]): boolean {
+    if (prevCandles.length < 5) return true;
+    const segNoSelf = prevCandles.slice(-8);
+    const lo2 = Math.min(...segNoSelf.map(c => c.low));
+    const hi2 = Math.max(...segNoSelf.map(c => c.high));
+    if (hi2 <= lo2) return true;
+    const priorBand = hi2 - (hi2 - lo2) * 0.35;
+    const bodyAtPriorTop = Math.max(candle.open, candle.close) >= priorBand ||
+      (candle.lowerWick >= candle.body * 2 && candle.high >= lo2);
+    const bodyInUpperHalf = candle.close >= (candle.high + candle.low) / 2;
+    return bodyAtPriorTop && bodyInUpperHalf;
+  }
+
+  /**
    * Разворотная модель требует уже существующего движения, которое она может
    * развернуть. Близость к экстремуму сама по себе трендом не является.
    * Сначала используется структура свингов; если её недостаточно — направление
@@ -282,7 +304,7 @@ export class PatternDetector {
     if (candle.lowerWick < candle.body * 2) return { found: false, name: '' };
     if (candle.upperWick > candle.totalRange * 0.2) return { found: false, name: '' };
     if (candle.close < (candle.high + candle.low) / 2) return { found: false, name: '' };
-    if (!this.atLocalHigh(candle, prevCandles)) return { found: false, name: '' };
+    if (!this.atLocalHighBodyUp(candle, prevCandles)) return { found: false, name: '' };
     if (!this.precededByRally(prevCandles)) return { found: false, name: '' };
 
     let name = 'ПОВЕШЕННЫЙ';
