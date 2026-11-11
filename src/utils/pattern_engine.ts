@@ -158,6 +158,23 @@ export class PatternDetector {
     return this.maDirection(prev) === 'down';
   }
 
+  /**
+   * P2-6 (гл. 6 ЯС): контекст для разворотных моделей основания с длинной
+   * формацией (лестничное дно — 5 свечей). При достаточной предыстории
+   * требует подтверждённый спад как precededByDecline; при короткой истории
+   * (prev.length < 4) допускает модель, если сама формация начинается от
+   * локального экстремума (дно/вершина последних 10 баров до формации) —
+   * проектная эвристика вместо жёсткого минимума предыстории.
+   */
+  private static precededByDeclineOrFormation(prev: Candle[], dir: 'up' | 'down'): boolean {
+    if (prev.length >= 4) return dir === 'down' ? this.precededByDecline(prev) : this.precededByRally(prev);
+    const window = prev.slice(-10);
+    if (window.length < 3) return false;
+    const closes = window.map(x => x.close);
+    const last = closes[closes.length - 1];
+    return dir === 'down' ? last <= Math.min(...closes) : last >= Math.max(...closes);
+  }
+
   private static precededByRally(prev: Candle[]): boolean {
     if (prev.length < 4) return false;
     const swing = getSwingTrend(prev);
@@ -1008,6 +1025,11 @@ export class PatternDetector {
    */
   static isLadderBottom(candles: Candle[]): PatternDetection {
     if (candles.length < 5) return { found: false, name: '' };
+    // P2-6 (гл. 6 ЯС): разворотная модель основания — требует предшествующего спада.
+    // Формация состоит из 5 свечей, поэтому в контекст входят и три снижающиеся
+    // чёрные «ступени» самой лестницы: при короткой предыстории (prev.length < 4)
+    // fallback проверяет, что формация начинается от локального дна.
+    if (!this.precededByDeclineOrFormation(candles.slice(0, -2), 'down')) return { found: false, name: '' };
     const [c1, c2, c3, c4, c5] = candles.slice(-5);
     if (!([c1, c2, c3].every(c => c.isBearish))) return { found: false, name: '' };
     if (!(c2.close < c1.close && c3.close < c2.close)) return { found: false, name: '' };

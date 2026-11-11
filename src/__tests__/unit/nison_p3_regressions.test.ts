@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest';
 import { Candle } from '../../utils/candle';
 import { detectGaps } from '../../utils/gaps';
 import { collectSwingLevels } from '../../utils/nison_targets';
+import { PatternDetector } from '../../utils/pattern_engine';
 
 const cc = (o: number, h: number, l: number, cl: number, v = 100): Candle =>
   new Candle({ time: 0, open: o, high: h, low: l, close: cl, volume: v });
@@ -101,5 +102,28 @@ describe('P3-6: collectSwingLevels — дедупликация уровней �
     ];
     const highs = collectSwingLevels(c, 'long');
     expect(highs).toEqual([110, 108]);
+  });
+});
+
+// P2-6 (регресс): «Лестничное дно» — разворотная модель основания, требует
+// нисходящего контекста (гл. 6 ЯС). Фикстура с flat-базой на 110 и лестницей
+// на 94..99 не должна детектироваться: формация начинается не от дна базы.
+describe('P2-6 regression: ladder bottom trend context', () => {
+  const cc = (o: number, h: number, l: number, cl: number) => new Candle({ time: 0, open: o, high: h, low: l, close: cl, volume: 100 });
+  it('не детектирует лестничное дно при восходящем/боковом предшествующем тренде', () => {
+    let seq = 0;
+    const remap = (arr: Candle[]) => arr.map(x => new Candle({ ...x, time: ++seq }));
+    const upBase = Array.from({ length: 20 }, (_, i) => cc(100 + i, 101 + i, 99.5 + i, 100.5 + i));
+    const ladder = [cc(120, 120.5, 117.5, 118), cc(118, 118.5, 115.5, 116), cc(116, 116.5, 113.5, 114), cc(114, 115.5, 113.5, 114.5), cc(114.5, 119.5, 114, 119)];
+    const res = PatternDetector.isLadderBottom(remap([...upBase, ...ladder]));
+    expect(res.found).toBe(false);
+  });
+  it('детектирует при подтверждённом предшествующем спаде', () => {
+    let seq = 0;
+    const remap = (arr: Candle[]) => arr.map(x => new Candle({ ...x, time: ++seq }));
+    const downBase = Array.from({ length: 20 }, (_, i) => cc(140 - i, 140.5 - i, 138.5 - i, 139 - i));
+    const ladder = [cc(120, 120.5, 117.5, 118), cc(118, 118.5, 115.5, 116), cc(116, 116.5, 113.5, 114), cc(114, 115.5, 113.5, 114.5), cc(114.5, 119.5, 114, 119)];
+    const res = PatternDetector.isLadderBottom(remap([...downBase, ...ladder]));
+    expect(res.found).toBe(true);
   });
 });
