@@ -136,3 +136,17 @@ describe('P1-1: завеса/просвет на непрерывном рынк
     expect(PatternDetector.isDarkCloudCover(c1, c2, prev).found).toBe(false);
   });
 });
+
+describe('P1-2: приоритет S/R-зоны над свингом при равном расстоянии (ЯС «Поддержка и сопротивление»)', () => {
+  it('зона и свинг на одинаковом расстоянии -> возвращается kind === zone', async () => {
+    const { nearestStructuralTarget } = await import('../../utils/nison_targets');
+    // Коридор 50..60 вокруг цены входа 55: зона сопротивления кластеризуется ровно на 60,
+    // там же находится свинг-максимум (high = 60).
+    const flat: Candle[] = [];
+    for (let i = 0; i < 80; i++) flat.push(c(55, 60, 50, 55));
+    const t = nearestStructuralTarget(55, 'long', flat, { noiseFloor: 0.5, maxReward: 20 });
+    expect(t).not.toBeNull();
+    expect(t!.level).toBeCloseTo(60, 5);
+    expect(t!.kind).toBe('zone');
+  });
+});
