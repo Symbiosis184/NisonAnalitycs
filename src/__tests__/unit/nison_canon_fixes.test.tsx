@@ -14,6 +14,10 @@ import { MarketContextSection } from '../../components/analysis/MarketContextSec
 
 const sig = (direction: 'long' | 'short', quality: number) => ({ direction, quality });
 
+// Контекст рынка «акции» (как в nison_audit_regressions.test.ts): гэп-модели
+// оцениваются со строгой рыночной семантикой разрывов.
+const STOCKS = { market: 'stocks' as const };
+
 const cc = (o: number, h: number, l: number, cl: number, v = 100): Candle =>
   new Candle({ time: 0, open: o, high: h, low: l, close: cl, volume: v });
 
