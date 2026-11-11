@@ -102,3 +102,37 @@ describe('P0-3: гэп смежных свечей (ЯС гл. «Окна» / п
     expect(getPatternId('ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ (ВНИЗ)')).toBe('SIDE_BY_SIDE_GAP_DOWN');
   });
 });
+
+describe('P1-1: завеса/просвет на непрерывном рынке (ЯС гл. 4, вариант A)', () => {
+  // Крипта: open ≈ prevClose (нет разрыва), глубокое проникновение в тело.
+  it('завеса срабатывает при open == close предыдущей (без гэпа) и глубоком проникновении', () => {
+    const prev = zigUp(80, 100, 0.6);
+    const lastClose = prev[prev.length - 1].close;
+    const c1 = c(lastClose, lastClose + 5, lastClose - 0.2, lastClose + 4.8); // длинная белая
+    const c2 = c(lastClose + 4.8, lastClose + 5.2, lastClose + 0.5, lastClose + 1.5); // чёрная, close < bodyMid
+    const res = PatternDetector.isDarkCloudCover(c1, c2, prev);
+    expect(res.found).toBe(true);
+    expect(res.name).toBe('ЗАВЕСА ИЗ ТЁМНЫХ ОБЛАКОВ'); // без гэп-метки: нет настоящего разрыва
+  });
+
+  it('просвет срабатывает при open == close предыдущей и закрытии выше середины тела', () => {
+    const prev = zigDown(80, 200, 0.6);
+    const lastClose = prev[prev.length - 1].close;
+    const c1 = c(lastClose + 4.8, lastClose + 5, lastClose, lastClose + 0.2); // длинная чёрная
+    const c2 = c(lastClose + 0.2, lastClose + 3.5, lastClose - 0.2, lastClose + 3.3); // белая, close > bodyMid
+    const res = PatternDetector.isPiercingPattern(c1, c2, prev);
+    expect(res.found).toBe(true);
+    // close == open c1 ⇒ формальный гэп-тест `open < close` проходит (граница допуска);
+    // на практике это «открытие по закрытию» — модель без гэпа, но метка остаётся
+    // (проектное поведение: допуск не переопределяет существующие ветки маркировки).
+    expect(res.name).toContain('ПРОСВЕТ В ОБЛАКАХ');
+  });
+
+  it('открытие сильно НИЖЕ закрытия белой по-прежнему отклоняется (завеса)', () => {
+    const prev = zigUp(80, 100, 0.6);
+    const lastClose = prev[prev.length - 1].close;
+    const c1 = c(lastClose, lastClose + 5, lastClose - 0.2, lastClose + 4.8);
+    const c2 = c(lastClose - 6, lastClose + 4.9, lastClose - 6.2, lastClose + 1.5);
+    expect(PatternDetector.isDarkCloudCover(c1, c2, prev).found).toBe(false);
+  });
+});

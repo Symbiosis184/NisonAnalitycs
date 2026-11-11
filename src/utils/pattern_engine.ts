@@ -389,14 +389,20 @@ export class PatternDetector {
     return { found: true, name };
   }
 
-  /** Гл. 4 ЯС: открытие второй свечи строго за закрытием первой. */
+  /**
+   * Гл. 4 ЯС: для акций Нисон допускает открытие выше ЦЕНЫ ЗАКРЫТИЯ предыдущей
+   * свечи (не обязательно выше максимума). На непрерывном рынке (крипта) open ≈
+   * prevClose, поэтому жёсткое `open > close` делало модель недостижимой —
+   * используется адаптивный допуск (#P1-1, вариант A; допуск 0.15 — проектная эвристика).
+   */
   static isDarkCloudCover(c1: Candle, c2: Candle, prev: Candle[], context?: PatternContext): PatternDetection {
     if (!(c1.isBullish && c1.isLongCandle)) return { found: false, name: '' };
     if (!(c2.isBearish && c2.isLongCandle)) return { found: false, name: '' };
     if (!this.precededByRally(prev)) return { found: false, name: '' };
     if (c2.close >= c1.bodyMid || c2.close <= c1.open) return { found: false, name: '' };
 
-    if (c2.open <= c1.close) return { found: false, name: '' };
+    const tol = this.adaptiveTol([...prev.slice(-20), c1], 0.15);
+    if (c2.open < c1.close - tol) return { found: false, name: '' };
 
     let name = 'ЗАВЕСА ИЗ ТЁМНЫХ ОБЛАКОВ';
     if (c2.open > c1.high) name += ' (ГЭП ВЫШЕ МАКСИМУМА)';
@@ -405,13 +411,18 @@ export class PatternDetector {
     return { found: true, name };
   }
 
+  /**
+   * Гл. 4 ЯС: зеркально завесе — открытие ниже цены закрытия предыдущей свечи.
+   * Адаптивный допуск вместо жёсткого `open < close` (#P1-1, вариант A).
+   */
   static isPiercingPattern(c1: Candle, c2: Candle, prev: Candle[], context?: PatternContext): PatternDetection {
     if (!(c1.isBearish && c1.isLongCandle)) return { found: false, name: '' };
     if (!(c2.isBullish && c2.isLongCandle)) return { found: false, name: '' };
     if (!this.precededByDecline(prev)) return { found: false, name: '' };
     if (c2.close <= c1.bodyMid || c2.close >= c1.open) return { found: false, name: '' };
 
-    if (c2.open >= c1.close) return { found: false, name: '' };
+    const tol = this.adaptiveTol([...prev.slice(-20), c1], 0.15);
+    if (c2.open > c1.close + tol) return { found: false, name: '' };
 
     let name = 'ПРОСВЕТ В ОБЛАКАХ';
     if (c2.open < c1.low) name += ' (ГЭП НИЖЕ МИНИМУМА)';
