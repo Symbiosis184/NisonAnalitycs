@@ -9,6 +9,7 @@ import {
   getPatternId, requiresNextCandleConfirmation, getPatternCandleCount, isReversalPatternName,
 } from '../../utils/pattern_ids';
 import { aggregateConsensus } from '../../utils/consensus';
+import { nearestStructuralTarget } from '../../utils/nison_targets';
 import { translateString } from '../../i18n/dictionaries';
 import { MarketContextSection } from '../../components/analysis/MarketContextSection';
 
@@ -209,5 +210,24 @@ describe('P1-1: Завеса из тёмных облаков / Просвет �
     const firstBlack = cc(110, 110.5, 99, 100);
     expect(PatternDetector.isPiercingPattern(firstBlack, cc(101, 109, 100.5, 108), down, STOCKS).found).toBe(false);
     expect(PatternDetector.isPiercingPattern(firstBlack, cc(99.5, 109, 99, 108), down, STOCKS).found).toBe(true);
+  });
+});
+
+describe('P1-2: nearestStructuralTarget — приоритет S/R-зоны над свингом при равном расстоянии', () => {
+  // ЯС, глава «Поддержка и сопротивление»: уровни S/R — ключевые ориентиры,
+  // фрактальные экстремумы вторичны. Компаратор был инвертирован (fix #P1-2).
+  const mk = (o: number, h: number, l: number, cl: number) =>
+    new Candle({ time: 0, open: o, high: h, low: l, close: cl, volume: 100 });
+
+  it('зона и свинг на одинаковом расстоянии → возвращается kind === zone', () => {
+    const candles: Candle[] = [];
+    // Плоский коридор с касаниями потолка 40.5 → сильная зона сопротивления;
+    // последний локальный максимум также ровно 40.5 → то же расстояние от входа.
+    for (let i = 0; i < 60; i++) candles.push(mk(39.5, 40.5, 39, 39.5));
+    candles.push(mk(39.5, 40.5, 39, 40.4)); // подтверждение свинг-хая на 40.5
+    candles.push(mk(40.4, 40.4, 39.2, 39.3));
+    const t = nearestStructuralTarget(38, 'long', candles, { noiseFloor: 0.5, maxReward: 20 });
+    expect(t).not.toBeNull();
+    expect(t!.kind).toBe('zone');
   });
 });
