@@ -2,7 +2,7 @@ import { Candle } from './candle';
 import { ema, sma } from './indicators';
 import { ZoneVoter, timeframeKey, type TimeframeKey } from './zone_voter';
 import { findSwings } from './levels';
-import { getSwingTrend } from './trend_detection';
+import { getSwingTrend, isFlatMarket } from './trend_detection';
 import { getPatternCandleCount } from './pattern_ids';
 
 const SWING_SPAN_BY_TF: Record<TimeframeKey, number> = {
@@ -531,9 +531,13 @@ export class PatternDetector {
     if (!(c2.open >= c1.bodyBottom && c2.open <= c1.bodyTop)) return { found: false, name: '' };
     if (!(c3.open >= c2.bodyBottom && c3.open <= c2.bodyTop)) return { found: false, name: '' };
     const prior = candles.slice(0, -3);
-    // Модель разворачивает существующий спад; близость к минимуму без тренда
-    // не является самостоятельным книжным основанием.
-    if (!this.precededByDecline(prior)) return { found: false, name: '' };
+    // ИСПРАВЛЕНО (гл. 7 ЯС «Три наступающих белых солдата»): модель формируется
+    // «на рынке, прошедшем длительный спад или находящемся в затяжной консолидации»
+    // в зоне низких цен. Требуется спад ИЛИ база/консолидация; боковик-основание
+    // валиден по книге. Противостоящий подтверждённый рост блокирует сигнал.
+    if (!this.precededByDecline(prior) && !isFlatMarket(prior)) {
+      return { found: false, name: '' };
+    }
 
     return { found: true, name: 'ТРИ БЕЛЫХ СОЛДАТА' };
   }

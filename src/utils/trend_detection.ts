@@ -53,7 +53,7 @@ export function getSwingTrend(candles: Candle[], k: number = 3): TrendContext {
 // Строгий боковик: цена внутри диапазона последних lookback баров и MA65
 // горизонтальна (наклон за последние ~10 баров меньше порога). Нисон: в
 // flat-рынке направление не определяется — торговать продолжение нельзя.
-function isFlatMarket(candles: Candle[]): boolean {
+export function isFlatMarket(candles: Candle[]): boolean {
   if (candles.length < 40) return false;
   const closes = candles.map(c => c.close);
   const win = closes.slice(-Math.min(60, closes.length));
