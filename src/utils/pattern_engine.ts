@@ -1144,11 +1144,15 @@ export class PatternDetector {
     const bot = Math.min(...cons.map(c => c.low));
     const avg = VolumeAnalyzer.getAverageVolume(candles.slice(0, -1));
     const volOk = avg > 0 && last.volume > avg * 1.3;
+    // P2-1g (гл. «Построение свечей» ЯС): длинное тело — относительное, по меридиане
+    // предшествующих тел; абсолютная доля собственного диапазона недостаточна.
+    const winCB = this.relWindow(candles, candles.length - 1);
+    const longBody = this.isLongRelative(last, winCB) || last.isLongCandle;
 
-    if (last.isBullish && last.isLongCandle && last.close > top && volOk) {
+    if (last.isBullish && longBody && last.close > top && volOk) {
       return { found: true, name: 'ПРОРЫВ КОНСОЛИДАЦИИ (БЫЧИЙ)' };
     }
-    if (last.isBearish && last.isLongCandle && last.close < bot && volOk) {
+    if (last.isBearish && longBody && last.close < bot && volOk) {
       return { found: true, name: 'ПРОРЫВ КОНСОЛИДАЦИИ (МЕДВЕЖИЙ)' };
     }
     return { found: false, name: '' };
