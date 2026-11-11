@@ -965,14 +965,23 @@ export class PatternDetector {
     return { found: false, name: '' };
   }
 
+  /**
+   * P2-1e (гл. 6 ЯС): «Лестничное дно» — три чёрные свечи с последовательно
+   * снижающимися закрытиями («ступени вниз»), затем четвёртая свеча НЕ
+   * закрывается ниже третьей (падение остановлено), и пятая — длинная белая
+   * свеча, чьё закрытие превышает максимумы обеих последних свечей формации.
+   */
   static isLadderBottom(candles: Candle[]): PatternDetection {
     if (candles.length < 5) return { found: false, name: '' };
     const [c1, c2, c3, c4, c5] = candles.slice(-5);
     if (!([c1, c2, c3].every(c => c.isBearish))) return { found: false, name: '' };
     if (!(c2.close < c1.close && c3.close < c2.close)) return { found: false, name: '' };
-    if (!(c4.isBearish && c4.upperWick >= c4.totalRange * 0.3)) return { found: false, name: '' };
-    if (!(c5.isBullish && c5.isLongCandle && c5.close > c4.high)) return { found: false, name: '' };
-    return { found: true, name: 'ЛЕСТНИЧНОЕ ДНО' };
+    // «Ступень» останавливается: четвёртая свеча не закрывается ниже третьей.
+    if (!(c4.close >= c3.close)) return { found: false, name: '' };
+    // Разворот: длинная белая свеча над максимумами последних двух свечей.
+    if (!(c5.isBullish && c5.isLongCandle)) return { found: false, name: '' };
+    if (!(c5.close > Math.max(c4.high, c5.open))) return { found: false, name: '' };
+    return { found: true, name: 'ЛЕСТНИЧНОЕ ДНО', formationSize: 5 };
   }
 
   /**
