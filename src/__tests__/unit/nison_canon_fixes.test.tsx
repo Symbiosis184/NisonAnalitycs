@@ -246,3 +246,23 @@ describe('P1-2: nearestStructuralTarget — приоритет S/R-зоны на
     }
   });
 });
+
+describe('P1-3: candle.gapUpFrom/gapDownFrom — гэп как разрыв диапазонов (канон ЯС «Окна»)', () => {
+  it('open > prevClose, но low <= prevHigh → gapUpFrom === false (не гэп)', () => {
+    const prev = cc(100, 102, 99, 101);
+    const cur = cc(103, 104, 101.5, 103.5); // open выше close предыдущей, но диапазон перекрывается
+    expect(cur.gapUpFrom(prev)).toBe(false);
+  });
+
+  it('low > prevHigh → gapUpFrom === true (настоящий разрыв диапазонов)', () => {
+    const prev = cc(100, 102, 99, 101);
+    const cur = cc(103, 104, 102.5, 103.5);
+    expect(cur.gapUpFrom(prev)).toBe(true);
+  });
+
+  it('high < prevLow → gapDownFrom === true; high >= prevLow → false', () => {
+    const prev = cc(100, 102, 99, 101);
+    expect(cc(98, 98.5, 96, 97).gapDownFrom(prev)).toBe(true);
+    expect(cc(99.5, 100, 97, 98).gapDownFrom(prev)).toBe(false);
+  });
+});
