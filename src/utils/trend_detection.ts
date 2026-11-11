@@ -64,9 +64,19 @@ export function isFlatMarket(candles: Candle[]): boolean {
   const rangePct = (hi - lo) / mid;
   if (rangePct > 0.08) return false; // широкий диапазон — не флэт
 
-  const ma65 = nisonSma(closes, 65); // Нисон гл. 13: SMA65
-  const lastMa = ma65[ma65.length - 1];
-  const prevMa = ma65[Math.max(0, ma65.length - 11)];
+  // ИСПРАВЛЕНО (гл. 13 ЯС): SMA65 требует 65 наблюдений; при истории меньше
+  // периода sma() возвращает NaN, и прежний guard отбрасывал корректный
+  // узкий боковик (40–64 бара). Каноническое окно SMA65 используется только
+  // когда данных достаточно; иначе — усечённое окно (min(65, n)), как это
+  // уже делает maDirection в pattern_engine.
+  const period = Math.min(65, closes.length);
+  const meanAt = (end: number): number => {
+    const from = Math.max(0, end - period + 1);
+    const part = closes.slice(from, end + 1);
+    return part.reduce((sum, v) => sum + v, 0) / part.length;
+  };
+  const lastMa = meanAt(closes.length - 1);
+  const prevMa = meanAt(Math.max(0, closes.length - 11));
   if (!Number.isFinite(lastMa) || !Number.isFinite(prevMa) || lastMa <= 0) return false;
   const slopePct = Math.abs((lastMa - prevMa) / lastMa);
   return slopePct < 0.005; // Проектный порог горизонтальности MA65.
