@@ -1,6 +1,6 @@
 // Регрессии методологического канон-аудита (ЯС/ЗГ Стива Нисона).
 // Каждый блок закрепляет исправление одной задачи P0/P1 отдельным тестом.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as React from 'react';
 import { render } from '@testing-library/react';
 import { Candle } from '../../utils/candle';
@@ -9,7 +9,8 @@ import {
   getPatternId, requiresNextCandleConfirmation, getPatternCandleCount, isReversalPatternName,
 } from '../../utils/pattern_ids';
 import { aggregateConsensus } from '../../utils/consensus';
-import { nearestStructuralTarget } from '../../utils/nison_targets';
+import { nearestStructuralTarget, collectSwingLevels } from '../../utils/nison_targets';
+import { ZoneVoter } from '../../utils/zone_voter';
 import { translateString } from '../../i18n/dictionaries';
 import { MarketContextSection } from '../../components/analysis/MarketContextSection';
 
@@ -220,14 +221,28 @@ describe('P1-2: nearestStructuralTarget — приоритет S/R-зоны на
     new Candle({ time: 0, open: o, high: h, low: l, close: cl, volume: 100 });
 
   it('зона и свинг на одинаковом расстоянии → возвращается kind === zone', () => {
+    // Фикстура гарантированно даёт свинг-хай на 40.5 (локальный максимум).
     const candles: Candle[] = [];
-    // Плоский коридор с касаниями потолка 40.5 → сильная зона сопротивления;
-    // последний локальный максимум также ровно 40.5 → то же расстояние от входа.
-    for (let i = 0; i < 60; i++) candles.push(mk(39.5, 40.5, 39, 39.5));
-    candles.push(mk(39.5, 40.5, 39, 40.4)); // подтверждение свинг-хая на 40.5
+    for (let i = 0; i < 30; i++) candles.push(mk(39.5, 40, 39, 39.5));
+    candles.push(mk(39.5, 40.5, 39, 40.4)); // fractal high = 40.5
     candles.push(mk(40.4, 40.4, 39.2, 39.3));
-    const t = nearestStructuralTarget(38, 'long', candles, { noiseFloor: 0.5, maxReward: 20 });
-    expect(t).not.toBeNull();
-    expect(t!.kind).toBe('zone');
+    const sw = collectSwingLevels(candles, 'long');
+    expect(sw).toContain(40.5);
+
+    // Сильная S/R-зона ровно на том же уровне 40.5 мокируется через ZoneVoter.collect
+    // (построение естественно «сильной» зоны из ≥3 независимых голосов в фикстуре
+    // нестабильно зависит от внутренних эвристик голосовалки).
+    const spy = vi.spyOn(ZoneVoter, 'collect').mockReturnValue({
+      support: [],
+      resistance: [{ level: 40.5, strong: true } as any],
+    });
+    try {
+      const t = nearestStructuralTarget(38, 'long', candles, { noiseFloor: 0.5, maxReward: 20 });
+      expect(t).not.toBeNull();
+      expect(t!.level).toBe(40.5);
+      expect(t!.kind).toBe('zone'); // при равенстве расстояний — приоритет зоне (канон ЯС)
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
