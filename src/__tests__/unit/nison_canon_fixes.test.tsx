@@ -266,3 +266,26 @@ describe('P1-3: candle.gapUpFrom/gapDownFrom — гэп как разрыв ди
     expect(cc(99.5, 100, 97, 98).gapDownFrom(prev)).toBe(false);
   });
 });
+
+describe('P2-2: isLevelTest — SMA вместо EMA (канон ЯС «Скользящие средние»)', () => {
+  // Нисон использует простые скользящие средние (в т.ч. 65-дневную); в zone_voter.ts
+  // зафиксировано «SMA, а не EMA: канон». Проверяем, что удержание считается по SMA20:
+  // на нисходящем рынке SMA20 лежит ВЫШЕ EMA20 — свеча, касающаяся SMA20, должна
+  // дать «ТЕСТ ПОДДЕРЖКИ», тогда как старая EMA-привязка её пропускала.
+  it('нисходящий рынок: low касается SMA20 и close выше неё → ТЕСТ ПОДДЕРЖКИ (БЫЧИЙ)', () => {
+    const candles: Candle[] = [];
+    // Плавный спад с 130 до ~103 за 40 баров
+    for (let i = 0; i < 40; i++) {
+      const o = 130 - i * 0.7;
+      const c = o - 0.6;
+      candles.push(cc(o, o + 0.4, c - 0.4, c));
+    }
+    const closes = candles.map((k) => k.close);
+    const s20 = closes.slice(-20).reduce((a, b) => a + b, 0) / 20; // SMA20 последних 20 закрытий
+    // Свеча отбивается ровно от SMA20: low <= SMA*1.005, close > SMA, бычья
+    const bounce = cc(s20 - 0.2, s20 + 1.2, s20 - 0.5, s20 + 1.0);
+    const res = PatternDetector.isLevelTest([...candles, bounce]);
+    expect(res.found).toBe(true);
+    expect(res.name).toContain('ТЕСТ ПОДДЕРЖКИ');
+  });
+});
