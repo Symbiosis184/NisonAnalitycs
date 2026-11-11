@@ -122,6 +122,25 @@ export class PatternDetector {
   }
 
   /**
+   * P0-1 (ЯС, гл. «Молот и повешенный»): повешенный имеет ТУ ЖЕ форму, что
+   * молот — малое тело в ВЕРХНЕЙ части диапазона, длинная нижняя тень;
+   * отличие только в контексте (после роста). atLocalHigh написан для
+   * падающей звезды (тело внизу) и давал с isHangingMan пустое пересечение.
+   */
+  private static atLocalHighBodyUp(candle: Candle, prevCandles: Candle[]): boolean {
+    if (prevCandles.length < 5) return true;
+    const seg = prevCandles.slice(-8);
+    const lo = Math.min(...seg.map(c => c.low));
+    const hi = Math.max(...seg.map(c => c.high));
+    if (hi <= lo) return true;
+    const priorBand = hi - (hi - lo) * 0.35; // проектная эвристика (35% окна), в книгах порога нет
+    const bodyAtPriorTop = Math.max(candle.open, candle.close) >= priorBand ||
+      (candle.lowerWick >= candle.body * 2 && candle.high >= lo);
+    const bodyInUpperHalf = candle.close >= (candle.high + candle.low) / 2;
+    return bodyAtPriorTop && bodyInUpperHalf;
+  }
+
+  /**
    * Разворотная модель требует уже существующего движения, которое она может
    * развернуть. Близость к экстремуму сама по себе трендом не является.
    * Сначала используется структура свингов; если её недостаточно — направление
@@ -282,7 +301,8 @@ export class PatternDetector {
     if (candle.lowerWick < candle.body * 2) return { found: false, name: '' };
     if (candle.upperWick > candle.totalRange * 0.2) return { found: false, name: '' };
     if (candle.close < (candle.high + candle.low) / 2) return { found: false, name: '' };
-    if (!this.atLocalHigh(candle, prevCandles)) return { found: false, name: '' };
+    // P0-1: тело ВВЕРХУ диапазона — atLocalHighBodyUp, а не atLocalHigh (падающая звезда).
+    if (!this.atLocalHighBodyUp(candle, prevCandles)) return { found: false, name: '' };
     if (!this.precededByRally(prevCandles)) return { found: false, name: '' };
 
     let name = 'ПОВЕШЕННЫЙ';
