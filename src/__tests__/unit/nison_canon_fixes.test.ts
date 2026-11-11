@@ -3,6 +3,9 @@
 import { describe, it, expect } from 'vitest';
 import { Candle } from '../../utils/candle';
 import { PatternDetector } from '../../utils/pattern_engine';
+import {
+  getPatternId, requiresNextCandleConfirmation, getPatternCandleCount, isReversalPatternName,
+} from '../../utils/pattern_ids';
 
 const cc = (o: number, h: number, l: number, cl: number, v = 100): Candle =>
   new Candle({ time: 0, open: o, high: h, low: l, close: cl, volume: v });
@@ -76,5 +79,48 @@ describe('P0-2: ниже шеи / на шее (гл. 4 ЯС, «Другие мо
     const res = PatternDetector.isNeckFamily(black, white, prevDecline);
     expect(res.found).toBe(true);
     expect(res.name).toBe('НА ШЕЕ');
+  });
+});
+
+describe('P0-3: гэп смежных свечей (гл. 7 ЯС, «Окна»/продолжения)', () => {
+  // По книге: бычья форма — гэп вверх и две БЕЛЫЕ свечи после роста;
+  // медвежья — гэп вниз и две ЧЁРНЫЕ свечи после спада. Прежняя реализация
+  // требовала белых свечей в обеих ветках (нисходящая называлась
+  // «ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ (ВНИЗ)»). Вариант B по решению владельца:
+  // легаси-поведение сохранено методом isGappingSideBySideLegacy под прежним
+  // именем, каноническая медвежья форма получила имя «ГЭП СМЕЖНЫХ ЧЁРНЫХ СВЕЧЕЙ».
+  const STOCKS = { market: 'stocks' as const };
+  const declineHistory = zigDown(12, 130, 2); // финальный close ≈ 104
+  const gapBlackPair = [
+    ...declineHistory,
+    cc(104, 104.3, 94, 94.5),   // длинная медвежья перед гэпом
+    cc(92, 92.4, 83, 83.5),     // гэп вниз (high 92.4 < low 94), чёрная
+    cc(91.9, 92.3, 83.2, 83.9), // близкое открытие/тело, чёрная
+  ];
+
+  it('гэп вниз + две чёрные свечи после спада → ГЭП СМЕЖНЫХ ЧЁРНЫХ СВЕЧЕЙ', () => {
+    const res = PatternDetector.isGappingSideBySide(gapBlackPair, STOCKS);
+    expect(res.found).toBe(true);
+    expect(res.name).toBe('ГЭП СМЕЖНЫХ ЧЁРНЫХ СВЕЧЕЙ');
+  });
+
+  it('та же фикстура с белыми свечами → не находится (канонический метод)', () => {
+    const whitePair = [
+      ...declineHistory,
+      cc(104, 104.3, 94, 94.5),
+      cc(92, 100.4, 91.8, 100),   // белая в гэпе вниз (тело 8)
+      cc(99.9, 108.3, 99.7, 107.6), // белая, близкие открытия/тела (|Δopen|/92 < 0.5%)
+    ];
+    expect(PatternDetector.isGappingSideBySide(whitePair, STOCKS).found).toBe(false);
+    // Легаси-алиас сохраняет прежнее поведение ради неизменных тест-контрактов:
+    expect(PatternDetector.isGappingSideBySideLegacy(whitePair, STOCKS).name)
+      .toBe('ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ (ВНИЗ)');
+  });
+
+  it('новый ID зарегистрирован: подтверждение следующей свечой, размерность 3', () => {
+    expect(getPatternId('ГЭП СМЕЖНЫХ ЧЁРНЫХ СВЕЧЕЙ')).toBe('SIDE_BY_SIDE_GAP_BLACK_DOWN');
+    expect(requiresNextCandleConfirmation('ГЭП СМЕЖНЫХ ЧЁРНЫХ СВЕЧЕЙ')).toBe(true);
+    expect(getPatternCandleCount('ГЭП СМЕЖНЫХ ЧЁРНЫХ СВЕЧЕЙ')).toBe(3);
+    expect(isReversalPatternName('ГЭП СМЕЖНЫХ ЧЁРНЫХ СВЕЧЕЙ')).toBe(false); // продолжение
   });
 });
