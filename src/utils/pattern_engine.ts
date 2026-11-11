@@ -566,7 +566,13 @@ export class PatternDetector {
     return { found: true, name: 'ТРИ ЧЁРНЫХ ВОРОНЫ' };
   }
 
-  /** НОВОЕ (гл. 7 ЯС): «отбитое наступление» — ослабление быков. */
+  /**
+   * P2-1f (гл. 7 ЯС): «отбитое наступление» — ослабление быков.
+   * Канон: три последовательно повышающиеся закрытия белых свечей при
+   * ПОСЛЕДОВАТЕЛЬНО СОКРАЩАЮЩИХСЯ телах (каждая следующая свеча короче
+   * предыдущей). Тень как альтернативный признак удалена: она описывает
+   * другую модель («падающая звезда» / «звёздный» вариант), а не канон.
+   */
   static isAdvanceBlock(candles: Candle[]): PatternDetection {
     if (candles.length < 3) return { found: false, name: '' };
     const c1 = candles[candles.length - 3];
@@ -577,11 +583,10 @@ export class PatternDetector {
     if (!(c2.close > c1.close && c3.close > c2.close)) return { found: false, name: '' };
     if (!this.precededByRally(candles.slice(0, -3))) return { found: false, name: '' };
 
-    const shrinkingBodies = c3.body < c2.body && c2.body < c1.body;
-    const longUpperLastTwo = c2.upperWick > c2.totalRange * 0.3 && c3.upperWick > c3.totalRange * 0.3;
-    if (!(shrinkingBodies || longUpperLastTwo)) return { found: false, name: '' };
+    // Единственный канонический признак: убывающие тела трёх свечей.
+    if (!(c3.body < c2.body && c2.body < c1.body)) return { found: false, name: '' };
 
-    return { found: true, name: 'ОТБИТОЕ НАСТУПЛЕНИЕ' };
+    return { found: true, name: 'ОТБИТОЕ НАСТУПЛЕНИЕ', formationSize: 3 };
   }
 
   /** НОВОЕ (гл. 7 ЯС): «торможение» — малая свеча на плече длинной белой. */
