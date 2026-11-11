@@ -71,11 +71,14 @@ export class Candle {
     return this.high < other.high && this.low > other.low;
   }
 
+  // P1-3: канон ЯС, глава «Окна» (гэп = разрыв ДИАПАЗОНОВ свечей, а не open-vs-close;
+  // см. корректную реализацию в gaps.ts). Прежняя семантика `open < other.close`
+  // противоречила канону; использований в коде/тестах не было.
   gapDownFrom(other: Candle): boolean {
-    return this.open < other.close;
+    return this.high < other.low;
   }
 
   gapUpFrom(other: Candle): boolean {
-    return this.open > other.close;
+    return this.low > other.high;
   }
 }
