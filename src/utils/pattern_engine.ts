@@ -590,6 +590,13 @@ export class PatternDetector {
     // Единственный канонический признак: убывающие тела трёх свечей.
     if (!(c3.body < c2.body && c2.body < c1.body)) return { found: false, name: '' };
 
+    // P2-7 (гл. 7 ЯС): усиление признака — убывание тел должно быть ЗАМЕТНЫМ,
+    // а не шумовым микросокращением. Третье тело обязано быть ощутимо меньше
+    // медианы предшествующих тел предыстории (тот же относительный масштаб,
+    // что и в isSmallRelative). Проектный числовой порог книгой не задан.
+    const winAB = this.relWindow(candles, candles.length - 3);
+    if (!this.isSmallRelative(c3, winAB)) return { found: false, name: '' };
+
     return { found: true, name: 'ОТБИТОЕ НАСТУПЛЕНИЕ', formationSize: 3 };
   }
 
