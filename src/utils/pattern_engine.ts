@@ -703,7 +703,9 @@ export class PatternDetector {
    * Захват за пояс — длинная свеча с открытием на экстремуме сессии.
    */
   static isBullishBelt(c1: Candle, c2: Candle, prev: Candle[], context?: PatternContext): PatternDetection {
-    if (!(c2.isBullish && c2.isLongCandle)) return { found: false, name: '' };
+    // P2-1 (гл. «Построение свечей» ЯС): длинное тело — относительно предшествующих
+    // свечей; OR с абсолютной мерой — как в isTowerFormation (проектная эвристика).
+    if (!(c2.isBullish && (this.isLongRelative(c2, this.relWindow([...prev, c1, c2], prev.length + 1)) || c2.isLongCandle))) return { found: false, name: '' };
     if (c2.lowerWick > c2.totalRange * 0.05) return { found: false, name: '' };
     if (!this.precededByDecline(prev)) return { found: false, name: '' };
 
@@ -713,7 +715,8 @@ export class PatternDetector {
   }
 
   static isBearishBelt(c1: Candle, c2: Candle, prev: Candle[], context?: PatternContext): PatternDetection {
-    if (!(c2.isBearish && c2.isLongCandle)) return { found: false, name: '' };
+    // P2-1 (гл. «Построение свечей» ЯС): зеркально бычьему поясу — относительная длина тела.
+    if (!(c2.isBearish && (this.isLongRelative(c2, this.relWindow([...prev, c1, c2], prev.length + 1)) || c2.isLongCandle))) return { found: false, name: '' };
     if (c2.upperWick > c2.totalRange * 0.05) return { found: false, name: '' };
     if (!this.precededByRally(prev)) return { found: false, name: '' };
 
@@ -794,6 +797,8 @@ export class PatternDetector {
 
   static isDoubleThrustingBull(candles: Candle[]): PatternDetection {
     if (candles.length < 4) return { found: false, name: '' };
+    // P2-6 (гл. 6 ЯС): разворотная модель основания — требует предшествующего спада.
+    if (!this.precededByDecline(candles.slice(0, -4))) return { found: false, name: '' };
     for (let i = 0; i < 2; i++) {
       const a = candles[candles.length - 4 + i * 2];
       const b = candles[candles.length - 3 + i * 2];
@@ -925,7 +930,12 @@ export class PatternDetector {
     const l = candles[candles.length - 1];
     if (!this.precededByRally(candles.slice(0, -5))) return { found: false, name: '' };
 
-    if (!(f.isBullish && f.isLongCandle && l.isBullish && l.isLongCandle)) return { found: false, name: '' };
+    // P2-1 (гл. «Построение свечей» ЯС): длинное тело — относительно предшествующих
+    // свечей; OR с абсолютной мерой — как в isTowerFormation (проектная эвристика).
+    const winRT = this.relWindow(candles, candles.length - 5);
+    const winRL = this.relWindow(candles, candles.length - 1);
+    if (!(f.isBullish && (this.isLongRelative(f, winRT) || f.isLongCandle) &&
+          l.isBullish && (this.isLongRelative(l, winRL) || l.isLongCandle))) return { found: false, name: '' };
     if (l.close <= f.close) return { found: false, name: '' };
     for (const s of small) {
       if (s.high > f.high || s.low < f.low || s.body > f.body * 0.5) return { found: false, name: '' };
@@ -945,7 +955,11 @@ export class PatternDetector {
     const l = candles[candles.length - 1];
     if (!this.precededByDecline(candles.slice(0, -5))) return { found: false, name: '' };
 
-    if (!(f.isBearish && f.isLongCandle && l.isBearish && l.isLongCandle)) return { found: false, name: '' };
+    // P2-1 (гл. «Построение свечей» ЯС): зеркально восходящим трём — относительная длина тела.
+    const winFT = this.relWindow(candles, candles.length - 5);
+    const winFL = this.relWindow(candles, candles.length - 1);
+    if (!(f.isBearish && (this.isLongRelative(f, winFT) || f.isLongCandle) &&
+          l.isBearish && (this.isLongRelative(l, winFL) || l.isLongCandle))) return { found: false, name: '' };
     if (l.close >= f.close) return { found: false, name: '' };
     for (const s of small) {
       if (s.high > f.high || s.low < f.low || s.body > f.body * 0.5) return { found: false, name: '' };
@@ -969,10 +983,14 @@ export class PatternDetector {
       const c0 = candles[candles.length - size];
       const small = candles.slice(candles.length - size + 1, candles.length - 1);
       const last = candles[candles.length - 1];
-      if (!(c0.isBullish && c0.isLongCandle)) continue;
+      // P2-1 (гл. «Построение свечей» ЯС): относительная длина тела первой и
+      // последней свечи (OR с абсолютной мерой — проектная эвристика).
+      const winMH0 = this.relWindow(candles, candles.length - size);
+      const winMHL = this.relWindow(candles, candles.length - 1);
+      if (!(c0.isBullish && (this.isLongRelative(c0, winMH0) || c0.isLongCandle))) continue;
       if (!small.every(s => s.isBearish && s.body <= c0.body * 0.5)) continue;
       if (small.some(s => s.high > c0.high || s.low < c0.low)) continue;
-      if (!(last.isBullish && (last.isLongCandle || last.open > small[small.length - 1].high))) continue;
+      if (!(last.isBullish && ((this.isLongRelative(last, winMHL) || last.isLongCandle) || last.open > small[small.length - 1].high))) continue;
       if (last.close <= Math.max(...small.map(s => s.high))) continue;
       if (!this.precededByRally(candles.slice(0, -size))) continue;
       let name = 'УДЕРЖАНИЕ НА ТАТАМИ';
@@ -996,7 +1014,8 @@ export class PatternDetector {
     // «Ступень» останавливается: четвёртая свеча не закрывается ниже третьей.
     if (!(c4.close >= c3.close)) return { found: false, name: '' };
     // Разворот: длинная белая свеча над максимумами последних двух свечей.
-    if (!(c5.isBullish && c5.isLongCandle)) return { found: false, name: '' };
+    // P2-1 (гл. «Построение свечей» ЯС): относительная длина тела разворота.
+    if (!(c5.isBullish && (this.isLongRelative(c5, this.relWindow(candles, candles.length - 1)) || c5.isLongCandle))) return { found: false, name: '' };
     if (!(c5.close > Math.max(c4.high, c5.open))) return { found: false, name: '' };
     return { found: true, name: 'ЛЕСТНИЧНОЕ ДНО', formationSize: 5 };
   }
@@ -1184,8 +1203,9 @@ export class PatternDetector {
     const hi = Math.max(...seg.map(c => c.high));
     const avg = VolumeAnalyzer.getAverageVolume(candles.slice(0, -1));
 
-    if (!(last.isLongCandle && avg > 0 && last.volume > avg * 1.3)) return { found: false, name: '' };
-
+    // P2-1 (гл. «Построение свечей» ЯС): длинное тело — относительно предшествующих.
+    // P2-7 (гл. «Объём и открытый интерес» ЯС): объём УСИЛИВАЕТ сигнал, а не является
+    // обязательным условием — переведён из жёсткого гейта в метку «(ОБЪЁМ)» ниже.
     const winKR = this.relWindow(candles, n - 1);
     if (!this.isLongRelative(last, winKR)) return { found: false, name: '' };
 
@@ -1196,6 +1216,8 @@ export class PatternDetector {
       name = 'КЛЮЧЕВОЙ РАЗВОРОТ (МЕДВЕЖИЙ)';
     }
     if (!name) return { found: false, name: '' };
+
+    if (avg > 0 && last.volume > avg * 1.3) name += ' (ОБЪЁМ)';
 
     if (last.isBullish && last.close > prev.high) name += ' (ВНЕШНИЙ ДЕНЬ)';
     if (last.isBearish && last.close < prev.low) name += ' (ВНЕШНИЙ ДЕНЬ)';
