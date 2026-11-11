@@ -354,3 +354,16 @@ describe('P2-5: isVolSpin — позиция по окну предшеству�
     expect(res.name).toBe('РАСПРЕДЕЛЕНИЕ');
   });
 });
+
+describe('A1b: patternStory — нисходящий гэп смежных белых свечей (медвежье продолжение)', () => {
+  it('(ВНИЗ) получает медвежий текст, а не «продолжение роста»', async () => {
+    const { patternStory } = await import('../../utils/patterns');
+    const down = patternStory('ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ (ВНИЗ)');
+    expect(down).toContain('медвежий сигнал продолжения');
+    expect(down).not.toContain('продолжение роста');
+    // Бычий вариант остаётся бычьим:
+    const up = patternStory('ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ');
+    expect(up).toContain('продолжение роста');
+    expect(up).not.toContain('медвежий');
+  });
+});
