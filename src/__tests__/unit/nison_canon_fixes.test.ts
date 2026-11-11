@@ -52,3 +52,25 @@ describe('P0-1: повешенный (гл. 4 ЯС, «Молот и повеше
     expect(res.found).toBe(false);
   });
 });
+
+describe('P0-2: ниже шеи / на шее (гл. 4 ЯС, «Другие модели разворота»)', () => {
+  // По книге: «ниже шеи» — белая свеча закрывается вблизи МИНИМУМА предыдущего
+  // дня; «на шее» — ЧУТЬ ВЫШЕ ЦЕНЫ ЗАКРЫТИЯ предыдущего дня. До фикса привязки
+  // были перепутаны (у медвежьей свечи low <= close).
+  const prevDecline = zigDown(12, 130, 1);
+  const black = cc(110, 110.5, 99, 100); // длинная медвежья: тело 10, диапазон 11.5
+
+  it('закрытие белой у минимума чёрной → НИЖЕ ШЕИ', () => {
+    const white = cc(98.8, 99.4, 98.6, 99.3); // малое бычье тело, close ≈ c1.low (99)
+    const res = PatternDetector.isNeckFamily(black, white, prevDecline);
+    expect(res.found).toBe(true);
+    expect(res.name).toBe('НИЖЕ ШЕИ');
+  });
+
+  it('закрытие белой чуть выше закрытия чёрной → НА ШЕЕ', () => {
+    const white = cc(99.5, 100.9, 99.3, 100.4); // малое бычье тело (0.9), close ≈ c1.close + tol
+    const res = PatternDetector.isNeckFamily(black, white, prevDecline);
+    expect(res.found).toBe(true);
+    expect(res.name).toBe('НА ШЕЕ');
+  });
+});
