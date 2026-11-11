@@ -25,7 +25,7 @@ export type PatternId =
   | 'KEY_REVERSAL_BULL' | 'KEY_REVERSAL_BEAR'
   // гл. 7 ЯС: продолжения
   | 'RISE_THREE_METHODS' | 'FALL_THREE_METHODS' | 'TATAMI'
-  | 'SIDE_BY_SIDE_GAP' | 'SIDE_BY_SIDE_GAP_DOWN' | 'SIDE_BY_SIDE_GAP_BLACK_DOWN'
+  | 'SIDE_BY_SIDE_GAP' | 'SIDE_BY_SIDE_GAP_DOWN'
   | 'TASUKI_UP_GAP' | 'TASUKI_DOWN_GAP'
   | 'GAPPING_PLAY_HIGH' | 'GAPPING_PLAY_LOW'
   | 'THRUSTING' | 'IN_NECK' | 'ON_NECK' | 'DOUBLE_THRUSTING_BULL'
@@ -91,11 +91,8 @@ export const CANONICAL_PATTERN_NAMES: ReadonlyArray<[string, PatternId]> = [
   ['НА ШЕЕ', 'ON_NECK'],
   ['ТОЛЧОК', 'THRUSTING'],
   ['ДВОЙНОЙ ТОЛЧОК (БЫЧИЙ)', 'DOUBLE_THRUSTING_BULL'],
-  // ИСПРАВЛЕНО P0-3 (гл. 7 ЯС, «Окна»/продолжения): медвежья форма — гэп вниз
-  // и две ЧЁРНЫЕ свечи; каноническое имя зарегистрировано под новым ID.
-  // Старое имя «(ВНИЗ)» с белыми свечами сохранено как легаси-алиас того же ID
-  // (вариант B по решению владельца: существующие тесты не ослабляются).
-  ['ГЭП СМЕЖНЫХ ЧЁРНЫХ СВЕЧЕЙ', 'SIDE_BY_SIDE_GAP_BLACK_DOWN'],
+  // ОТМЕНА ошибочного P0-3: downgap side-by-side white lines (гл. 7 ЯС,
+  // глоссарий А) — две БЕЛЫЕ свечи после гэпа вниз, медвежье продолжение.
   ['ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ (ВНИЗ)', 'SIDE_BY_SIDE_GAP_DOWN'],
   ['ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ', 'SIDE_BY_SIDE_GAP'],
   ['ВОСХОДЯЩИЕ ТРИ МЕТОДА', 'RISE_THREE_METHODS'],
@@ -200,7 +197,7 @@ export const CONFIRMATION_REQUIRED_IDS: readonly PatternId[] = [
   // гл. 6 ЯС: неполные формации
   'BULL_HARAMI', 'BEAR_HARAMI', 'BULL_HARAMI_CROSS', 'BEAR_HARAMI_CROSS',
   'TATAMI', 'SEPARATING_LINE_BULL', 'SEPARATING_LINE_BEAR',
-  'TWO_CROWS', 'SIDE_BY_SIDE_GAP', 'SIDE_BY_SIDE_GAP_DOWN', 'SIDE_BY_SIDE_GAP_BLACK_DOWN',
+  'TWO_CROWS', 'SIDE_BY_SIDE_GAP', 'SIDE_BY_SIDE_GAP_DOWN',
   'THRUSTING', 'IN_NECK', 'ON_NECK', 'DOUBLE_THRUSTING_BULL',
   'COUNTERATTACK_BULL', 'COUNTERATTACK_BEAR',
   'TWEEZER_BOTTOM', 'TWEEZER_TOP',
@@ -246,7 +243,7 @@ export const PATTERN_CANDLE_COUNTS: Readonly<Record<PatternId, number>> = {
   ABANDONED_BABY_BOTTOM: 3, ABANDONED_BABY_TOP: 3,
   THREE_WHITE_SOLDIERS: 3, THREE_BLACK_CROWS: 3, THREE_IDENTICAL_CROWS: 3,
   TWO_CROWS: 3, ADVANCE_BLOCK: 3,
-  SIDE_BY_SIDE_GAP: 3, SIDE_BY_SIDE_GAP_DOWN: 3, SIDE_BY_SIDE_GAP_BLACK_DOWN: 3, TASUKI_UP_GAP: 3, TASUKI_DOWN_GAP: 3,
+  SIDE_BY_SIDE_GAP: 3, SIDE_BY_SIDE_GAP_DOWN: 3, TASUKI_UP_GAP: 3, TASUKI_DOWN_GAP: 3,
   DOUBLE_THRUSTING_BULL: 4,
   RISE_THREE_METHODS: 5, FALL_THREE_METHODS: 5,
   TATAMI: 5, LADDER_BOTTOM: 5,
