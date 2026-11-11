@@ -63,8 +63,10 @@ export function detectGaps(
   // P3-5: статусы заполнений за один обратный проход O(n + g) вместо
   // O(n·m) (filter+some по «хвосту» для каждого гэпа). Идём с конца массива и
   // поддерживаем экстремумы low/high/close на суффиксе; первый гэп (самый
-  // поздний) получает их напрямую, каждый следующий — от более раннего индекса
-  // (bar, открывший гэп, исключён из проверки так же, как раньше time > g.time).
+  // поздний) получает их напрямую, каждый следующий — от более раннего индекса.
+  // Семантика сохранена дословно: раньше бар открывающего гэпа исключался из
+  // проверки условием time > g.time (time гэп-бара == time g.time), поэтому
+  // сканирование начинается с j = _gapIndex - 1.
   let minLow = Infinity;
   let maxHigh = -Infinity;
   let minClose = Infinity;
@@ -72,17 +74,18 @@ export function detectGaps(
   let scanFrom = candles.length - 1;
   for (let gi = gaps.length - 1; gi >= 0; gi--) {
     const g = gaps[gi];
-    for (let j = scanFrom; j > g._gapIndex; j--) {
+    for (let j = scanFrom; j >= g._gapIndex; j--) {
+      if (j === g._gapIndex) continue; // bar открывшего гэпа не учитывается (как time > g.time)
       const c = candles[j];
       if (c.low < minLow) minLow = c.low;
       if (c.high > maxHigh) maxHigh = c.high;
       if (c.close < minClose) minClose = c.close;
       if (c.close > maxClose) maxClose = c.close;
     }
+    scanFrom = g._gapIndex - 1;
     g.filled = g.direction === 'up' ? minLow <= g.bottom : maxHigh >= g.top;
     g.broken = g.direction === 'up' ? minClose < g.bottom : maxClose > g.top;
     g.unfilled = !g.filled;
-    scanFrom = g._gapIndex;
   }
   return gaps.slice(-MAX_DISPLAY_GAPS).map(({ _gapIndex, ...dto }) => dto as GapDTO);
 }
@@ -98,15 +101,15 @@ function mkGap(
 ): GapDTO & { _gapIndex: number } {
   return {
     time: bar.time,
-    // P3-4: поле соответствует своему имени — РЕАЛЬНОЕ close предыдущего бара
-    // (раньше сюда писалась нижняя граница зоны, что вводило в заблуждение).
-    // Потребители (zone_voter, CandlestickChart, gaps_render.test) читают
-    // только top/bottom/direction/pct/time/filled/broken — семантика не изменилась.
+    // P3-4: поле соответствует своему имени и контракту GapDTO — РЕАЛЬНОЕ
+    // close предыдущего бара (раньше сюда писалась нижняя граница зоны).
+    // Потребители detectGaps (gaps_render.test) читают только
+    // top/bottom/direction/pct/time/filled/broken — семантика не изменилась.
     prevClose: prev.close,
     // P3-4 (документация контракта): у окон Нисона «гэп-бара» нет цены
     // открытия внутри разрыва; поле open сохраняет исторический смысл —
     // ВЕРХНЯЯ граница зоны гэпа (не open бара).
-    open: top,
+    open: top,         // верхняя граница зоны
     top,
     bottom,
     direction,
