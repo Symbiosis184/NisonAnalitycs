@@ -99,7 +99,9 @@ export function nearestStructuralTarget(
     const da = Math.abs(a.level - entryPrice);
     const db = Math.abs(b.level - entryPrice);
     if (da !== db) return da - db;
-    return Number(a.kind === 'zone') < Number(b.kind === 'zone') ? -1 : 1;
+    // P1-2: канон ЯС «Поддержка и сопротивление» — при равном расстоянии S/R-зона
+    // приоритетнее фрактального свинга. Прежний компаратор был инвертирован.
+    return Number(b.kind === 'zone') - Number(a.kind === 'zone');
   });
 
   const best = inRange[0];
