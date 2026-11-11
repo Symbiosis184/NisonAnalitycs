@@ -1022,7 +1022,7 @@ export class PatternDetector {
     const c0 = candles[candles.length - 3];
     const c1 = candles[candles.length - 2];
     const c2 = candles[candles.length - 1];
-    if (!(c1.isBullish && c2.isBullish)) return { found: false, name: '' };
+    // Цвета проверяются в ветках по канону: бычья — две белые, медвежья — две чёрные.
     if (Math.abs(c1.open - c2.open) / c1.open > 0.005 ||
       Math.abs(c1.body - c2.body) > Math.max(c1.body, c2.body) * 0.3) {
       return { found: false, name: '' };
