@@ -669,7 +669,11 @@ export class PatternDetector {
     if (patternContext(context).market !== 'stocks') return { found: false, name: '' };
     const closeTol = Math.max(c1.close * 0.001, ((c1.totalRange + c2.totalRange) / 2) * 0.1);
     if (Math.abs(c1.close - c2.close) > closeTol) return { found: false, name: '' };
-    if (!(c1.isLongCandle && c2.isLongCandle)) return { found: false, name: '' };
+    // #A5 (гл. 3 ЯС «Построение японских свечей»): длинное тело — относительно
+    // предшествующих свечей; OR с абсолютной мерой — как в belt'ах (проектная эвристика).
+    const winCA1 = this.relWindow(prev, prev.length - 1);
+    const winCA2 = this.relWindow([...prev, c1], prev.length);
+    if (!((this.isLongRelative(c1, winCA1) || c1.isLongCandle) && (this.isLongRelative(c2, winCA2) || c2.isLongCandle))) return { found: false, name: '' };
     const need = c1.totalRange * 0.5;
     const gap = c2.open - c1.close;
 
@@ -1080,10 +1084,11 @@ export class PatternDetector {
     const hi = Math.max(...seg.map(c => c.high));
     const avg = VolumeAnalyzer.getAverageVolume(candles.slice(0, -1));
 
-    if (!(last.isLongCandle && avg > 0 && last.volume > avg * 1.3)) return { found: false, name: '' };
+    if (!(avg > 0 && last.volume > avg * 1.3)) return { found: false, name: '' };
 
+    // #A5 (гл. 3 ЯС): длинное тело — OR(относительная, абсолютная мера), как в остальных моделях.
     const winKR = this.relWindow(candles, n - 1);
-    if (!this.isLongRelative(last, winKR)) return { found: false, name: '' };
+    if (!(this.isLongRelative(last, winKR) || last.isLongCandle)) return { found: false, name: '' };
 
     let name = '';
     if (last.isBullish && last.low < lo && last.close > prev.close && this.precededByDecline(seg)) {
