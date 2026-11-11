@@ -50,7 +50,7 @@ export function patternDirection(name: string): CandidateDirection {
     'TOWER_TOP', 'BEAR_HARAMI', 'BEAR_HARAMI_CROSS', 'TWEEZER_TOP',
     'BELT_HOLD_BEAR', 'COUNTERATTACK_BEAR', 'SEPARATING_LINE_BEAR',
     'LAST_ENGULFING_TOP', 'KEY_REVERSAL_BEAR', 'FALL_THREE_METHODS',
-    'SIDE_BY_SIDE_GAP_DOWN', 'TASUKI_DOWN_GAP', 'GAPPING_PLAY_LOW', 'THRUSTING', 'IN_NECK', 'ON_NECK',
+    'SIDE_BY_SIDE_GAP_DOWN', 'SIDE_BY_SIDE_GAP_BLACK_DOWN', 'TASUKI_DOWN_GAP', 'GAPPING_PLAY_LOW', 'THRUSTING', 'IN_NECK', 'ON_NECK',
     'UPTHRUST',
   ]);
   return bearish.has(id) ? 'short' : 'long';
@@ -126,6 +126,8 @@ export function scanPatternCandidates(
         PatternDetector.isTasuki(closed, context),
         PatternDetector.isDoubleThrustingBull(closed),
         PatternDetector.isGappingSideBySide(closed, context),
+        // Легаси-ветка P0-3 (вариант B): прежнее имя «(ВНИЗ)» для белых свечей.
+        PatternDetector.isGappingSideBySideLegacy(closed, context),
         PatternDetector.isTowerTop(closed),
         PatternDetector.isTowerBottom(closed),
         PatternDetector.isThreeMountains(closed),

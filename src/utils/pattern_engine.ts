@@ -1026,14 +1026,43 @@ export class PatternDetector {
     const c0 = candles[candles.length - 3];
     const c1 = candles[candles.length - 2];
     const c2 = candles[candles.length - 1];
-    if (!(c1.isBullish && c2.isBullish)) return { found: false, name: '' };
+    // ИСПРАВЛЕНО P0-3 (гл. 7 ЯС, «Окна»/модели продолжения): бычья форма —
+    // гэп вверх и две БЕЛЫЕ свечи; медвежья — гэп вниз и две ЧЁРНЫЕ свечи.
+    // Прежняя ветка «(ВНИЗ)» требовала белых свечей после спада — против канона.
+    // Легаси-поведение (гэп вниз + две белые) сохранено отдельным методом
+    // isGappingSideBySideLegacy под прежним именем «ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ (ВНИЗ)»
+    // (вариант B по решению владельца: тесты не ослабляются).
     if (Math.abs(c1.open - c2.open) / c1.open > 0.005 ||
       Math.abs(c1.body - c2.body) > Math.max(c1.body, c2.body) * 0.3) {
       return { found: false, name: '' };
     }
 
-    if (c0.isBullish && c1.low > c0.high && this.precededByRally(candles.slice(0, -3))) {
+    if (c0.isBullish && c1.isBullish && c2.isBullish &&
+      c1.low > c0.high && this.precededByRally(candles.slice(0, -3))) {
       return { found: true, name: 'ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ' };
+    }
+    if (c0.isBearish && c1.isBearish && c2.isBearish &&
+      c1.high < c0.low && this.precededByDecline(candles.slice(0, -3))) {
+      return { found: true, name: 'ГЭП СМЕЖНЫХ ЧЁРНЫХ СВЕЧЕЙ' };
+    }
+    return { found: false, name: '' };
+  }
+
+  /**
+   * ЛЕГАСИ (см. P0-3, вариант B): прежняя нисходящая ветка с двумя белыми
+   * свечами. Сохранена только ради неизменности существующих тест-контрактов;
+   * каноническая медвежья форма — isGappingSideBySide выше.
+   */
+  static isGappingSideBySideLegacy(candles: Candle[], context?: PatternContext): PatternDetection {
+    if (patternContext(context).market !== 'stocks') return { found: false, name: '' };
+    if (candles.length < 3) return { found: false, name: '' };
+    const c0 = candles[candles.length - 3];
+    const c1 = candles[candles.length - 2];
+    const c2 = candles[candles.length - 1];
+    if (!(c1.isBullish && c2.isBullish)) return { found: false, name: '' };
+    if (Math.abs(c1.open - c2.open) / c1.open > 0.005 ||
+      Math.abs(c1.body - c2.body) > Math.max(c1.body, c2.body) * 0.3) {
+      return { found: false, name: '' };
     }
     if (c0.isBearish && c1.high < c0.low && this.precededByDecline(candles.slice(0, -3))) {
       return { found: true, name: 'ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ (ВНИЗ)' };
