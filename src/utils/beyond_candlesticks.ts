@@ -147,7 +147,10 @@ export function renko(points: ClosePoint[], brickSize: number): RenkoBrick[] {
     for (let j = 0; j < count; j++) {
       const open = anchorPrice + step * j;
       bricks.push({
-        startTime: j === 0 ? anchorTime : point.time,
+        // P2-3 (ЗГ, раздел Renko): кирпич относится к бару point.time — именно его
+        // закрытие его построило. Нулевая длительность (startTime === endTime) не
+        // допускается даже когда время бара совпадает с якорем стартового закрытия.
+        startTime: Math.min(anchorTime, point.time),
         endTime: point.time,
         open,
         close: open + step,
@@ -179,6 +182,12 @@ export interface KagiSegment {
 }
 
 /** Kagi по закрытиям с фиксированным или процентным порогом разворота. */
+// P3-3: ограничение реализации (задокументировано, поведение не меняем).
+// По ЗГ (раздел Kagi) толщина линии инь/ян может меняться ВНУТРИ вертикальной
+// линии в момент перехода через предыдущее плечо/талию. Здесь стиль (yin/yang)
+// вычисляется на конец сегмента и применяется к сегменту целиком — смена
+// толщины внутри сегмента не отображается. Упрощение принято осознанно:
+// потребители (рендер) работают с сегментами как атомарными линиями.
 export function kagi(
   points: ClosePoint[],
   reversal: KagiReversalSetting,
