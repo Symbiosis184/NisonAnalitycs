@@ -40,7 +40,9 @@ export function detectGaps(
   market: 'stock' | 'crypto',
 ): GapDTO[] {
   if (market !== 'stock') return []; // проектное отключение окон для криптовалют
-  const gaps: GapDTO[] = [];
+  // P3-5: внутренний тип хранит индекс открывающего бара для однопроходного
+  // расчёта статусов; наружу отдаётся чистый GapDTO (срез в конце).
+  const gaps: Array<GapDTO & { _gapIndex: number }> = [];
   for (let i = 1; i < candles.length; i++) {
     const prev = candles[i - 1];
     const cur = candles[i];
@@ -50,38 +52,61 @@ export function detectGaps(
       const bottom = prev.high;
       const top = cur.low;
       const pct = ((top - bottom) / bottom) * 100;
-      if (pct >= MIN_GAP_PCT) gaps.push(mkGap(cur, bottom, top, 'up', pct));
+      if (pct >= MIN_GAP_PCT) gaps.push(mkGap(prev, cur, i, bottom, top, 'up', pct));
     } else if (cur.high < prev.low) {
       const bottom = cur.high;
       const top = prev.low;
       const pct = ((top - bottom) / bottom) * 100;
-      if (pct >= MIN_GAP_PCT) gaps.push(mkGap(cur, bottom, top, 'down', pct));
+      if (pct >= MIN_GAP_PCT) gaps.push(mkGap(prev, cur, i, bottom, top, 'down', pct));
     }
   }
-  for (const g of gaps) {
-    const later = candles.filter((c) => c.time > g.time);
-    g.filled = later.some((c) => g.direction === 'up'
-      ? c.low <= g.bottom
-      : c.high >= g.top);
-    g.broken = later.some((c) => g.direction === 'up'
-      ? c.close < g.bottom
-      : c.close > g.top);
+  // P3-5: статусы заполнений за один обратный проход O(n + g) вместо
+  // O(n·m) (filter+some по «хвосту» для каждого гэпа). Идём с конца массива и
+  // поддерживаем экстремумы low/high/close на суффиксе; первый гэп (самый
+  // поздний) получает их напрямую, каждый следующий — от более раннего индекса
+  // (bar, открывший гэп, исключён из проверки так же, как раньше time > g.time).
+  let minLow = Infinity;
+  let maxHigh = -Infinity;
+  let minClose = Infinity;
+  let maxClose = -Infinity;
+  let scanFrom = candles.length - 1;
+  for (let gi = gaps.length - 1; gi >= 0; gi--) {
+    const g = gaps[gi];
+    for (let j = scanFrom; j > g._gapIndex; j--) {
+      const c = candles[j];
+      if (c.low < minLow) minLow = c.low;
+      if (c.high > maxHigh) maxHigh = c.high;
+      if (c.close < minClose) minClose = c.close;
+      if (c.close > maxClose) maxClose = c.close;
+    }
+    g.filled = g.direction === 'up' ? minLow <= g.bottom : maxHigh >= g.top;
+    g.broken = g.direction === 'up' ? minClose < g.bottom : maxClose > g.top;
     g.unfilled = !g.filled;
+    scanFrom = g._gapIndex;
   }
-  return gaps.slice(-MAX_DISPLAY_GAPS);
+  return gaps.slice(-MAX_DISPLAY_GAPS).map(({ _gapIndex, ...dto }) => dto as GapDTO);
 }
 
 function mkGap(
+  prev: Pick<CandleDTO, 'close'>,
   bar: Pick<CandleDTO, 'time' | 'open'>,
+  gapIndex: number,
   bottom: number,
   top: number,
   direction: 'up' | 'down',
   pct: number,
-): GapDTO {
+): GapDTO & { _gapIndex: number } {
   return {
     time: bar.time,
-    prevClose: bottom, // нижняя граница зоны (совместимость поля)
-    open: top,         // верхняя граница зоны
+    // P3-4: поле соответствует своему имени — РЕАЛЬНОЕ close предыдущего бара
+    // (раньше сюда писалась нижняя граница зоны, что вводило в заблуждение).
+    // Потребители (zone_voter, CandlestickChart, gaps_render.test) читают
+    // только top/bottom/direction/pct/time/filled/broken — семантика не изменилась.
+    prevClose: prev.close,
+    // P3-4 (документация контракта): у окон Нисона «гэп-бара» нет цены
+    // открытия внутри разрыва; поле open сохраняет исторический смысл —
+    // ВЕРХНЯЯ граница зоны гэпа (не open бара).
+    open: top,
     top,
     bottom,
     direction,
@@ -89,5 +114,7 @@ function mkGap(
     unfilled: true,
     filled: false,
     broken: false,
+    // служебное: индекс бара, открывшего гэп (для однопроходного статуса)
+    _gapIndex: gapIndex,
   };
 }
