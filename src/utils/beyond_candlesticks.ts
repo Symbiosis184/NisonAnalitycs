@@ -147,7 +147,10 @@ export function renko(points: ClosePoint[], brickSize: number): RenkoBrick[] {
     for (let j = 0; j < count; j++) {
       const open = anchorPrice + step * j;
       bricks.push({
-        startTime: j === 0 ? anchorTime : point.time,
+        // P2-3 (ЗГ, раздел Renko): кирпич относится к бару point.time — именно его
+        // закрытие его построило. Нулевая длительность (startTime === endTime) не
+        // допускается даже когда время бара совпадает с якорем стартового закрытия.
+        startTime: Math.min(anchorTime, point.time),
         endTime: point.time,
         open,
         close: open + step,
