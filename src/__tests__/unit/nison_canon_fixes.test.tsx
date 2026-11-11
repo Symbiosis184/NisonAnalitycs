@@ -165,3 +165,45 @@ describe('P1-4: широта согласия — метрика без знак
     expect(container.textContent).toContain('Широта согласия');
   });
 });
+
+// ─── P1-1 (вариант A): завеса/просвет на крипте при open ≈ prevClose ───
+describe('P1-1: Завеса из тёмных облаков / Просвет в облаках — адаптивный допуск', () => {
+  const up = zigUp(24, 100, 3);   // подтверждённый рост
+  const down = zigDown(24, 200, 3); // подтверждённый спад
+
+  it('крипта: белая свеча с открытием ровно по close предыдущей + глубокое проникновение → завеса срабатывает', () => {
+    const c1 = cc(170, 180, 169.5, 179);   // бычья длинная
+    const c2 = cc(179, 179.5, 168, 171);   // чёрная: open == close1 (без гэпа), закрытие ниже bodyMid
+    const res = PatternDetector.isDarkCloudCover(c1, c2, [...up, c1], { market: 'crypto' } as any);
+    expect(res.found).toBe(true);
+    expect(res.name).not.toContain('(ГЭП'); // метка гэпа только при настоящем разрыве
+  });
+
+  it('акции: настоящий гэп выше максимума → метка «(ГЭП ВЫШЕ МАКСИМУМА)»', () => {
+    const c1 = cc(170, 180, 169.5, 179);
+    const c2 = cc(181, 182, 170, 173);     // open > high1, low > high1? low=170 <= 180 → гэп по open
+    const res = PatternDetector.isDarkCloudCover(c1, c2, [...up, c1], STOCKS);
+    expect(res.found).toBe(true);
+    expect(res.name).toContain('(ГЭП ВЫШЕ МАКСИМУМА)');
+  });
+
+  it('открытие НИЖЕ close больше чем на допуск → reject (граница nison_audit_regressions сохранена)', () => {
+    const firstWhite = cc(100, 111, 99.5, 110);
+    expect(PatternDetector.isDarkCloudCover(firstWhite, cc(109, 111, 101, 102), up, STOCKS).found).toBe(false);
+    expect(PatternDetector.isDarkCloudCover(firstWhite, cc(110.5, 112, 101, 102), up, STOCKS).found).toBe(true);
+  });
+
+  it('крипта: чёрная свеча с открытием по close предыдущей + глубокое проникновение → просвет срабатывает', () => {
+    const c1 = cc(130, 130.5, 119, 120);   // медвежья длинная
+    const c2 = cc(120, 129, 119.5, 128);   // белая: open == close1, закрытие выше bodyMid
+    const res = PatternDetector.isPiercingPattern(c1, c2, [...down, c1], { market: 'crypto' } as any);
+    expect(res.found).toBe(true);
+    expect(res.name).not.toContain('(ГЭП');
+  });
+
+  it('просвет: открытие ВЫШЕ close больше чем на допуск → reject (граница теста сохранена)', () => {
+    const firstBlack = cc(110, 110.5, 99, 100);
+    expect(PatternDetector.isPiercingPattern(firstBlack, cc(101, 109, 100.5, 108), down, STOCKS).found).toBe(false);
+    expect(PatternDetector.isPiercingPattern(firstBlack, cc(99.5, 109, 99, 108), down, STOCKS).found).toBe(true);
+  });
+});
