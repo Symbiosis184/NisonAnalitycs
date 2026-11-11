@@ -398,11 +398,19 @@ export class PatternDetector {
     if (!this.precededByRally(prev)) return { found: false, name: '' };
     if (c2.close >= c1.bodyMid || c2.close <= c1.open) return { found: false, name: '' };
 
-    if (c2.open <= c1.close) return { found: false, name: '' };
+    // P1-1 (вариант A): канон ЯС гл. 3 для акций допускает открытие выше ЦЕНЫ
+    // ЗАКРЫТИЯ первой свечи (не обязательно выше максимума). На круглосуточном
+    // крипторынке open ≈ prevClose, поэтому жёсткое `open > close` делало модель
+    // недостижимой. Проектная эвристика: adaptiveTol(0.15) — reject только если
+    // открытие ниже close более чем на допуск. Метки «(ГЭП…)» — только при
+    // настоящем разрыве диапазонов (low2 > high1 / open > high1 по канону окон).
+    const tol = this.adaptiveTol([...prev.slice(-20), c1], 0.15);
+    if (c2.open < c1.close - tol) return { found: false, name: '' };
 
     let name = 'ЗАВЕСА ИЗ ТЁМНЫХ ОБЛАКОВ';
-    if (c2.open > c1.high) name += ' (ГЭП ВЫШЕ МАКСИМУМА)';
-    else if (c2.open > c1.close) name += ' (ГЭП)';
+    const realGapUp = c2.low > c1.high || c2.open > c1.high;
+    if (realGapUp && c2.open > c1.high) name += ' (ГЭП ВЫШЕ МАКСИМУМА)';
+    else if (realGapUp) name += ' (ГЭП)';
     if (ZoneVoter.isNearResistance(c2.close, prev, 0.015, timeframeKey(patternContext(context).timeframe), undefined, zoneMarket(context))) name += ' (У СОПРОТИВЛЕНИЯ)';
     return { found: true, name };
   }
@@ -413,11 +421,16 @@ export class PatternDetector {
     if (!this.precededByDecline(prev)) return { found: false, name: '' };
     if (c2.close <= c1.bodyMid || c2.close >= c1.open) return { found: false, name: '' };
 
-    if (c2.open >= c1.close) return { found: false, name: '' };
+    // P1-1 (вариант A): зеркально завесе — reject только если открытие выше
+    // close первой свечи более чем на адаптивный допуск (эвристика проекта).
+    // Метка «(ГЭП…)» — только при настоящем разрыве диапазонов.
+    const tol = this.adaptiveTol([...prev.slice(-20), c1], 0.15);
+    if (c2.open > c1.close + tol) return { found: false, name: '' };
 
     let name = 'ПРОСВЕТ В ОБЛАКАХ';
-    if (c2.open < c1.low) name += ' (ГЭП НИЖЕ МИНИМУМА)';
-    else if (c2.open < c1.close) name += ' (ГЭП)';
+    const realGapDown = c2.high < c1.low || c2.open < c1.low;
+    if (realGapDown && c2.open < c1.low) name += ' (ГЭП НИЖЕ МИНИМУМА)';
+    else if (realGapDown) name += ' (ГЭП)';
     if (ZoneVoter.isNearSupport(c2.close, prev, 0.015, timeframeKey(patternContext(context).timeframe), undefined, zoneMarket(context))) name += ' (У ПОДДЕРЖКИ)';
     return { found: true, name };
   }
