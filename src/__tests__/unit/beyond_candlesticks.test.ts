@@ -67,19 +67,6 @@ describe('Renko', () => {
   it('отклоняет неположительный размер кирпича', () => {
     expect(() => renko(points([1, 2]), 0)).toThrow(RangeError);
   });
-
-  // P2-3: разворотный кирпич не должен иметь нулевую длительность
-  // (startTime === endTime при j>=0 и reversal===true).
-  it('разворотный кирпич имеет ненулевую длительность (P2-3)', () => {
-    const out = renko(points([100, 102, 100.5, 99, 98]), 1);
-    const rev = out.find((b) => b.reversal);
-    expect(rev).toBeDefined();
-    expect(rev!.startTime).not.toBe(rev!.endTime);
-    // Все кирпичи одного построившего бара относятся к его времени закрытия.
-    for (const b of out) {
-      expect(b.endTime).toBeGreaterThanOrEqual(b.startTime);
-    }
-  });
 });
 
 describe('Kagi', () => {

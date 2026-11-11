@@ -54,6 +54,7 @@ export const PATTERN_NAMES_EN: Record<string, string> = {
   'ТОЛЧОК': 'Thrusting Line',
   'ДВОЙНОЙ ТОЛЧОК (БЫЧИЙ)': 'Double Thrusting (Bullish)',
   'ГЭП СМЕЖНЫХ БЕЛЫХ СВЕЧЕЙ': 'Side-by-side White Lines Gap',
+  'ГЭП СМЕЖНЫХ ЧЁРНЫХ СВЕЧЕЙ': 'Side-by-side Black Lines Gap',
   'ВОСХОДЯЩИЕ ТРИ МЕТОДА': 'Rising Three Methods',
   'НИСХОДЯЩИЕ ТРИ МЕТОДА': 'Falling Three Methods',
   'УДЕРЖАНИЕ НА ТАТАМИ': 'Tatami-supporting Return',

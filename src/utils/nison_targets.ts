@@ -32,9 +32,6 @@ export function collectSwingLevels(
   const n = closedCandles.length;
   if (n < 5) return [];
   const start = Math.max(0, n - lookback);
-  // P3-6: дедупликация уровней. Асимметрия строгих/нестрогих неравенств
-  // (> prev и >= next) на плато (несколько одинаковых high/low подряд) даёт
-  // несколько одинаковых уровней — потребители получают дубликаты целей.
   const out: number[] = [];
   for (let i = start + 1; i <= n - 2; i++) {
     const c = closedCandles[i];
@@ -42,10 +39,10 @@ export function collectSwingLevels(
     const next = closedCandles[i + 1];
     if (direction === 'long') {
       // локальный максимум (fractal high) — естественная цель для лонга
-      if (c.high > prev.high && c.high >= next.high && !out.includes(c.high)) out.push(c.high);
+      if (c.high > prev.high && c.high >= next.high) out.push(c.high);
     } else {
       // локальный минимум (fractal low) — естественная цель для шорта
-      if (c.low < prev.low && c.low <= next.low && !out.includes(c.low)) out.push(c.low);
+      if (c.low < prev.low && c.low <= next.low) out.push(c.low);
     }
   }
   return out;

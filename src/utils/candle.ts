@@ -51,11 +51,7 @@ export class Candle {
     return this.close < this.open;
   }
 
-  // P3-1: проектное решение — свеча с нулевым диапазоном (O=H=L=C) НЕ считается
-  // дожи: это признак неликвидности/отсутствия торгов, а не каноническая модель
-  // нерешительности Нисона (ЯС, гл. «Доджи»). totalRange === 0 → false.
   get isDoji(): boolean {
-    if (this.totalRange <= 0) return false;
     return this.body < this.totalRange * 0.1;
   }
 
@@ -67,9 +63,6 @@ export class Candle {
     return this.body < this.totalRange * 0.3;
   }
 
-  // P3-2: проектное ужесточение — строгие неравенства отсекают поглощение с
-  // равенством границ тел (в книге Нисона такое тоже поглощение). Поведение
-  // намеренно не меняем; зафиксировано как ограничение реализации.
   isEngulfing(other: Candle): boolean {
     return this.bodyTop > other.bodyTop && this.bodyBottom < other.bodyBottom;
   }
