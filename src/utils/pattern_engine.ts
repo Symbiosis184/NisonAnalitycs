@@ -789,7 +789,15 @@ export class PatternDetector {
   static isNeckFamily(c1: Candle, c2: Candle, prev: Candle[]): PatternDetection {
     if (!this.precededByDecline(prev)) return { found: false, name: '' };
     if (!(c1.isBearish && c1.isLongCandle)) return { found: false, name: '' };
-    if (!c2.isBullish || c2.open >= c1.low) return { found: false, name: '' };
+    // ИСПРАВЛЕНО (#B1): прежний гейт `c2.open >= c1.low` требовал открытия белой
+    // НИЖЕ минимума чёрной. Так как low₁ ≤ close₁ по определению свечи, а на
+    // круглосуточном рынке open₂ ≈ close₁, условие было невыполнимо всегда и все
+    // три модели семьи шеи были недостижимы. Канон ЯС гл. 4 задаёт привязки «ниже
+    // шеи / на шее / толчок» по ЦЕНЕ ЗАКРЫТИЯ и МИНИМУМУ предыдущего дня, а не по
+    // открытию относительно минимума. Допуск adaptiveTol(0.15) от закрытия чёрной
+    // — проектная эвристика для рынков без сессий (в книгах такой числовой порог отсутствует).
+    const openTol = this.adaptiveTol([...prev.slice(-20), c1], 0.15);
+    if (!c2.isBullish || c2.open > c1.close + openTol) return { found: false, name: '' };
 
     const tol = c1.totalRange * 0.05;
     const smallWhite = c2.body <= c1.body * 0.5;
