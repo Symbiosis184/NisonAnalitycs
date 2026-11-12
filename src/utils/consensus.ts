@@ -68,8 +68,10 @@ export function aggregateConsensus(signals: ConsensusInput[]): ConsensusResult {
   // Поэтому одиночный сигнал не может получить 4/5, а слабые и сильные наборы
   // одинакового направления больше не выглядят одинаково.
   const score = 5 * ratio * breadth * qualityFactor;
-  // Confidence — согласие с учётом широты, но без премии за качество: это
-  // отдельная метрика, а не вероятность прибыли или успешной сделки.
+  // B2 (вариант B, PR #40): confidence — «Широта согласия» (балл 0..95, в UI
+  // отображается без «%»). Качество учитывается в score (× qualityFactor),
+  // а не здесь: набор из трёх слабых и набор из трёх сильных подтверждений
+  // одинаково широки по направлению. Метрика НЕ является вероятностью прибыли.
   const confidence = Math.min(95, Math.round(ratio * breadth * 100));
 
   return { score, confidence, direction };

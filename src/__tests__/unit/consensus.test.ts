@@ -118,3 +118,51 @@ describe('aggregateConsensus (проектная эвристика: согла�
     expect(Number.isFinite(neg.score)).toBe(true);
   });
 });
+
+// B2 (follow-up к PR #40): контракт варианта B — confidence это «Широта согласия»
+// (балл 0..95), а НЕ вероятность прибыли. Качество подтверждений учитывается в
+// score (× qualityFactor), поэтому три слабых и три сильных подтверждения одного
+// направления одинаково «широки», но дают разный итоговый балл консенсуса.
+describe('B2: контракты метрики «Широта согласия» (вариант B)', () => {
+  it('3×long q=0 и 3×long q=1 → одинаковый confidence, разный score', () => {
+    const weak = aggregateConsensus([sig('long', 0), sig('long', 0), sig('long', 0)]);
+    const strong = aggregateConsensus([sig('long', 1), sig('long', 1), sig('long', 1)]);
+    // Широта не зависит от качества: формула сохранена (не × qualityFactor).
+    expect(weak.confidence).toBe(strong.confidence);
+    expect(weak.confidence).toBe(95);
+    // А значимость подтверждений различается именно в score (правило множества
+    // приёмов ЯС ч. II: подтверждения должны быть независимыми И значимыми).
+    expect(strong.score).toBeGreaterThan(weak.score);
+    expect(weak.score).toBeLessThan(strong.score);
+  });
+
+  it('UI-метрика — балл /95 без «%» (MarketContextSection, Dashboard)', async () => {
+    const fs = await import('node:fs');
+    const files = [
+      'src/components/analysis/MarketContextSection.tsx',
+      'src/pages/Dashboard.tsx',
+    ];
+    for (const f of files) {
+      const srcText = fs.readFileSync(f, 'utf8');
+      // confidence рядом с этой метрикой отображается как /95, не как процент.
+      const confLines = srcText.split('\n').filter(l => l.includes('confidence'));
+      expect(confLines.length).toBeGreaterThan(0);
+      for (const line of confLines) {
+        expect(line).not.toMatch(/%/);
+        if (line.includes('/')) expect(line).toMatch(/\/95|\/100/);
+      }
+      // Название метрики в UI — «Широта согласия».
+      expect(srcText).toMatch(/Широта согласия/);
+    }
+  });
+
+  it('RU/EN паритет ключей широты согласия', async () => {
+    const { UI_STRINGS } = await import('../../i18n/dictionaries');
+    const ruKeys = ['Широта согласия', 'Широта согласия:', 'Эвристическая широта согласия, не вероятность'];
+    for (const k of ruKeys) {
+      expect(UI_STRINGS[k]).toBeTruthy();
+    }
+    expect(UI_STRINGS['Широта согласия']).toBe('Agreement breadth');
+    expect(UI_STRINGS['Широта согласия:']).toBe('Agreement breadth:');
+  });
+});
