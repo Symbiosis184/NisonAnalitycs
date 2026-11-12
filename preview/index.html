@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NisonAnalytics — предпросмотр ядра</title>
+<style>
+  :root { --bg:#0b1020; --panel:#141a2e; --up:#26a69a; --dn:#ef5350; --txt:#e6e9f0; --muted:#8b93a7; --acc:#f0b90b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--txt); }
+  header { padding:16px 24px; border-bottom:1px solid #232a44; display:flex; align-items:baseline; gap:16px; flex-wrap:wrap;}
+  h1 { font-size:20px; margin:0; color:var(--acc);}
+  .sub { color:var(--muted); font-size:13px; }
+  main { max-width:1100px; margin:0 auto; padding:20px; display:grid; gap:20px; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; }
+  .kpi { background:var(--panel); border:1px solid #232a44; border-radius:10px; padding:12px 14px; }
+  .kpi .l { font-size:12px; color:var(--muted); }
+  .kpi .v { font-size:20px; font-weight:700; margin-top:4px; }
+  .pos { color:var(--up);} .neg { color:var(--dn);}
+  .card { background:var(--panel); border:1px solid #232a44; border-radius:10px; padding:16px; }
+  .card h2 { margin:0 0 12px; font-size:15px; color:var(--acc); font-weight:600;}
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:right; padding:6px 8px; border-bottom:1px solid #232a44; }
+  th:first-child, td:first-child { text-align:left; }
+  th { color:var(--muted); font-weight:600; }
+  .bar { height:8px; border-radius:4px; background:#232a44; overflow:hidden; }
+  .bar > i { display:block; height:100%; }
+  footer { text-align:center; color:var(--muted); font-size:12px; padding:18px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>NisonAnalytics — предпросмотр</h1>
+  <span class="sub">BTCUSDT 1H · демо-данные (seed=7) · методология Стива Нисона · беклог п.1–3: position sizing / издержки / бэктест</span>
+</header>
+<main>
+  <div class="kpis" id="kpis"></div>
+  <div class="card"><h2>Свечной график + маркеры паттернов + ATR(14)</h2><canvas id="chart" width="1040" height="420"></canvas></div>
+  <div class="card"><h2>Кривая капитала бэктеста (накопленный net R)</h2><canvas id="equity" width="1040" height="200"></canvas></div>
+  <div class="card"><h2>Разрез по паттернам (net expectancy)</h2><table id="ptable"></table></div>
+  <div class="card"><h2>Последние смоделированные сделки</h2><table id="ttable"></table></div>
+  <div class="card"><h2>План риска по последнему сигналу (правило 1% + издержки)</h2><pre id="riskplan" style="margin:0;font-size:13px;line-height:1.7"></pre></div>
+</main>
+<footer>Детерминированные демо-данные. Реальный дашборд получает klines Bybit REST + WebSocket Binance.</footer>
+<script type="module">
+import { makeDemoCandles } from '/src/analysis/demo_data.ts';
+import { scanPatterns } from '/src/analysis/patterns.ts';
+import { atr } from '/src/analysis/indicators.ts';
+import { runBacktest, DEFAULT_BACKTEST_PARAMS } from '/src/analysis/backtest.ts';
+import { computeRiskPlan } from '/src/analysis/position_sizing.ts';
+import { roundTripCostPct } from '/src/analysis/costs.ts';
+import { DEFAULT_TRADE_SETTINGS } from '/src/analysis/types.ts';
+
+const candles = makeDemoCandles(240);
+const bt = runBacktest(candles, DEFAULT_BACKTEST_PARAMS);
+const m = bt.metrics;
+const money = (x) => x.toLocaleString('ru-RU', { maximumFractionDigits: 2 });
+const r = (x) => (x >= 0 ? '+' : '') + x.toFixed(2) + ' R';
+const cls = (x) => (x >= 0 ? 'pos' : 'neg');
+
+// KPI
+document.getElementById('kpis').innerHTML = [
+  ['Цена закрытия', money(candles.at(-1).close), ''],
+  ['Сделок бэктеста', m.trades, ''],
+  ['Win Rate (net)', (m.winRate * 100).toFixed(1) + '%', cls(m.avgNetR)],
+  ['Profit Factor', m.profitFactor.toFixed(2), cls(m.profitFactor - 1)],
+  ['Expectancy', r(m.avgNetR), cls(m.avgNetR)],
+  ['Итог', r(m.totalNetR), cls(m.totalNetR)],
+  ['Max Drawdown', '-' + m.maxDrawdownR.toFixed(2) + ' R', 'neg'],
+].map(([l, v, c]) => `<div class="kpi"><div class="l">${l}</div><div class="v ${c}">${v}</div></div>`).join('');
+
+// Candlestick chart
+drawChart();
+function drawChart() {
+  const cv = document.getElementById('chart'), ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height, padL = 8, padR = 60, priceH = 300;
+  const lo = Math.min(...candles.map(c => c.low)), hi = Math.max(...candles.map(c => c.high));
+  const y = (p) => 10 + ((hi - p) / (hi - lo)) * (priceH - 20);
+  const bw = (W - padL - padR) / candles.length;
+  ctx.clearRect(0, 0, W, H);
+  ctx.strokeStyle = '#232a44'; ctx.fillStyle = '#8b93a7'; ctx.font = '11px sans-serif'; ctx.lineWidth = 1;
+  for (let g = 0; g <= 4; g++) {
+    const p = lo + ((hi - lo) * g) / 4, yy = y(p);
+    ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(W - padR, yy); ctx.stroke();
+    ctx.fillText(money(p), W - padR + 6, yy + 4);
+  }
+  candles.forEach((c, i) => {
+    const x = padL + i * bw + bw / 2;
+    const up = c.close >= c.open;
+    ctx.strokeStyle = ctx.fillStyle = up ? '#26a69a' : '#ef5350';
+    ctx.beginPath(); ctx.moveTo(x, y(c.high)); ctx.lineTo(x, y(c.low)); ctx.stroke();
+    const top = y(Math.max(c.open, c.close)), h = Math.max(1, Math.abs(y(c.open) - y(c.close)));
+    ctx.fillRect(x - Math.max(1, bw * 0.32), top, Math.max(2, bw * 0.64), h);
+  });
+  // маркеры паттернов: жёлтый ▲ лонг снизу, фиолетовый ▼ шорт сверху
+  scanPatterns(candles).forEach((p) => {
+    const c = candles[p.index], x = padL + p.index * bw + bw / 2;
+    ctx.fillStyle = p.side === 'long' ? '#f0b90b' : '#bb86fc';
+    ctx.beginPath();
+    if (p.side === 'long') { ctx.moveTo(x, y(c.low) + 14); ctx.lineTo(x - 5, y(c.low) + 24); ctx.lineTo(x + 5, y(c.low) + 24); }
+    else { ctx.moveTo(x, y(c.high) - 14); ctx.lineTo(x - 5, y(c.high) - 24); ctx.lineTo(x + 5, y(c.high) - 24); }
+    ctx.closePath(); ctx.fill();
+  });
+  // ATR полоса снизу
+  const a = atr(candles, 14), amax = Math.max(...a.slice(14));
+  ctx.strokeStyle = '#8b93a7'; ctx.setLineDash([3, 3]); ctx.beginPath();
+  a.forEach((v, i) => { const x = padL + i * bw + bw / 2, yy = H - 10 - (v / amax) * 80; i ? ctx.lineTo(x, yy) : ctx.moveTo(x, yy); });
+  ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = '#8b93a7'; ctx.fillText('ATR(14)', padL + 4, H - 96);
+}
+
+// Equity curve
+(function () {
+  const cv = document.getElementById('equity'), ctx = cv.getContext('2d');
+  let cum = 0; const pts = bt.trades.map(t => (cum += t.netR));
+  const min = Math.min(0, ...pts), max = Math.max(0, ...pts);
+  const y = (v) => 10 + ((max - v) / (max - min || 1)) * (cv.height - 20);
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.strokeStyle = '#232a44'; ctx.beginPath(); ctx.moveTo(0, y(0)); ctx.lineTo(cv.width, y(0)); ctx.stroke();
+  ctx.strokeStyle = max >= 0 ? '#26a69a' : '#ef5350'; ctx.lineWidth = 2; ctx.beginPath();
+  pts.forEach((v, i) => { const x = (i / (pts.length - 1)) * (cv.width - 4) + 2; i ? ctx.lineTo(x, y(v)) : ctx.moveTo(x, y(v)); });
+  ctx.stroke();
+})();
+
+// Pattern table
+document.getElementById('ptable').innerHTML =
+  '<tr><th>Паттерн</th><th>Сделок</th><th>Win Rate</th><th>Avg Net R</th><th></th></tr>' +
+  Object.entries(m.byPattern).sort((a, b) => b[1].avgNetR - a[1].avgNetR).map(([name, s]) => {
+    const w = Math.max(2, Math.abs(s.avgNetR) * 40);
+    const col = s.avgNetR >= 0 ? 'var(--up)' : 'var(--dn)';
+    return `<tr><td>${name}</td><td>${s.trades}</td><td>${(s.winRate * 100).toFixed(0)}%</td>
+      <td class="${cls(s.avgNetR)}">${r(s.avgNetR)}</td>
+      <td style="width:180px"><div class="bar"><i style="width:${w}px;background:${col}"></i></div></td></tr>`;
+  }).join('');
+
+// Trades table
+document.getElementById('ttable').innerHTML =
+  '<tr><th>Дата входа</th><th>Паттерн</th><th>Сторона</th><th>Вход</th><th>Выход</th><th>Причина</th><th>Gross R</th><th>Издержки R</th><th>Net R</th></tr>' +
+  bt.trades.slice(-10).reverse().map(t => `<tr>
+    <td>${new Date(t.entryTime).toISOString().slice(0, 13)}</td><td>${t.patternName}</td>
+    <td>${t.side === 'long' ? 'Лонг' : 'Шорт'}</td><td>${money(t.entryPrice)}</td><td>${money(t.exitPrice)}</td>
+    <td>${{ stop: 'Стоп', tp: 'TP', time: 'Время' }[t.exitReason]}</td>
+    <td class="${cls(t.grossR)}">${r(t.grossR)}</td><td class="neg">-${t.costR.toFixed(2)}</td>
+    <td class="${cls(t.netR)}">${r(t.netR)}</td></tr>`).join('');
+
+// Risk plan
+const sigs = scanPatterns(candles); const sig = sigs.at(-1);
+const atrS = atr(candles, 14); const c = candles[sig.index];
+const plan = computeRiskPlan({ entryPrice: c.close, side: sig.side, atr: atrS[sig.index], settings: DEFAULT_TRADE_SETTINGS });
+document.getElementById('riskplan').textContent =
+`Сигнал: ${sig.name} (${sig.side === 'long' ? 'лонг' : 'шорт'}) @ ${money(c.close)}
+Капитал: ${money(plan.capital)} $   Риск: ${plan.riskPct}% = ${money(plan.riskAmount)} $
+ATR(14): ${money(plan.atr)}   Стоп (${DEFAULT_BACKTEST_PARAMS.stopAtrMult}×ATR): ${money(plan.stopPrice)}
+Размер позиции: ${plan.positionQty.toFixed(4)} BTC ≈ ${money(plan.positionValue)} $
+Издержки полного цикла (комиссия+слиппеджи ×2): ${money(plan.costs)} $ (${(roundTripCostPct(DEFAULT_TRADE_SETTINGS)*100).toFixed(2)}%)
+Чистый убыток при стопе: ${money(plan.netStopLoss)} $ ≈ ${(plan.netStopLoss / plan.capital * 100).toFixed(2)}% капитала`;
+</script>
+</body>
+</html>
