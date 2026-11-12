@@ -304,6 +304,19 @@ export default function Layout() {
               </button>
             </div>
           </div>
+          {/* Постоянный бейдж сборки: BUILD_ID инжектируется при npm run build
+              (vite.config.ts), поэтому после каждого деплоя номер меняется —
+              по нему видно, что обновление дошло до сайта. */}
+          <div className="mt-3 flex items-center justify-center">
+            <span
+              data-testid="build-badge"
+              title={t('Идентификатор сборки: меняется при каждом деплое')}
+              className="inline-flex items-center gap-1.5 rounded-full border border-gray-700/60 bg-gray-800/40 px-3 py-1 font-mono text-[11px] text-gray-500"
+            >
+              <span aria-hidden="true">⚙</span>
+              <span>build {import.meta.env.VITE_BUILD_ID ?? import.meta.env.VITE_APP_VERSION ?? 'dev'}</span>
+            </span>
+          </div>
           <div className="mt-4 flex flex-wrap items-center justify-center sm:justify-between gap-x-4 gap-y-1 text-[11px] text-gray-600">
             <p>{t('Сервис носит информационный характер и не является индивидуальной инвестиционной рекомендацией.')}</p>
             <nav aria-label={t('Правовые документы')} className="flex items-center gap-3">
