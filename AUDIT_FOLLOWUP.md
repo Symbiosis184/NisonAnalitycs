@@ -68,3 +68,24 @@ PR #44 и #38 можно закрывать как superseded (прав на з�
 
 - B1: ни один существующий тест не ослаблен; недостижимость моделей в старых тестах не закреплялась (модели просто не детектировались), добавлены новые регресс-тесты.
 - B2: формула не менялась; добавлены тесты-документация контракта варианта B.
+
+---
+
+## Разбор всех открытых PR (2026-11-14, follow-up sweep)
+
+Проверены все 10 открытых PR. Ни один не содержит в head коммитов main — merge через API/кнопку дал бы регрессии (удаление B1/B2/B3, dist, build-бейджей). Рекомендация: закрывать без merge; ценное переносится cherry-pick правок.
+
+| PR | Ветка | Ценное vs main | Решение |
+|----|-------|----------------|---------|
+| #44 | instructions-for-resuming-development-9b3d8 | Всё учтено (#A5 контратака перенесена в PR #48; ключевой разворот — объём из гейта в метку уже в main строже) | Закрыть (superseded) |
+| #38 | nison-analytics-audit-9fde2 | Ранняя итерация аудита P0/P1; всё вошло в PR #40/#45; P0-3 («две чёрные») отменена верно по канону | Закрыть (superseded) |
+| #20 | code-review-and-refinement-1c3d0 | Snapshot-ветка с node_modules (13990 файлов); README/CI-мелочи уже в main или неактуальны | Закрыть (не мержить) |
+| #18 | code-review-b8517 | Только DIAG-GITHUB-ERROR.md (диагностическая заметка) | По желанию: закрыть или смержить (безвредно) |
+| #12 | performance-optimization-125de | Renamed→Kairi — полностью подтверждено в main (index.html, deploy.sh, компоненты) | Закрыть (superseded) |
+| #10 | improving-analysis-accuracy-6f7c0 | Tooltip-фикс «сек vs мс» — реализован в main лучше (byTime+barTime); тест-контракт перенесён отдельным PR (tooltip-regress-from-pr8) | Закрыть после merge test-PR |
+| #9 | tooltip-does-not-appear-6ea9b | WS-топики Bybit (kline.D/W, spot) — закрыты в main эквивалентно (INTERVAL_MAP/D→'D', useBybitLiveCandle); nginx/CSP-страховки уже в main; ветка содержит node_modules | Закрыть (superseded) |
+| #8 | incorrect-tooltip-display-6b721 | __tip/hover-подход заменён в main на byTime-lookup; регресс-тест контракта времени — перенесён (см. test-PR); ветка содержит node_modules | Закрыть после merge test-PR |
+| #3 | repository-code-reconstruction-19562 | Snapshot с node_modules (13094 файла), древняя база | Закрыть (не мержить) |
+| #1 | fastapi-crypto-analytics-3aa63 | Архитектурный вариант python-сервера; в main серверная часть реализована иначе (server/*.py есть) | Закрыть (superseded) |
+
+Перенос: `src/__tests__/unit/chart_tooltip.test.ts` (4 теста, зелёные на main) — ветка `tooltip-regress-from-pr8`. Остальные содержательные правки в main уже присутствуют (проверено grep/diff по файлам).
