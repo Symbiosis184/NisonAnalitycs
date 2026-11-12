@@ -822,7 +822,8 @@ export class PatternDetector {
 
   static isDoubleThrustingBull(candles: Candle[]): PatternDetection {
     if (candles.length < 4) return { found: false, name: '' };
-    // P2-6 (гл. 6 ЯС): разворотная модель основания — требует предшествующего спада.
+    // P2-6 (ЯС гл. 4 «Двойной толчок»: «двойной толчок вниз» — бычий разворот
+    // после спада): разворотная модель основания — требует предшествующего спада.
     if (!this.precededByDecline(candles.slice(0, -4))) return { found: false, name: '' };
     for (let i = 0; i < 2; i++) {
       const a = candles[candles.length - 4 + i * 2];
