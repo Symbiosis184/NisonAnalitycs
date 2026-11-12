@@ -5,7 +5,9 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import UpdateBanner from './components/UpdateBanner';
+import Layout from './components/Layout';
 // импортируем реальный модуль (без mock) — isNewBuild/markBuildSeen принимают id аргументом
 import { BUILD_ID_KEY, isNewBuild, markBuildSeen } from './utils/buildUpdate';
 
@@ -77,5 +79,30 @@ describe('UpdateBanner: отображение на главной', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('Бейдж сборки в подвале (постоянный индикатор версии)', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('Layout рендерит build-badge с BUILD_ID (в vitest define не инжектируется, fallback dev)', () => {
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Layout />
+      </MemoryRouter>,
+    );
+    const badge = screen.getByTestId('build-badge');
+    // Формат: «build <id>». В тестовой среде VITE_BUILD_ID отсутствует — fallback.
+    expect(badge.textContent).toContain('build ');
+    expect(badge.textContent).toMatch(/build (\S+)$/);
+    expect(badge.getAttribute('title')).toBe('Идентификатор сборки: меняется при каждом деплое');
+  });
+
+  it('isNewBuild + markBuildSeen: бейдж виден всегда, баннер — только на новом билде', () => {
+    // Контракт: build-badge статичен (не зависит от localStorage),
+    // а «одноразовость» баннера обеспечивает пара isNewBuild/markBuildSeen.
+    expect(isNewBuild('build-X')).toBe(true);
+    markBuildSeen('build-X');
+    expect(isNewBuild('build-X')).toBe(false);
   });
 });
