@@ -159,6 +159,7 @@ export const UI_STRINGS: Record<string, string> = {
   'Контекст → Паттерны → Подтверждение → Объём': 'Context → Patterns → Confirmation → Volume',
   'Обновлено:': 'Updated:',
   'Обновить': 'Refresh',
+  'Сайт обновлён — вышел новый релиз': 'The site has been updated — new release is live',
   'Режим рынка': 'Market regime',
   'Широта согласия': 'Agreement breadth',
   'Эвристический балл': 'Heuristic score',

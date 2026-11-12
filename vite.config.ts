@@ -11,6 +11,11 @@ import { DEV_CSP } from "./vite.csp";
 const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
 const APP_VERSION = process.env.VITE_APP_VERSION ?? pkg.version;
 
+// Уникальный id сборки для детекта обновления на клиенте (см. src/utils/buildUpdate.ts).
+// Формат: версия + unix-время сборки. Меняется при каждой `npm run build`,
+// поэтому новый деплой гарантированно даёт другой BUILD_ID.
+const BUILD_ID = `${APP_VERSION}.${Math.floor(Date.now() / 1000)}`;
+
 /**
  * П.5 — CSP в режиме разработки: vite dev-сервер сам отдаёт HTML, поэтому
  * заголовки хостинга (netlify.toml / vercel.json / public/_headers) к нему
@@ -36,6 +41,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss(), devSecurityHeaders()],
   define: {
     "import.meta.env.VITE_APP_VERSION": JSON.stringify(APP_VERSION),
+    "import.meta.env.VITE_BUILD_ID": JSON.stringify(BUILD_ID),
   },
   server: {
     host: "0.0.0.0",

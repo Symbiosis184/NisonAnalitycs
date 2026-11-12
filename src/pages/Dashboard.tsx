@@ -11,6 +11,8 @@ import { describeNetworkError } from '../utils/http';
 import type { MarketKind } from '../api/market';
 import { marketLabel, STOCK_SUFFIX } from '../api/market';
 import { useI18n } from '../i18n';
+import UpdateBanner from '../components/UpdateBanner';
+import { useBuildUpdate } from '../hooks/useBuildUpdate';
 
 
 /** Переключатель рынков Crypto / TradFi (акции США). */
@@ -222,6 +224,8 @@ function MarketCardBody({ item }: { item: MarketOverview }) {
 
 export default function Dashboard() {
   const { t, locale } = useI18n();
+  // Баннер «сайт обновлён»: BUILD_ID сборки отличается от просмотренного (см. utils/buildUpdate).
+  const buildUpdate = useBuildUpdate();
   // Карточки всегда относятся только к активному рынку: при переключении
   // Crypto ⇄ TradFi чужие карточки мгновенно исчезают (без «смеси» рынков).
   const [marketData, setMarketData] = useState<MarketOverview[]>([]);
@@ -362,6 +366,7 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       <Seo meta={dashboardMeta()} />
+      <UpdateBanner visible={buildUpdate.hasUpdate} onDismiss={buildUpdate.dismiss} />
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-xl sm:text-3xl font-bold text-white leading-tight">{t('Обзор рынка')}<span className="hidden sm:inline">{t(' по методологии Нисона')}</span></h1>
