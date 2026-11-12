@@ -746,7 +746,12 @@ export class PatternDetector {
     if (patternContext(context).market !== 'stocks') return { found: false, name: '' };
     const closeTol = Math.max(c1.close * 0.001, ((c1.totalRange + c2.totalRange) / 2) * 0.1);
     if (Math.abs(c1.close - c2.close) > closeTol) return { found: false, name: '' };
-    if (!(c1.isLongCandle && c2.isLongCandle)) return { found: false, name: '' };
+    // PR #44 (#A5, гл. 3 ЯС «Построение японских свечей»): длинное тело — заметно
+    // бо́льшее ПО ОТНОШЕНИЮ к предшествующим; OR с абсолютной мерой — как в belt'ах
+    // и остальных моделях (проектная эвристика).
+    const winCA1 = this.relWindow(prev, prev.length - 1);
+    const winCA2 = this.relWindow([...prev, c1], prev.length);
+    if (!((this.isLongRelative(c1, winCA1) || c1.isLongCandle) && (this.isLongRelative(c2, winCA2) || c2.isLongCandle))) return { found: false, name: '' };
     const need = c1.totalRange * 0.5;
     const gap = c2.open - c1.close;
 
