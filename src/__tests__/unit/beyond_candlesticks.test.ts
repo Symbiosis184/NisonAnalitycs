@@ -58,15 +58,66 @@ describe('Renko', () => {
   // тест закреплял разворотные кирпичи [102→101], [101→100], перекрывающие
   // последний белый [101→102], — это отклонение от правил 4–5. Теперь первый
   // разворотный кирпич начинается от противоположной границы последнего кирпича:
-  // для белого [101→102] чёрный стартует от 101.
+  // для белого [101→102] чёрный стартует от 101 (триггер |delta| ≥ 2·brick не
+  // менялся; close 99 даёт два кирпича [101→100], [100→99], а close 98 — ещё
+  // один [99→98] как продолжение).
   it('требует двух кирпичей для смены направления и сохраняет геометрию разворота', () => {
     const out = renko(points([100, 102, 100.5, 99, 98]), 1);
     expect(out.slice(0, 2).map(b => b.direction)).toEqual(['up', 'up']);
-    expect(out).toHaveLength(4);
+    expect(out).toHaveLength(5);
     expect(out.slice(2).map(b => [b.open, b.close, b.direction])).toEqual([
-      [101, 100, 'down'], [100, 99, 'down'],
+      [101, 100, 'down'], [100, 99, 'down'], [99, 98, 'down'],
     ]);
     expect(out[2].reversal).toBe(true);
+    expect(out[3].reversal).toBe(false);
+    expect(out[4].reversal).toBe(false);
+  });
+
+  // C2 (ЗГ гл.7, правила 4–5): при развороте первый кирпич начинается от
+  // противоположной границы последнего кирпича (основание белого / вершина
+  // чёрного), а не от его дальнего края — кирпичи не перекрываются.
+  describe('C2: кирпич строится от границы предыдущего (ЗГ гл.7 правила 4–5)', () => {
+    it('разворот вниз на один порог: белый [100→105], close 95 → ровно ОДИН чёрный [95→100]', () => {
+      const out = renko(points([100, 105, 95]), 5);
+      const rev = out.filter(b => b.direction === 'down');
+      expect(rev).toHaveLength(1);
+      expect(rev[0]).toMatchObject({ open: 100, close: 95, reversal: true });
+    });
+
+    it('разворот вниз на два порога: белый [100→105], close 90 → ДВА чёрных [95→100], [90→95]', () => {
+      const out = renko(points([100, 105, 90]), 5);
+      const rev = out.filter(b => b.direction === 'down');
+      expect(rev.map(b => [b.open, b.close])).toEqual([[100, 95], [95, 90]]);
+      expect(rev[0].reversal).toBe(true);
+      expect(rev[1].reversal).toBe(false);
+    });
+
+    it('пример из книги (табл. 7.1): чёрный [135→130], close 140 → ровно ОДИН белый [135→140]', () => {
+      // Порог считается «на величину порога или более выше ВЕРШИНЫ последнего
+      // кирпича» (135 + 5 = 140), новый кирпич — «с максимума предыдущего».
+      const out = renko(points([135, 130, 140]), 5);
+      expect(out.map(b => [b.open, b.close, b.direction])).toEqual([
+        [135, 130, 'down'],
+        [135, 140, 'up'],
+      ]);
+      expect(out[1].reversal).toBe(true);
+    });
+
+    it('разворот вверх на два порога: чёрный [135→130], close 145 → ДВА белых [135→140], [140→145]', () => {
+      const out = renko(points([135, 130, 145]), 5);
+      const up = out.filter(b => b.direction === 'up');
+      expect(up.map(b => [b.open, b.close])).toEqual([[135, 140], [140, 145]]);
+      expect(up[0].reversal).toBe(true);
+      expect(up[1].reversal).toBe(false);
+    });
+
+    it('продолжение тренда: поведение не меняется (кирпичи от anchorPrice)', () => {
+      const out = renko(points([100, 105, 110, 115]), 5);
+      expect(out.map(b => [b.open, b.close, b.direction])).toEqual([
+        [100, 105, 'up'], [105, 110, 'up'], [110, 115, 'up'],
+      ]);
+      expect(out.every(b => !b.reversal)).toBe(true);
+    });
   });
 
   it('отклоняет неположительный размер кирпича', () => {
