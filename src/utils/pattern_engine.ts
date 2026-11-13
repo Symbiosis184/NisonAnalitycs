@@ -223,6 +223,15 @@ export class PatternDetector {
     return isLow ? value <= ref + tol : value >= ref - tol;
   }
 
+  /**
+   * C4: относительная длина тела — канонический принцип. ЗГ гл. 2 («Длинные
+   * белые тела»): «По мнению некоторых японских трейдеров, использующих свечные
+   * графики, тело полноценной длинной белой свечи должно быть не менее чем втрое
+   * длиннее тела свечи за предыдущий день». Множитель 1.5× медианы тел окна —
+   * ПРОЕКТНЫЙ порог (мягче книжного ориентира «втрое длиннее тела предыдущего
+   * дня», который книга приводит как мнение части трейдеров, а не жёсткое
+   * правило); множитель не менять без решения владельца.
+   */
   private static isLongRelative(candle: Candle, window: Candle[]): boolean {
     if (window.length < 3) return candle.isLongCandle || candle.body > candle.totalRange * 0.45;
     const bodies = window.map(c => c.body).sort((a, b) => a - b);
@@ -720,8 +729,11 @@ export class PatternDetector {
    * Захват за пояс — длинная свеча с открытием на экстремуме сессии.
    */
   static isBullishBelt(c1: Candle, c2: Candle, prev: Candle[], context?: PatternContext): PatternDetection {
-    // P2-1 (гл. «Построение свечей» ЯС): длинное тело — относительно предшествующих
-    // свечей; OR с абсолютной мерой — как в isTowerFormation (проектная эвристика).
+    // C4 / P2-1 (ЯС гл. 6 «Захват за пояс»: «Чем длиннее свеча „захват за пояс"
+    // и чем дольше она до этого не появлялась на графике, тем сильнее будет ее
+    // сигнал»; ЗГ гл. 2 — относительность длинного тела): OR-комбинация
+    // относительной и абсолютной меры — как в isDarkCloudCover/isTowerFormation
+    // (проектная эвристика; порог isLongRelative помечен в её комментарии).
     if (!(c2.isBullish && (this.isLongRelative(c2, this.relWindow([...prev, c1, c2], prev.length + 1)) || c2.isLongCandle))) return { found: false, name: '' };
     if (c2.lowerWick > c2.totalRange * 0.05) return { found: false, name: '' };
     if (!this.precededByDecline(prev)) return { found: false, name: '' };
@@ -732,7 +744,9 @@ export class PatternDetector {
   }
 
   static isBearishBelt(c1: Candle, c2: Candle, prev: Candle[], context?: PatternContext): PatternDetection {
-    // P2-1 (гл. «Построение свечей» ЯС): зеркально бычьему поясу — относительная длина тела.
+    // C4 / P2-1: зеркально бычьему поясу — OR относительной и абсолютной меры
+    // длины тела (ЯС гл. 6 «Захват за пояс», ЗГ гл. 2; см. комментарий
+    // isBullishBelt и isLongRelative).
     if (!(c2.isBearish && (this.isLongRelative(c2, this.relWindow([...prev, c1, c2], prev.length + 1)) || c2.isLongCandle))) return { found: false, name: '' };
     if (c2.upperWick > c2.totalRange * 0.05) return { found: false, name: '' };
     if (!this.precededByRally(prev)) return { found: false, name: '' };
