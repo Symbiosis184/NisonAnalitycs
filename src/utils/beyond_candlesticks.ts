@@ -140,12 +140,17 @@ export function renko(points: ClosePoint[], brickSize: number): RenkoBrick[] {
     const nextDirection: ChartDirection = continuation
       ? direction ?? (delta > 0 ? 'up' : 'down')
       : direction === 'up' ? 'down' : 'up';
-    const count = Math.floor(Math.abs(delta) / brickSize);
+    // ЗГ гл.7 правила 4–5: новый кирпич начинается от вершины (для белого) или
+    // основания (для чёрного) предыдущего кирпича — независимо от его цвета.
+    // При развороте это противоположная граница последнего кирпича.
+    let start = anchorPrice;
+    if (reversal) start = direction === 'up' ? anchorPrice - brickSize : anchorPrice + brickSize;
+    const count = Math.floor(Math.abs(point.close - start) / brickSize);
     if (count < 1) continue;
 
     const step = nextDirection === 'up' ? brickSize : -brickSize;
     for (let j = 0; j < count; j++) {
-      const open = anchorPrice + step * j;
+      const open = start + step * j;
       bricks.push({
         // P2-3 (ЗГ, раздел Renko): кирпич относится к бару point.time — именно его
         // закрытие его построило. Нулевая длительность (startTime === endTime) не
@@ -158,7 +163,7 @@ export function renko(points: ClosePoint[], brickSize: number): RenkoBrick[] {
         reversal: j === 0 && reversal,
       });
     }
-    anchorPrice += step * count;
+    anchorPrice = start + step * count;
     anchorTime = point.time;
     direction = nextDirection;
   }
