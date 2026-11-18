@@ -213,6 +213,7 @@ export class ZoneVoter {
     candles: Candle[],
     tfKey: TimeframeKey = 'swing',
     market: ZoneMarket = 'crypto',
+    overrides?: Partial<ZoneParams>,
   ): { support: Zone[]; resistance: Zone[] } {
     const lastCandle = candles[candles.length - 1];
     const cacheKey = [
@@ -220,12 +221,13 @@ export class ZoneVoter {
       tfKey,
       market,
       candles.length,
+      JSON.stringify(overrides ?? {}),
       this.historyFingerprint(candles),
     ].join('_');
     const cached = this.collectCache.get(cacheKey);
     if (cached) return cached;
 
-    const params = { ...ZONE_PARAMS[tfKey] };
+    const params = { ...ZONE_PARAMS[tfKey], ...(overrides ?? {}) };
     // ЗАДАЧА 8: дожи как источник зон — по умолчанию ВЫКЛЮЧЕН; включается
     // только явным флагом среды (проектный способ активации, не из книг).
     if (typeof process !== 'undefined' && process.env?.NISON_DOJI_ZONES === '1') {
