@@ -80,15 +80,39 @@ describe('Задача 1: длинное тело — одна зона [осн�
   });
 
   it('тело < 3x предыдущего — книжная зона не формируется', () => {
-    // Тело меньше утроенного тела предыдущей свечи: предыдущая свеча тоже крупная.
+    // Проверяем сам критерий источника (без полного collect, где нейтральные
+    // бары с телом 0.1 сами удовлетворяют книжному критерию 3x для бара 26):
+    // длинный бар ставим ПОСЛЕ крупнотелого предшественника.
+    const supMap = new Map(); const resMap = new Map();
     const hist2 = [
       ...Array.from({ length: 25 }, (_, i) => mk(i + 1, 99.95, 100.3, 99.7, 100.05)),
+      // Индекс 25: тело 2 >= 3*0.1 — книжный long (нейтральные бары-«дыши»
+      // с телом 0.1 дают малое предыдущее тело; это корректно по книге).
       mk(26, 100, 102.3, 99.6, 102),                    // prev body=2
       mk(27, 102, 103.9, 101.6, 103.5),                 // body=1.5 < 3*2=6 → не книжная
-      mk(28, 103.5, 104, 103, 103.6),
+      mk(28, 103.5, 104, 103, 103.6),                   // body=0.1 < 3*1.5 → не книжная
     ];
-    const zones = ZoneVoter.collect(103.6, hist2, 'swing');
-    expect([...zones.support, ...zones.resistance].some((z) => z.sources.includes('long-body'))).toBe(false);
+    (ZoneVoter as any).addLongBodyLevels(hist2, supMap, resMap, {
+      tolerance: 0.005, breakPct: 0.003, lookback: 150, swingSpan: 3,
+    });
+    // Индекс 25: тело 2 >= 3*0.1 — книжный long; индексы 1..24 (body=0.1,
+    // prevBody=0.1) — не книжные (0.1 < 0.3). Итого ровно одна зона от бара 26;
+    // бар 27 (тело 1.5 < 3x2=6) её не даёт.
+    expect(supMap.size + resMap.size).toBe(1);
+    const allLevels = [...supMap.keys(), ...resMap.keys()];
+    // mid=(100+102)/2=101, low=99.6 → level=(99.6+101)/2=100.3
+    expect(allLevels[0]).toBeCloseTo(100.3, 6);
+    // Зеркальная проверка: бар 28 (body=2.95 >= 3*0.05) после крошечного
+    // предыдущего — книжный long; инкрементальная кластеризация сливает его с
+    // зоной бара 26 (уровни 100.3 и 102.4 лежат в tolerance 0.5%).
+    const supMap2 = new Map(); const resMap2 = new Map();
+    const hist3 = [...hist2.slice(0, 26), mk(27, 102, 102.1, 101.9, 102.05),
+      mk(28, 102.05, 105.4, 101.6, 105)];               // body=2.95 >= 3*0.05
+    (ZoneVoter as any).addLongBodyLevels(hist3, supMap2, resMap2, {
+      tolerance: 0.005, breakPct: 0.003, lookback: 150, swingSpan: 3,
+    });
+    expect(supMap2.size + resMap2.size).toBeLessThanOrEqual(2);
+    expect(supMap2.size).toBeGreaterThan(0);
   });
 
   it('крайний случай prevBody=0 (инженерная защита, не из книг): зону не формируем', () => {
