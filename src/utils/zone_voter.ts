@@ -638,24 +638,28 @@ export class ZoneVoter {
           // ВЕСЬ диапазон свечи с нижней тенью.
           const lo = c.low, hi = mid;
           addLevelToMap(
-            supMap, mid,
+            supMap, (lo + hi) / 2,
             'зона длинного белого тела: от середины до основания свечи, включая нижнюю тень (ЗГ гл. 2, рис. 2.11)',
             c.time, params.tolerance, 1,
             {
               source: 'long-body', halfWidth: (hi - lo) / 2, formedAt: c.time,
               startCheckIndex, bookBand: { lo, hi, role: 'support' },
+              // Проектное решение: книжная полоса длинного тела не сливается со
+              // свинг-кластерами — иначе её геометрия [low…mid] теряется.
+              keepSeparate: true,
             },
           );
         } else {
           // Аналогично: «вершина длинного чёрного тела» → вершина свечи с верхней тенью.
           const lo = mid, hi = c.high;
           addLevelToMap(
-            resMap, mid,
+            resMap, (lo + hi) / 2,
             'зона длинного чёрного тела: от середины до вершины свечи, включая верхнюю тень (ЗГ гл. 2, рис. 2.11)',
             c.time, params.tolerance, 1,
             {
               source: 'long-body', halfWidth: (hi - lo) / 2, formedAt: c.time,
               startCheckIndex, bookBand: { lo, hi, role: 'resistance' },
+              keepSeparate: true,
             },
           );
         }

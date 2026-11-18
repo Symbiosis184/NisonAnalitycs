@@ -74,6 +74,12 @@ export interface ZoneClusterData {
   startCheckIndex?: number;
   /** Книжная геометрия полосы (long-body/window) + изначальная роль. */
   bookBand?: BookBandGeom;
+  /**
+   * Флаг «только для себя»: источник задал точную книжную геометрию и НЕ хочет
+   * сливаться с другими уровнями (защита от поглощения длинного тела свинг-кластером).
+   * Проектное решение: при кластеризации такой уровень образует отдельный кластер.
+   */
+  keepSeparate?: boolean;
 }
 
 export interface ZoneClusterOptions {
@@ -84,6 +90,8 @@ export interface ZoneClusterOptions {
   startCheckIndex?: number;
   /** Явная книжная полоса [lo … hi] с ролью (long-body/window). */
   bookBand?: BookBandGeom;
+  /** Не сливать с другими уровнями (см. ZoneClusterData.keepSeparate). */
+  keepSeparate?: boolean;
 }
 
 /**
@@ -130,6 +138,7 @@ export function addLevelToMap(
     if (options.bookBand !== undefined && data.bookBand === undefined) {
       data.bookBand = options.bookBand;
     }
+    if (options.keepSeparate) data.keepSeparate = true;
     return true;
   }
   map.set(level, {
@@ -141,6 +150,7 @@ export function addLevelToMap(
     formedAt: options.formedAt ?? touchTime,
     startCheckIndex: options.startCheckIndex,
     bookBand: options.bookBand,
+    keepSeparate: options.keepSeparate,
   });
   return false;
 }
@@ -152,13 +162,16 @@ export function addLevelToMap(
  * не сливаться). Возвращает цену ближайшей подходящей зоны либо undefined.
  */
 export function findClusterZone(
-  map: Map<number, unknown>,
+  map: Map<number, ZoneClusterData>,
   level: number,
   tolerance: number
 ): number | undefined {
   let best: number | undefined;
   let bestDist = Infinity;
-  for (const existing of map.keys()) {
+  for (const [existing, data] of map.entries()) {
+    // Проектное решение: уровни с keepSeparate (книжные long-body-полосы) не
+    // притягивают к себе другие уровни и сами не сливаются инкрементально.
+    if (data.keepSeparate) continue;
     const dist = Math.abs(level - existing);
     if (dist / existing <= tolerance || dist / level <= tolerance) {
       if (dist < bestDist) {
@@ -193,6 +206,22 @@ export function dedupeZones<T extends ZoneClusterData>(
   }> = [];
   for (const [level, data] of sorted) {
     const last = clusters[clusters.length - 1];
+    // Проектное решение: книжная long-body-полоса (keepSeparate) не сливается с
+    // соседними кластерами — иначе её точная геометрия и роль теряются при
+    // поглощении свинг-кластером (см. задачу 1: «одна зона, а не две точки»).
+    if (data.keepSeparate || last?.data.keepSeparate) {
+      clusters.push({
+        levels: [level],
+        widths: [{ level, halfWidth: data.halfWidth }],
+        bands: data.bookBand ? [{ level, band: data.bookBand }] : [],
+        data: {
+          ...data,
+          reasons: [...data.reasons],
+          sources: [...(data.sources ?? [])],
+        },
+      });
+      continue;
+    }
     // При кластеризации сравниваем ПОЛНЫЕ ДИАПАЗОНЫ зон: книжная полоса
     // (long-body/window) может быть шире tolerance-окрестности её центра, и
     // соседний уровень обязан перекрываться с зоной, а не только лежать в
