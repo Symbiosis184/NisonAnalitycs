@@ -65,9 +65,17 @@ describe('Канон Нисона гл.11: зоны на каждом ТФ — �
     const lv = (z: { level: number }[]) => z.map(x => x.level.toFixed(6)).join('|');
     expect(lv(s.support) + '#' + lv(s.resistance))
       .not.toEqual(lv(p.support) + '#' + lv(p.resistance));
-    // толеранс position (0.8%) шире scalp (0.2%) → полуширина зоны крупнее (ATR одинаков)
-    const allS = [...s.support, ...s.resistance];
-    const allP = [...p.support, ...p.resistance];
+    // Толеранс position (0.8%) шире scalp (0.2%) → полуширина НЕкнижных зон
+    // крупнее (ATR одинаков). ОБНОВЛЕНО (задача 5): сравнение ограничено
+    // источниками без книжной геометрии — для window/long-body halfWidth
+    // задаётся книгой и НЕ расширяется ATR-полосой проекта, поэтому прежняя
+    // проверка «максимум по всем зонам» перестала быть корректной: на этом
+    // фикстурном синусоидальном ряду в scalp присутствуют узкие окна с
+    // книжной шириной, задающей максимум.
+    const nonBook = (z: { sources: string[]; halfWidth: number }[]) =>
+      z.filter((x) => !x.sources.includes('window') && !x.sources.includes('long-body'));
+    const allS = nonBook([...s.support, ...s.resistance]);
+    const allP = nonBook([...p.support, ...p.resistance]);
     if (allS.length && allP.length) {
       expect(Math.max(...allP.map(z => z.halfWidth)))
         .toBeGreaterThan(Math.max(...allS.map(z => z.halfWidth)));

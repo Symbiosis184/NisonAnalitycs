@@ -46,7 +46,19 @@ export function findSwings(candles: Candle[], lookback: number = 50, span: numbe
 
 export type ZoneSource =
   | 'swing' | 'polarity' | 'ma' | 'volume' | 'long-body'
-  | 'round-number' | 'fibonacci' | 'window';
+  | 'round-number' | 'fibonacci' | 'window' | 'doji';
+
+/** Роль книжной полосы (закрытая граница, за которой зона инвалидируется). */
+export type BookBandRole = 'support' | 'resistance';
+
+/**
+ * Явная книжная геометрия полосы [lo … hi] (ЗГ гл. 2 — длинные тела,
+ * ЗГ гл. 3 / ЯС гл. 7 — окна). level=середина, halfWidth=полуширина.
+ * role задаётся источником (белое тело → поддержка), а не позицией цены
+ * (см. задачу 3); при пробое по закрытию за ДАЛЬНЕЙ границей роль меняется
+ * на полярную (ЯС гл. 11), а не «зона удаляется» (см. задачу 2).
+ */
+export interface BookBandGeom { lo: number; hi: number; role: BookBandRole }
 
 export interface ZoneClusterData {
   reasons: string[];
@@ -58,12 +70,37 @@ export interface ZoneClusterData {
   halfWidth?: number;
   /** Время первоначального формирования, а не последнего касания. */
   formedAt?: number;
+  /** Индекс бара, СЛЕДУЮЩИЙ за сформировавшим зону (для проверки пробоя). */
+  startCheckIndex?: number;
+  /** Книжная геометрия полосы (long-body/window) + изначальная роль. */
+  bookBand?: BookBandGeom;
+  /**
+   * ЗАДАЧА 9 (ЯС гл. 11): «значимость … зависит от того, сколько раз рынок
+   * безуспешно пытается ее пробить и каковы объемы торгов во время этих
+   * попыток». Суммарный относительный объём баров-касаний (v/avgVolume lookback).
+   * Принцип книжный; КОНКРЕТНАЯ ФОРМУЛА накопления — настройка проекта, не из книг.
+   */
+  touchVolumeSum?: number;
+  /**
+   * Флаг «только для себя»: источник задал точную книжную геометрию и НЕ хочет
+   * сливаться с другими уровнями (защита от поглощения длинного тела свинг-кластером).
+   * Проектное решение: при кластеризации такой уровень образует отдельный кластер.
+   */
+  keepSeparate?: boolean;
 }
 
 export interface ZoneClusterOptions {
   source?: ZoneSource;
   halfWidth?: number;
   formedAt?: number;
+  /** Индекс бара начала проверки пробоя (для книжных зон, задачи 2/4). */
+  startCheckIndex?: number;
+  /** Явная книжная полоса [lo … hi] с ролью (long-body/window). */
+  bookBand?: BookBandGeom;
+  /** Не сливать с другими уровнями (см. ZoneClusterData.keepSeparate). */
+  keepSeparate?: boolean;
+  /** ЗАДАЧА 9: суммарный относительный объём касаний (формула — проектная). */
+  touchVolumeSum?: number;
 }
 
 /**
@@ -101,6 +138,20 @@ export function addLevelToMap(
     if (options.formedAt !== undefined) {
       data.formedAt = Math.min(data.formedAt ?? options.formedAt, options.formedAt);
     }
+    if (options.startCheckIndex !== undefined) {
+      data.startCheckIndex = Math.min(data.startCheckIndex ?? options.startCheckIndex, options.startCheckIndex);
+    }
+    // bookBand НЕ объединяется при слиянии кластеров: геометрия принадлежит
+    // конкретному источнику; при слиянии разных книжных полос сохраняем первую
+    // (проектное решение: смешивать геометрические полосы разных свечей нельзя).
+    if (options.bookBand !== undefined && data.bookBand === undefined) {
+      data.bookBand = options.bookBand;
+    }
+    // ЗАДАЧА 9: накопление относительного объёма касаний (формула — проектная).
+    if (options.touchVolumeSum !== undefined) {
+      data.touchVolumeSum = (data.touchVolumeSum ?? 0) + options.touchVolumeSum;
+    }
+    if (options.keepSeparate) data.keepSeparate = true;
     return true;
   }
   map.set(level, {
@@ -110,6 +161,10 @@ export function addLevelToMap(
     sources: options.source ? [options.source] : [],
     halfWidth: options.halfWidth,
     formedAt: options.formedAt ?? touchTime,
+    startCheckIndex: options.startCheckIndex,
+    bookBand: options.bookBand,
+    keepSeparate: options.keepSeparate,
+    touchVolumeSum: options.touchVolumeSum,
   });
   return false;
 }
@@ -121,13 +176,16 @@ export function addLevelToMap(
  * не сливаться). Возвращает цену ближайшей подходящей зоны либо undefined.
  */
 export function findClusterZone(
-  map: Map<number, unknown>,
+  map: Map<number, ZoneClusterData>,
   level: number,
   tolerance: number
 ): number | undefined {
   let best: number | undefined;
   let bestDist = Infinity;
-  for (const existing of map.keys()) {
+  for (const [existing, data] of map.entries()) {
+    // Проектное решение: уровни с keepSeparate (книжные long-body-полосы) не
+    // притягивают к себе другие уровни и сами не сливаются инкрементально.
+    if (data.keepSeparate) continue;
     const dist = Math.abs(level - existing);
     if (dist / existing <= tolerance || dist / level <= tolerance) {
       if (dist < bestDist) {
@@ -158,11 +216,43 @@ export function dedupeZones<T extends ZoneClusterData>(
     levels: number[];
     data: T;
     widths: Array<{ level: number; halfWidth?: number }>;
+    bands: Array<{ level: number; band: BookBandGeom }>;
   }> = [];
   for (const [level, data] of sorted) {
     const last = clusters[clusters.length - 1];
+    // Проектное решение: книжная long-body-полоса (keepSeparate) не сливается с
+    // соседними кластерами — иначе её точная геометрия и роль теряются при
+    // поглощении свинг-кластером (см. задачу 1: «одна зона, а не две точки»).
+    if (data.keepSeparate || last?.data.keepSeparate) {
+      clusters.push({
+        levels: [level],
+        widths: [{ level, halfWidth: data.halfWidth }],
+        bands: data.bookBand ? [{ level, band: data.bookBand }] : [],
+        data: {
+          ...data,
+          reasons: [...data.reasons],
+          sources: [...(data.sources ?? [])],
+        },
+      });
+      continue;
+    }
+    // При кластеризации сравниваем ПОЛНЫЕ ДИАПАЗОНЫ зон: книжная полоса
+    // (long-body/window) может быть шире tolerance-окрестности её центра, и
+    // соседний уровень обязан перекрываться с зоной, а не только лежать в
+    // допуске от средней линии (ЯС гл. 11: уровень — это зона, а не линия).
+    const reachOf = (lv: number, d: T): number =>
+      Math.max(d.halfWidth ?? 0, d.bookBand ? Math.max(lv - d.bookBand.lo, d.bookBand.hi - lv) : 0);
+    const overlapsPrevCluster = (cluster: NonNullable<typeof last>, lv: number, d: T): boolean => {
+      const loNew = lv - reachOf(lv, d);
+      const hiNew = lv + reachOf(lv, d);
+      return cluster.levels.some((l) => {
+        const r = reachOf(l, cluster.data);
+        return l - r <= hiNew && loNew <= l + r;
+      });
+    };
     const anchor = last ? last.levels[last.levels.length - 1] : undefined;
-    if (anchor !== undefined && Math.abs(level - anchor) / anchor <= tolerance) {
+    if (anchor !== undefined &&
+        (Math.abs(level - anchor) / anchor <= tolerance || overlapsPrevCluster(last!, level, data))) {
       last!.levels.push(level);
       last!.widths.push({ level, halfWidth: data.halfWidth });
       last!.data.reasons.push(...data.reasons);
@@ -178,10 +268,21 @@ export function dedupeZones<T extends ZoneClusterData>(
       if (data.formedAt !== undefined) {
         last!.data.formedAt = Math.min(last!.data.formedAt ?? data.formedAt, data.formedAt);
       }
+      if (data.startCheckIndex !== undefined) {
+        last!.data.startCheckIndex = Math.min(
+          last!.data.startCheckIndex ?? data.startCheckIndex, data.startCheckIndex);
+      }
+      if (data.bookBand) last!.bands.push({ level, band: data.bookBand });
+      // ЗАДАЧА 9: суммарный относительный объём касаний при слиянии кластеров.
+      if (data.touchVolumeSum !== undefined) {
+        last!.data.touchVolumeSum =
+          (last!.data.touchVolumeSum ?? 0) + data.touchVolumeSum;
+      }
     } else {
       clusters.push({
         levels: [level],
         widths: [{ level, halfWidth: data.halfWidth }],
+        bands: data.bookBand ? [{ level, band: data.bookBand }] : [],
         data: {
           ...data,
           reasons: [...data.reasons],
@@ -200,11 +301,27 @@ export function dedupeZones<T extends ZoneClusterData>(
       ...cluster.widths.map((item) =>
         Math.abs(item.level - avg) + (item.halfWidth ?? 0)),
     );
+    // Объединённая книжная полоса кластера: покрытие всех исходных полос.
+    let mergedBand: BookBandGeom | undefined;
+    if (cluster.bands.length > 0) {
+      const lo = Math.min(...cluster.bands.map((b) => b.band.lo));
+      const hi = Math.max(...cluster.bands.map((b) => b.band.hi));
+      const roles = new Set(cluster.bands.map((b) => b.band.role));
+      // Проектное решение: при конфликте ролей разных полос в одном кластере
+      // роль выбирается по ближайшей к центру кластера исходной полосе.
+      const role = roles.size === 1
+        ? cluster.bands[0].band.role
+        : cluster.bands.sort((a, b) =>
+            Math.abs((a.band.lo + a.band.hi) / 2 - avg) - Math.abs((b.band.lo + b.band.hi) / 2 - avg),
+          )[0].band.role;
+      mergedBand = { lo, hi, role };
+    }
     map.set(Math.round(avg * 1e8) / 1e8, {
       ...cluster.data,
       halfWidth: cluster.data.halfWidth === undefined && coveringHalfWidth === 0
         ? undefined
         : coveringHalfWidth,
+      bookBand: mergedBand,
       reasons: Array.from(new Set(cluster.data.reasons)),
     });
   }

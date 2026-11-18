@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ZoneVoter } from '../../utils/zone_voter';
 import { c, flat } from '../helpers/candles';
+import type { ZoneClusterData } from '../../utils/levels';
 
 describe('ZoneVoter.collect', () => {
   // Синусоида с явными свопами: поддержка ~90, сопротивление ~110
@@ -135,7 +136,7 @@ describe('Аудит №1: единый источник S/R — транзит�
 
   it('findClusterZone симметричен: новый уровень на границе допуска сливается с зоной', async () => {
     const { findClusterZone } = await import('../../utils/levels');
-    const map = new Map<number, unknown>([[100.0, {}]]);
+    const map = new Map([[100.0, { reasons: [], touches: 0, lastTouch: 0 } as ZoneClusterData]]);
     // |Δ|/100 <= 0.005 → входит; даже если проверка шла бы от нового уровня
     expect(findClusterZone(map, 100.49, 0.005)).toBe(100.0);
     expect(findClusterZone(map, 101.0, 0.005)).toBeUndefined();
