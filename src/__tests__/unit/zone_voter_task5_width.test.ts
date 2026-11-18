@@ -15,7 +15,7 @@ describe('Задача 5: mapToZones сохраняет книжную halfWidth
     const map = new Map<number, ZoneClusterData>();
     // Узкое окно 0.2% ширины: bookBand lo=99.9, hi=100.1 → halfWidth=0.1.
     map.set(100, {
-      reasons: ['окно вверх'], touches: 0, lastTouch: undefined, sources: ['window'], formedAt: 1,
+      reasons: ['окно вверх'], touches: 0, lastTouch: 0, sources: ['window'], formedAt: 1,
       halfWidth: 0.1,
       bookBand: { lo: 99.9, hi: 100.1, role: 'support' },
       startCheckIndex: 0,
@@ -30,7 +30,7 @@ describe('Задача 5: mapToZones сохраняет книжную halfWidth
     const map = new Map<number, ZoneClusterData>();
     // Очень широкое окно: lo=90, hi=110 → halfWidth=10.
     map.set(100, {
-      reasons: ['окно вниз'], touches: 0, lastTouch: undefined, sources: ['window'], formedAt: 1,
+      reasons: ['окно вниз'], touches: 0, lastTouch: 0, sources: ['window'], formedAt: 1,
       halfWidth: 10,
       bookBand: { lo: 90, hi: 110, role: 'resistance' },
       startCheckIndex: 0,
