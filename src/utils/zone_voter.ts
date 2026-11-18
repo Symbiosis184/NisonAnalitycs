@@ -574,7 +574,16 @@ export class ZoneVoter {
   }
 
   /**
-   * 4. Объёмные климасы
+   * 4. Объёмные климасы — только ПОСЛЕ предшествующего движения (ЗАДАЧА 7).
+   * Книга (ЯС гл. 15, глоссарий): «кульминация продаж — резкое падение цены на
+   * фоне большого объема торгов ПОСЛЕ периода длительного снижения»;
+   * «выпуск пара — разворот... после сильного и быстрого движения цены».
+   * Поэтому бычий климакс (большой объём + белая свеча) считается ТОЛЬКО после
+   * предшествующего спада (→ бычий контекст), медвежий — только после ралли.
+   * ВАЖНО (проектная операционализация, НЕ из книг):
+   *  - правило «экстремум климакса (low/high свечи) = зона S/R» книгами не задаётся;
+   *  - порог объёма 2×avg(60) — настройка проекта, в книгах числа нет;
+   *  - окно контекста 10 баров и минимальная величина движения — проектные.
    */
   private static addVolumeClimaxLevels(
     candles: Candle[],
@@ -583,17 +592,39 @@ export class ZoneVoter {
     tolerance: number
   ) {
     const lookback = Math.min(60, candles.length);
-    const recent = candles.slice(-lookback);
+    const startIdx = candles.length - lookback;
+    const recent = candles.slice(startIdx);
     const avgVolume = recent.reduce((sum, c) => sum + c.volume, 0) / recent.length;
 
-    for (const c of recent) {
-      if (c.volume > avgVolume * 2) {
-        const level = c.isBullish ? c.low : c.high;
-        if (c.isBullish) {
-          addLevelToMap(supMap, level, 'объёмный климакс (гл. 15)', c.time, tolerance, 1, { source: 'volume', formedAt: c.time });
-        } else {
-          addLevelToMap(resMap, level, 'объёмный климакс (гл. 15)', c.time, tolerance, 1, { source: 'volume', formedAt: c.time });
-        }
+    // Проектное окно предшествующего движения (не из книг).
+    const CONTEXT = 10;
+
+    for (let i = 0; i < recent.length; i++) {
+      const c = recent[i];
+      const globalIdx = startIdx + i;
+      // Нужен предшествующий отрезок истории (только закрытые бары до теста).
+      if (globalIdx < CONTEXT) continue;
+      if (!(c.volume > avgVolume * 2)) continue; // проектный порог 2×avg(60)
+
+      const prevClose = candles[globalIdx - CONTEXT].close;
+      const movePct = (c.close - prevClose) / prevClose;
+      // Проектный минимальный размер предшествующего движения (0.5%).
+      const MIN_MOVE = 0.005;
+
+      if (c.isBullish && movePct <= -MIN_MOVE) {
+        // Кульминация ПОКУПОК после спада → бычий контекст → поддержка.
+        addLevelToMap(
+          supMap, c.low,
+          'климакс покупок после спада → поддержка (ЯС гл. 15; экстремум как зона и порог 2×avg — проектная операционализация, не из книг)',
+          c.time, tolerance, 1, { source: 'volume', formedAt: c.time },
+        );
+      } else if (!c.isBullish && movePct >= MIN_MOVE) {
+        // Выпуск пара (климакс продаж) после ралли → медвежий контекст → сопротивление.
+        addLevelToMap(
+          resMap, c.high,
+          'климакс продаж после ралли → сопротивление (ЯС гл. 15; экстремум как зона и порог 2×avg — проектная операционализация, не из книг)',
+          c.time, tolerance, 1, { source: 'volume', formedAt: c.time },
+        );
       }
     }
   }
