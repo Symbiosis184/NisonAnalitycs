@@ -16,6 +16,53 @@ import { detectGaps } from './gaps';
 
 export type ZoneMarket = 'stock' | 'crypto';
 
+/**
+ * Геометрия книжных зон: [lo … hi] вокруг level=середина, halfWidth=половина ширины.
+ * Используется источниками с явной книжной геометрией (long-body, window).
+ */
+interface BookBand { lo: number; hi: number }
+
+/** Полоса зоны как [level − halfWidth, level + halfWidth]. */
+function bandOf(b: { level: number; halfWidth: number }): BookBand {
+  return { lo: b.level - b.halfWidth, hi: b.level + b.halfWidth };
+}
+
+/**
+ * Источники с ЯВНОЙ книжной геометрией полосы (ЗГ гл. 2 — длинные тела,
+ * ЗГ гл. 3 / ЯС гл. 7 — окна). Для них halfWidth НЕ расширяется ATR-полосой
+ * проекта (см. mapToZones) и применяется инвалидация по закрытию за дальней
+ * границей (см. closedBeyondFarEdge).
+ */
+const BOOK_GEOMETRY_SOURCES: ReadonlySet<ZoneSource> = new Set(['long-body', 'window']);
+
+/** Есть ли у кластера источник с книжной геометрией. */
+function hasBookGeometry(data: ZoneClusterData): boolean {
+  return (data.sources ?? []).some((s) => BOOK_GEOMETRY_SOURCES.has(s));
+}
+
+/**
+ * Инвалидация книжной зоны по ЗАКРЫТИЮ (ЗГ гл. 2): «прорывы этих зон поддержки
+ * могут происходить неоднократно в течение сессии, но пока цены закрытия
+ * держатся выше поддержки, она остается в силе». То есть зона жива, пока нет
+ * закрытия за ДАЛЬНЕЙ границей полосы: поддержка пробивается закрытием ниже
+ * нижней границы, сопротивление — закрытием выше верхней.
+ * Настройка проекта: порог breakPct (книга числового порога не задаёт).
+ */
+function closedBeyondFarEdge(
+  candles: Candle[],
+  fromIdx: number,
+  band: BookBand,
+  role: 'support' | 'resistance',
+  breakPct: number,
+): boolean {
+  for (let i = Math.max(0, fromIdx); i < candles.length; i++) {
+    const c = candles[i];
+    if (role === 'support' && c.close < band.lo * (1 - breakPct)) return true;
+    if (role === 'resistance' && c.close > band.hi * (1 + breakPct)) return true;
+  }
+  return false;
+}
+
 /** Wilder ATR (последнее значение) по закрытым свечам; 0 при нехватке данных. */
 function atrWilder(candles: Candle[], period = 14): number {
   if (candles.length <= period) return 0;
