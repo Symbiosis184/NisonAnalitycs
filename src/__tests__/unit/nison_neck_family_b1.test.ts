@@ -71,6 +71,18 @@ describe('B1: семья шеи достижима при open₂ == close₁ (�
     expect(res.name).toBe('ТОЛЧОК');
   });
 
+  it('глоссарий А: close₂ «немного выше минимумов чёрной» (между low₁ и close₁) → НА ШЕЕ', () => {
+    // ЯС глоссарий А, «На шее»: «ценой закрытия немного выше минимумов черной
+    // свечи». close₂ = low₁ + 2·tol — ВЫШЕ окна ветки НИЖЕ ШЕИ (±tol от low₁),
+    // но внутри расширенного окна по решению владельца (оба книжных уровня).
+    const tol = black.totalRange * 0.05; // 0.575
+    const white = cc(black.close, black.low + 2 * tol + 0.1, black.low - 0.1, black.low + 2 * tol);
+    expect(white.open === black.close).toBe(true);
+    const res = PatternDetector.isNeckFamily(black, white, prevDecline);
+    expect(res.found).toBe(true);
+    expect(res.name).toBe('НА ШЕЕ');
+  });
+
   it('open₂ выше close₁ более чем на допуск → found === false', () => {
     // Открытие сильно ВЫШЕ закрытия чёрной (значительный гэп вверх) — вне канона
     // семьи шеи (все три модели предполагают продолжение у уровней предыдущего дня).
