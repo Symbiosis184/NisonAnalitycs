@@ -193,8 +193,23 @@ export function dedupeZones<T extends ZoneClusterData>(
   }> = [];
   for (const [level, data] of sorted) {
     const last = clusters[clusters.length - 1];
+    // При кластеризации сравниваем ПОЛНЫЕ ДИАПАЗОНЫ зон: книжная полоса
+    // (long-body/window) может быть шире tolerance-окрестности её центра, и
+    // соседний уровень обязан перекрываться с зоной, а не только лежать в
+    // допуске от средней линии (ЯС гл. 11: уровень — это зона, а не линия).
+    const reachOf = (lv: number, d: T): number =>
+      Math.max(d.halfWidth ?? 0, d.bookBand ? Math.max(lv - d.bookBand.lo, d.bookBand.hi - lv) : 0);
+    const overlapsPrevCluster = (cluster: NonNullable<typeof last>, lv: number, d: T): boolean => {
+      const loNew = lv - reachOf(lv, d);
+      const hiNew = lv + reachOf(lv, d);
+      return cluster.levels.some((l) => {
+        const r = reachOf(l, cluster.data);
+        return l - r <= hiNew && loNew <= l + r;
+      });
+    };
     const anchor = last ? last.levels[last.levels.length - 1] : undefined;
-    if (anchor !== undefined && Math.abs(level - anchor) / anchor <= tolerance) {
+    if (anchor !== undefined &&
+        (Math.abs(level - anchor) / anchor <= tolerance || overlapsPrevCluster(last!, level, data))) {
       last!.levels.push(level);
       last!.widths.push({ level, halfWidth: data.halfWidth });
       last!.data.reasons.push(...data.reasons);

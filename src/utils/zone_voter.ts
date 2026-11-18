@@ -232,7 +232,7 @@ export class ZoneVoter {
     this.addRoundNumbers(price, supMap, resMap, params.tolerance, lastCandle?.time ?? 0);
 
     // 7. Уровни Фибоначчи (гл. 12)
-    this.addFibonacciLevels(candles, supMap, resMap, params.tolerance);
+    this.addFibonacciLevels(candles, supMap, resMap, params);
 
     // 8. Нисон: окно — будущая зона поддержки/сопротивления. Сохраняем его
     // фактические границы; закрытие за дальней границей отменяет сценарий.
@@ -268,31 +268,68 @@ export class ZoneVoter {
 
     // ЗАДАЧА 2/3: книжные полосы (long-body/window) маршрутизируются по СВОЕЙ
     // роли и статусу пробоя по закрытию, а не по позиции live-цены относительно
-    // средней линии. Не пробитые → в свою корзину; пробитые → в полярную корзину
-    // (ЯС гл. 11: прежняя поддержка становится сопротивлением и наоборот).
+    // средней линии. Не пробитые → в свою корзину; пробитые → НЕ удаляются, а
+    // передаются в ПОЛЯРНЫЙ МЕХАНИЗМ (ЯС гл. 11: «прежняя поддержка становится
+    // сопротивлением и наоборот») — строго та же хронология «пробой по закрытию
+    // → возврат → удержание», что и в addPolarityLevels для свингов (образцовая).
     const bookSupRaw = this.mapToZones(supMap, zoneHalfWidth, candles, true);
     const bookResRaw = this.mapToZones(resMap, zoneHalfWidth, candles, true);
     const nonBookSup = this.mapToZones(supMap, zoneHalfWidth, candles, false);
     const nonBookRes = this.mapToZones(resMap, zoneHalfWidth, candles, false);
 
+    /**
+     * Хронология полярности для книжной полосы: после индекса пробоя нужен
+     * возврат к полосе и удержание её с той стороны (для пробитой поддержки —
+     * цена сверху: high касается зоны, close остаётся выше дальней границы;
+     * зеркально для сопротивления). lastClose также должен быть за полосой.
+     */
+    const polarityReturnHeld = (
+      band: BookBand, breakIdx: number, polRole: 'support' | 'resistance',
+    ): boolean => {
+      if (lastCandle === undefined) return false;
+      for (let i = breakIdx + 1; i < candles.length; i++) {
+        const c = candles[i];
+        if (polRole === 'support') {
+          if (c.high >= band.lo && c.low <= band.hi && c.close > band.hi) return true;
+        } else {
+          if (c.high >= band.lo && c.low <= band.hi && c.close < band.lo) return true;
+        }
+      }
+      return false;
+    };
+
+    const routeBookZones = (
+      raw: Zone[], origRole: 'support' | 'resistance',
+      alive: Zone[], flipped: Zone[],
+    ) => {
+      for (const z of raw) {
+        if (!z.bookBand) continue;
+        const { startCheckIndex, ...band } = z.bookBand;
+        // Индекс ПЕРВОГО закрытия за дальней границей (чтобы требовать
+        // возврата именно ПОСЛЕ пробоя):
+        let breakIdx = -1;
+        for (let i = Math.max(0, startCheckIndex ?? 0); i < candles.length; i++) {
+          const c = candles[i];
+          if (origRole === 'support' && c.close < band.lo * (1 - params.breakPct)) { breakIdx = i; break; }
+          if (origRole === 'resistance' && c.close > band.hi * (1 + params.breakPct)) { breakIdx = i; break; }
+        }
+        if (breakIdx < 0) { alive.push(z); continue; }
+        const polRole: 'support' | 'resistance' = origRole === 'support' ? 'resistance' : 'support';
+        if (polarityReturnHeld(band, breakIdx, polRole)) {
+          flipped.push({
+            ...z,
+            reasons: [...z.reasons, `полярность: книжная полоса ${origRole === 'support' ? 'поддержки' : 'сопротивления'} пробита по закрытию → ${polRole === 'support' ? 'поддержка' : 'сопротивление'} (ЯС гл. 11)`],
+          });
+        }
+        // Пробита, но возврата/удержания ещё не было — зона не выдаётся
+        // ни в одной роли (зоны addPolarityLevels её ещё не «поймали»).
+      }
+    };
+
     const bookSupportAlive: Zone[] = [];
     const bookResistanceAlive: Zone[] = [];
-    for (const z of bookSupRaw) {
-      if (!z.bookBand) continue;
-      const broken = closedBeyondFarEdge(
-        candles, z.bookBand.startCheckIndex ?? 0, z.bookBand, 'support', params.breakPct,
-      );
-      if (!broken) bookSupportAlive.push(z);
-      else bookResistanceAlive.push({ ...z, reasons: [...z.reasons, 'полярность: книжная полоса поддержки пробита по закрытию → сопротивление (ЯС гл. 11)'] });
-    }
-    for (const z of bookResRaw) {
-      if (!z.bookBand) continue;
-      const broken = closedBeyondFarEdge(
-        candles, z.bookBand.startCheckIndex ?? 0, z.bookBand, 'resistance', params.breakPct,
-      );
-      if (!broken) bookResistanceAlive.push(z);
-      else bookSupportAlive.push({ ...z, reasons: [...z.reasons, 'полярность: книжная полоса сопротивления пробита по закрытию → поддержка (ЯС гл. 11)'] });
-    }
+    routeBookZones(bookSupRaw, 'support', bookSupportAlive, bookResistanceAlive);
+    routeBookZones(bookResRaw, 'resistance', bookResistanceAlive, bookSupportAlive);
 
     // ЗАДАЧА 3: для НЕкнижных зон роль остаётся корзиной источника + позиция
     // последней ЗАКРЫТОЙ цены относительно полосы (не live-price из аргумента).
@@ -590,22 +627,36 @@ export class ZoneVoter {
       if (isLongByBook && c.isLongCandle && c.body > avgBody * 1.5) {
         const mid = (c.open + c.close) / 2;
 
+        // Индекс бара, СЛЕДУЮЩЕГО за длинной свечой: с него считается пробой
+        // по закрытию (задача 2, ЗГ гл. 2 — «пока цены закрытия держатся выше
+        // поддержки, она остается в силе»).
+        const startCheckIndex = globalIdx + 1;
         if (c.isBullish) {
-          // Метка исправлена: раньше было «основание длинного белого тела», но
-          // код (и книга) используют c.low — ВЕСЬ диапазон свечи с нижней тенью.
+          // Книжная полоса [c.low … mid] с ролью «поддержка» — задаётся ИСТОЧНИКОМ,
+          // а не позицией цены (задача 3). Метка исправлена: раньше было
+          // «основание длинного белого тела», но код (и книга) используют c.low —
+          // ВЕСЬ диапазон свечи с нижней тенью.
+          const lo = c.low, hi = mid;
           addLevelToMap(
             supMap, mid,
             'зона длинного белого тела: от середины до основания свечи, включая нижнюю тень (ЗГ гл. 2, рис. 2.11)',
             c.time, params.tolerance, 1,
-            { source: 'long-body', halfWidth: (mid - c.low) / 2, formedAt: c.time },
+            {
+              source: 'long-body', halfWidth: (hi - lo) / 2, formedAt: c.time,
+              startCheckIndex, bookBand: { lo, hi, role: 'support' },
+            },
           );
         } else {
           // Аналогично: «вершина длинного чёрного тела» → вершина свечи с верхней тенью.
+          const lo = mid, hi = c.high;
           addLevelToMap(
             resMap, mid,
             'зона длинного чёрного тела: от середины до вершины свечи, включая верхнюю тень (ЗГ гл. 2, рис. 2.11)',
             c.time, params.tolerance, 1,
-            { source: 'long-body', halfWidth: (c.high - mid) / 2, formedAt: c.time },
+            {
+              source: 'long-body', halfWidth: (hi - lo) / 2, formedAt: c.time,
+              startCheckIndex, bookBand: { lo, hi, role: 'resistance' },
+            },
           );
         }
       }
@@ -647,47 +698,57 @@ export class ZoneVoter {
   }
 
   /**
-   * 7. Уровни Фибоначчи (ЯС гл. 12)
-   * Нисон: "Уровни коррекции 38%, 50% и 62% часто выступают как зоны поддержки/сопротивления"
+   * 7. Уровни Фибоначчи — строго ЯС гл. 12 (задача 6).
+   * Книга: «Наиболее распространенными уровнями таких коррекций являются
+   * 50%-ный, а также 38%-ный и 62%-ный»; коррекция измеряется от КОНКРЕТНОГО
+   * движения A→B (рис. 12.1–12.7), а не от безымянного min/max окна.
+   * Подъём low→high → коррекция вниз = поддержка на low + ratio×range;
+   * спад high→low → отскок вверх = сопротивление на той же формуле
+   * low + ratio×range (отсчёт от основания импульса).
+   * Операционализация (пометить): пара A/B выбирается по последним двум
+   * свингам findSwings за lookback — в книге способ поиска пары не формализован.
+   * 23.6% и 78.6% удалены: в ЯС гл. 12 их нет (раньше ошибочно числились
+   * книжными). Прежняя псевдоцитата заменена реальной цитатой выше.
    */
   private static addFibonacciLevels(
     candles: Candle[],
     supMap: Map<number, ZoneClusterData>,
     resMap: Map<number, ZoneClusterData>,
-    tolerance: number
+    params: ZoneParams,
   ) {
     if (candles.length < 20) return;
 
-    // Находим свинг-хай и свинг-лоу за последние 50 свечей
-    const lookback = Math.min(50, candles.length);
-    const recent = candles.slice(-lookback);
-    
-    const swingHigh = Math.max(...recent.map(c => c.high));
-    const swingLow = Math.min(...recent.map(c => c.low));
-    const range = swingHigh - swingLow;
-    
-    if (range <= 0) return;
+    // Книжные уровни коррекции: только 38/50/62% (округления 38.2/61.8 допустимы).
+    const fibRatios = [0.382, 0.5, 0.618];
+
+    // Операционализация (не из книг): последние два экстремума свинг-детектора.
+    const swings = findSwings(candles, Math.min(params.lookback, candles.length), params.swingSpan);
+    if (swings.length < 2) return;
+    const a = swings[swings.length - 2];
+    const b = swings[swings.length - 1];
+    if (a.type === b.type) return; // нужен направленный импульс low→high или high→low
+
+    const isUpImpulse = a.type === 'low' && b.type === 'high';
+    const impulseLow = Math.min(a.level, b.level);
+    const impulseHigh = Math.max(a.level, b.level);
+    const range = impulseHigh - impulseLow;
+    if (!(range > 0)) return;
 
     const lastTime = candles[candles.length - 1]?.time ?? 0;
-    
-    // Уровни коррекции Фибоначчи
-    const fibLevels = [
-      { ratio: 0.236, name: 'Фибоначчи 23.6% (проектное дополнение)' },
-      { ratio: 0.382, name: 'Фибоначчи 38.2%' },
-      { ratio: 0.500, name: 'Фибоначчи 50%' },
-      { ratio: 0.618, name: 'Фибоначчи 61.8%' },
-      { ratio: 0.786, name: 'Фибоначчи 78.6% (проектное дополнение)' },
-    ];
+    const dirTag = isUpImpulse ? 'подъём' : 'спад';
 
-    for (const fib of fibLevels) {
-      const level = swingHigh - range * fib.ratio;
-      const lastPrice = candles[candles.length - 1].close;
-      
-      // Добавляем как поддержку если ниже цены, как сопротивление если выше
-      if (level <= lastPrice) {
-        addLevelToMap(supMap, level, `${fib.name} (гл. 12)`, lastTime, tolerance, 1, { source: 'fibonacci', formedAt: lastTime });
+    for (const ratio of fibRatios) {
+      const pctLabel = `${Math.round(ratio * 100)}%`;
+      // Коррекция всегда измеряется от основания импульса: при подъёме —
+      // глубина коррекции вниз, при спаде — высота отскока вверх.
+      const level = impulseLow + range * ratio;
+      const reason = `Фибо ${pctLabel} коррекции импульса ${dirTag} ${impulseLow.toFixed(2)}\u2192${impulseHigh.toFixed(2)} (ЯС гл. 12)`;
+      if (isUpImpulse) {
+        // Подъём A→B: коррекция вниз встречает поддержку на уровнях ретрейса.
+        addLevelToMap(supMap, level, reason, lastTime, params.tolerance, 1, { source: 'fibonacci', formedAt: lastTime });
       } else {
-        addLevelToMap(resMap, level, `${fib.name} (гл. 12)`, lastTime, tolerance, 1, { source: 'fibonacci', formedAt: lastTime });
+        // Спад A→B: отскок вверх встречает сопротивление на уровнях ретрейса.
+        addLevelToMap(resMap, level, reason, lastTime, params.tolerance, 1, { source: 'fibonacci', formedAt: lastTime });
       }
     }
   }
@@ -704,15 +765,25 @@ export class ZoneVoter {
       if (gap.broken) continue;
       const level = (gap.bottom + gap.top) / 2;
       const halfWidth = (gap.top - gap.bottom) / 2;
-      const target = gap.direction === 'up' ? supMap : resMap;
+      const isUp = gap.direction === 'up';
+      const target = isUp ? supMap : resMap;
+      // Задача 2: книжная полоса окна [bottom … top] с ролью по направлению
+      // (вверх → поддержка, вниз → сопротивление; ЯС гл. 7). startCheckIndex —
+      // бар, следующий за открывшим гэп (candle.time == gap.time), с него
+      // считается подтверждённый пробой (закрытие за дальней границей).
+      const startCheckIdx = candles.findIndex((c) => c.time === gap.time);
       addLevelToMap(
         target,
         level,
-        `окно ${gap.direction === 'up' ? 'вверх → поддержка' : 'вниз → сопротивление'}${gap.filled ? ' (заполнено, не пробито)' : ''}`,
+        `окно ${isUp ? 'вверх → поддержка' : 'вниз → сопротивление'}${gap.filled ? ' (заполнено, не пробито)' : ''}`,
         gap.time,
         tolerance,
         1,
-        { source: 'window', halfWidth, formedAt: gap.time },
+        {
+          source: 'window', halfWidth, formedAt: gap.time,
+          startCheckIndex: startCheckIdx >= 0 ? startCheckIdx + 1 : 0,
+          bookBand: { lo: gap.bottom, hi: gap.top, role: isUp ? 'support' : 'resistance' },
+        },
       );
     }
   }
