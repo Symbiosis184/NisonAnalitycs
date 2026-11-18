@@ -322,7 +322,9 @@ export interface MarketOverviewItem {
   trend: Regime;
   regime: Regime;
   patterns: Array<Pick<PatternDTO, 'name' | 'type' | 'confirmed' | 'confidence'>>;
-  signals: Array<Pick<SignalDTO, 'direction' | 'pattern' | 'entry_price' | 'stop_loss' | 'target' | 'risk' | 'rr' | 'quality' | 'confirmed'>>;
+  // bar_time включён: карточки дашборда автоматически пишут сигналы в журнал
+  // (дедупликация по баре формации — см. useAutoJournalSignals).
+  signals: Array<Pick<SignalDTO, 'direction' | 'pattern' | 'entry_price' | 'stop_loss' | 'target' | 'risk' | 'rr' | 'quality' | 'confirmed' | 'bar_time'>>;
   support: number[];
   resistance: number[];
   volume: number;

@@ -243,12 +243,17 @@ export function addSignal(signal: Omit<SignalEntry, 'id' | 'timestamp' | 'status
     }
   }
 
-  // FIX: проверяем дубликаты не только среди pending, но и среди всех сигналов
+  // FIX: проверяем дубликаты не только среди pending, но и среди всех сигналов.
+  // Бар (barTime) обязателен в ключе: без него два РАЗНЫХ события одной
+  // формации с одинаковой ценой входа (типично для автозаписи с дашборда)
+  // ошибочно считались бы дублями и терялись.
   const isDuplicate = entries.some(entry =>
     entry.symbol === clean.symbol &&
+    entry.timeframe === clean.timeframe &&
     entry.pattern === clean.pattern &&
     entry.direction === clean.direction &&
     Math.abs(entry.entryPrice - clean.entryPrice) < 0.0001 &&
+    entry.barTime === clean.barTime &&
     entry.status === 'pending'
   );
 

@@ -13,6 +13,7 @@ import { marketLabel, STOCK_SUFFIX } from '../api/market';
 import { useI18n } from '../i18n';
 import UpdateBanner from '../components/UpdateBanner';
 import { useBuildUpdate } from '../hooks/useBuildUpdate';
+import { useAutoJournalSignals } from '../hooks/useAutoJournalSignals';
 
 
 /** Переключатель рынков Crypto / TradFi (акции США). */
@@ -42,6 +43,10 @@ function MarketTabs({ value, onChange }: { value: MarketKind; onChange: (m: Mark
 /** Тело карточки инструмента — переиспользуется для топ-8 и произвольного тикера. */
 function MarketCardBody({ item }: { item: MarketOverview }) {
   const { t } = useI18n();
+  // Сигналы с дашборда автоматически попадают в журнал (без захода в карточку
+  // анализа). Дедупликация по bar_time — см. useAutoJournalSignals; обзор
+  // строится только по дневным закрытым барам ('D').
+  useAutoJournalSignals(item.signals, item.symbol, 'D');
   const isPositive = item.change_24h >= 0;
   // Крипта: 'BTCUSDT' -> 'BTC'; акции: 'AAPL:STOCK' -> 'AAPL'.
   const baseAsset = item.symbol.endsWith(STOCK_SUFFIX)
