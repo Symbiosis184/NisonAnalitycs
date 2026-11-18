@@ -11,7 +11,10 @@
 
 import { Candle } from './candle';
 import { sma } from './indicators';
-import { findSwings, addLevelToMap, dedupeZones, type ZoneClusterData, type ZoneSource } from './levels';
+import {
+  findSwings, addLevelToMap, dedupeZones,
+  type BookBandGeom, type BookBandRole, type ZoneClusterData, type ZoneSource,
+} from './levels';
 import { detectGaps } from './gaps';
 
 export type ZoneMarket = 'stock' | 'crypto';
@@ -20,11 +23,11 @@ export type ZoneMarket = 'stock' | 'crypto';
  * Геометрия книжных зон: [lo … hi] вокруг level=середина, halfWidth=половина ширины.
  * Используется источниками с явной книжной геометрией (long-body, window).
  */
-interface BookBand { lo: number; hi: number }
+type BookBand = BookBandGeom;
 
-/** Полоса зоны как [level − halfWidth, level + halfWidth]. */
-function bandOf(b: { level: number; halfWidth: number }): BookBand {
-  return { lo: b.level - b.halfWidth, hi: b.level + b.halfWidth };
+/** Полоса зоны как [level ± halfWidth] с ролью по умолчанию 'support'. */
+function bandOf(b: { level: number; halfWidth: number; role?: BookBandRole }): BookBand {
+  return { lo: b.level - b.halfWidth, hi: b.level + b.halfWidth, role: b.role ?? 'support' };
 }
 
 /**
@@ -91,13 +94,19 @@ export interface Zone {
   lastTouch?: number;
   /**
    * Ширина ЗОНЫ (по Нисону уровень — это зона, а не линия): ±halfWidth вокруг level.
-   * Равна толерансу кластеризации этого ТФ (0.5%), но НЕ меньше 0.25×ATR(14) и
-   * не больше 2×ATR — иначе на младших ТФ зона вырождается в точку, а на старых
-   * данных перекрывает половину диапазона.
+   * Для источников с явной книжной геометрией (long-body, window) halfWidth равна
+   * половине высоты книги-полосы и НЕ расширяется ATR-допуском проекта (см. задачу 5).
+   * Для остальных источников halfWidth = max(толеранс ТФ × level, 0.25×ATR(14))
+   * с потолком 2×ATR — это проектная эвристика, в книгах такого числа нет.
    */
   halfWidth: number;
   /** Время формирования зоны (для учёта "свежести"). */
   formedAt: number;
+  /**
+   * Внутреннее поле: явная книжная полоса [lo … hi] с ролью (long-body/window).
+   * Используется для маршрутизации по пробитию/полярности в collect().
+   */
+  bookBand?: BookBandGeom & { startCheckIndex?: number };
 }
 
 /** Ключ временнóго масштаба для кэша результатов collect (см. timeframeKey). */
@@ -222,7 +231,7 @@ export class ZoneVoter {
     // 6. Психологические круглые числа
     this.addRoundNumbers(price, supMap, resMap, params.tolerance, lastCandle?.time ?? 0);
 
-    // 7. Уровни Фибоначчи (глава 12)
+    // 7. Уровни Фибоначчи (гл. 12)
     this.addFibonacciLevels(candles, supMap, resMap, params.tolerance);
 
     // 8. Нисон: окно — будущая зона поддержки/сопротивления. Сохраняем его
@@ -255,15 +264,66 @@ export class ZoneVoter {
       z.sources.includes('window') || z.touches >= minTouches ||
       z.votes >= this.STRONG_ZONE_MIN_VOTES;
 
-    const support = this.mapToZones(supMap, zoneHalfWidth, candles)
-      .filter(z => z.level <= price)
+    const lastClose = lastCandle?.close ?? price;
+
+    // ЗАДАЧА 2/3: книжные полосы (long-body/window) маршрутизируются по СВОЕЙ
+    // роли и статусу пробоя по закрытию, а не по позиции live-цены относительно
+    // средней линии. Не пробитые → в свою корзину; пробитые → в полярную корзину
+    // (ЯС гл. 11: прежняя поддержка становится сопротивлением и наоборот).
+    const bookSupRaw = this.mapToZones(supMap, zoneHalfWidth, candles, true);
+    const bookResRaw = this.mapToZones(resMap, zoneHalfWidth, candles, true);
+    const nonBookSup = this.mapToZones(supMap, zoneHalfWidth, candles, false);
+    const nonBookRes = this.mapToZones(resMap, zoneHalfWidth, candles, false);
+
+    const bookSupportAlive: Zone[] = [];
+    const bookResistanceAlive: Zone[] = [];
+    for (const z of bookSupRaw) {
+      if (!z.bookBand) continue;
+      const broken = closedBeyondFarEdge(
+        candles, z.bookBand.startCheckIndex ?? 0, z.bookBand, 'support', params.breakPct,
+      );
+      if (!broken) bookSupportAlive.push(z);
+      else bookResistanceAlive.push({ ...z, reasons: [...z.reasons, 'полярность: книжная полоса поддержки пробита по закрытию → сопротивление (ЯС гл. 11)'] });
+    }
+    for (const z of bookResRaw) {
+      if (!z.bookBand) continue;
+      const broken = closedBeyondFarEdge(
+        candles, z.bookBand.startCheckIndex ?? 0, z.bookBand, 'resistance', params.breakPct,
+      );
+      if (!broken) bookResistanceAlive.push(z);
+      else bookSupportAlive.push({ ...z, reasons: [...z.reasons, 'полярность: книжная полоса сопротивления пробита по закрытию → поддержка (ЯС гл. 11)'] });
+    }
+
+    // ЗАДАЧА 3: для НЕкнижных зон роль остаётся корзиной источника + позиция
+    // последней ЗАКРЫТОЙ цены относительно полосы (не live-price из аргумента).
+    const inOwnRole = (z: Zone, role: BookBandRole): boolean => {
+      if (!z.bookBand) {
+        // Без явной книги: если средняя линии внутри ATR-полосы, оставляем зону
+        // в своей корзине; иначе она должна быть по ту сторону последней закрытой цены.
+        const bandLo = z.level - z.halfWidth;
+        const bandHi = z.level + z.halfWidth;
+        if (lastClose >= bandLo && lastClose <= bandHi) return true;
+        return role === 'support' ? z.level <= lastClose : z.level >= lastClose;
+      }
+      return true;
+    };
+
+    const allSupport = [
+      ...bookSupportAlive,
+      ...nonBookSup.filter((z) => inOwnRole(z, 'support')),
+    ];
+    const allResistance = [
+      ...bookResistanceAlive,
+      ...nonBookRes.filter((z) => inOwnRole(z, 'resistance')),
+    ];
+
+    const support = allSupport
       .filter(significant)
       .sort(significance)
       .slice(0, this.MAX_ZONES_PER_SIDE)
       .sort((a, b) => b.level - a.level);
 
-    const resistance = this.mapToZones(resMap, zoneHalfWidth, candles)
-      .filter(z => z.level >= price)
+    const resistance = allResistance
       .filter(significant)
       .sort(significance)
       .slice(0, this.MAX_ZONES_PER_SIDE)
@@ -290,6 +350,14 @@ export class ZoneVoter {
   /**
    * 1. Касательная классификация свинг-уровней
    * FIX: используем halfWidth вместо tolerance для проверки касаний.
+   * ЗАДАЧА 4 (ЗГ гл. 2): «прорывы этих зон поддержки могут происходить
+   * неоднократно в течение сессии, но пока цены закрытия держатся выше
+   * поддержки, она остается в силе» — то есть глубокий внутрисессионный прокол
+   * с удержанием закрытием остаётся ТЕСТОМ зоны. Поэтому касание поддержки =
+   * нижняя граница диапазона свечи вошла в полосу/проколола её сверху
+   * (c.low <= zoneTop) И закрытие осталось не ниже основания полосы
+   * (c.close >= zoneBottom); зеркально для сопротивления. Правило «одна
+   * закрытая свеча — не более одного касания» сохранено.
    */
   private static addTouchBasedLevels(
     price: number,
@@ -335,10 +403,13 @@ export class ZoneVoter {
         const c = candles[j];
         // Одна закрытая свеча — не больше одного касания зоны. При нескольких
         // близких членах кластера старый вложенный цикл считал один тест 2–3 раза.
+        // ЗАДАЧА 4: тест поддержки — low вошёл в зону или проколол её снизу вверх
+        // при закрытии НЕ НИЖЕ основания полосы (глубокий прокол с восстановлением
+        // — это тоже тест, ЗГ гл. 2).
         const hitSupport = zone.members.some((m) =>
-          c.low <= m + halfWidth && c.low >= m - halfWidth && c.close > m);
+          c.low <= m + halfWidth && c.close >= m - halfWidth);
         const hitResistance = zone.members.some((m) =>
-          c.high >= m - halfWidth && c.high <= m + halfWidth && c.close < m);
+          c.high >= m - halfWidth && c.close <= m + halfWidth);
         if (hitSupport) {
           supTouches++;
           lastSupTime = c.time;
@@ -653,15 +724,24 @@ export class ZoneVoter {
   private static mapToZones(
     map: Map<number, ZoneClusterData>,
     halfWidthOf: (level: number) => number,
-    candles: Candle[]
+    candles: Candle[],
+    bookOnly: boolean,
   ): Zone[] {
     const zones: Zone[] = [];
     const lastTime = candles[candles.length - 1]?.time ?? 0;
 
     for (const [level, data] of map.entries()) {
+      const hasBook = data.bookBand !== undefined;
+      if (hasBook !== bookOnly) continue;
       const uniqueReasons = Array.from(new Set(data.reasons));
       const sources = Array.from(new Set(data.sources ?? []));
       const votes = sources.length || (uniqueReasons.length > 0 ? 1 : 0);
+      // ЗАДАЧА 5: если источник задал книжную геометрию полосы (window/long-body),
+      // halfWidth берётся из неё как есть; ATR-пол/потолок применяются только к
+      // источникам без явной книги (swing-кластеры, MA, круглые числа, fib).
+      const halfWidth = hasBook && data.halfWidth !== undefined
+        ? data.halfWidth
+        : Math.max(halfWidthOf(level), data.halfWidth ?? 0);
       zones.push({
         level,
         votes,
@@ -670,8 +750,11 @@ export class ZoneVoter {
         sources,
         touches: data.touches,
         lastTouch: data.lastTouch,
-        halfWidth: Math.max(halfWidthOf(level), data.halfWidth ?? 0),
+        halfWidth,
         formedAt: data.formedAt ?? data.lastTouch ?? lastTime,
+        bookBand: data.bookBand
+          ? { ...data.bookBand, startCheckIndex: data.startCheckIndex }
+          : undefined,
       });
     }
 
