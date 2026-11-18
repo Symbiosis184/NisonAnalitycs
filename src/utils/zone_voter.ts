@@ -213,8 +213,18 @@ export class ZoneVoter {
     const supMap = new Map<number, ZoneClusterData>();
     const resMap = new Map<number, ZoneClusterData>();
 
+    // Ширина зоны привязана к волатильности ТФ (ATR). Вычисляется ДО источников,
+    // чтобы свинг-зоны (addTouchBasedLevels) использовали ту же проекную ATR-полосу,
+    // что и финальная карта halfWidth в mapToZones (задача 5).
+    const atrWindow = candles.length > 74 ? candles.slice(-60) : candles;
+    const atrVal = atrWilder(atrWindow, 14);
+    const zoneHalfWidth = (level: number) => {
+      const base = Math.max(params.tolerance * level, atrVal * 0.25);
+      return atrVal > 0 ? Math.min(base, atrVal * 2) : base;
+    };
+
     // 1. Касательная классификация: уровень + число касаний ценой после его образования
-    this.addTouchBasedLevels(price, candles, supMap, resMap, params);
+    this.addTouchBasedLevels(price, candles, supMap, resMap, params, zoneHalfWidth);
 
     // 2. Полярность: пробитые уровни меняют роль
     this.addPolarityLevels(price, candles, supMap, resMap, params);
@@ -241,14 +251,6 @@ export class ZoneVoter {
     // Финальная транзитивная дедупликация
     dedupeZones(supMap, params.tolerance);
     dedupeZones(resMap, params.tolerance);
-
-    // Ширина зоны привязана к волатильности ТФ (ATR)
-    const atrWindow = candles.length > 74 ? candles.slice(-60) : candles;
-    const atrVal = atrWilder(atrWindow, 14);
-    const zoneHalfWidth = (level: number) => {
-      const base = Math.max(params.tolerance * level, atrVal * 0.25);
-      return atrVal > 0 ? Math.min(base, atrVal * 2) : base;
-    };
 
     // FIX: значимость определяется в первую очередь votes (независимые источники),
     // затем touches (касания), затем расстояние до цены.
@@ -401,7 +403,8 @@ export class ZoneVoter {
     candles: Candle[],
     supMap: Map<number, ZoneClusterData>,
     resMap: Map<number, ZoneClusterData>,
-    params: ZoneParams
+    params: ZoneParams,
+    zoneHalfWidth: (level: number) => number,
   ) {
     const lookback = Math.min(params.lookback, candles.length);
     const tol = params.tolerance;
@@ -425,12 +428,18 @@ export class ZoneVoter {
       }
     }
 
-    // Вычисляем среднюю ширину зоны для проверки касаний
-    const atrWindow = candles.length > 74 ? candles.slice(-60) : candles;
-    const atrVal = atrWilder(atrWindow, 14);
-    const halfWidth = Math.max(tol * price, atrVal * 0.25);
-
+    // Ширина зоны для проверки касаний — та же проекная ATR-полоса, что и в
+    // mapToZones (задача 5), но с учётом ширины кластера: раньше использовалось
+    // `Math.max(tol * price, atrVal * 0.25)` — глобальная ширина по цене без
+    // потолка 2×ATR и без зависимости от ТФ, из-за чего на scalp широкие
+    // кластеры давали завышенную halfWidth.
+    // Проектное решение: полоса касаний = ATR-полоса центра кластера, расширенная
+    // до покрытия всех членов (кластер может быть шире одной ATR-полосы; тест
+    // любого члена считается тестом зоны).
     for (const zone of zoneDefs) {
+      const hwCenter = zoneHalfWidth(zone.level);
+      const spread = Math.max(...zone.members.map((m) => Math.abs(m - zone.level)));
+      const halfWidth = hwCenter + spread;
       let supTouches = 0;
       let resTouches = 0;
       let lastSupTime = 0;
