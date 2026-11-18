@@ -103,6 +103,13 @@ export interface Zone {
   /** Время формирования зоны (для учёта "свежести"). */
   formedAt: number;
   /**
+   * ЗАДАЧА 9 (ЯС гл. 11): суммарный относительный объём баров-касаний
+   * (v/avgVolume lookback, потолок 5×). Принцип книжный («объемы торгов во
+   * время попыток пробоя» влияют на значимость), КОНКРЕТНАЯ ФОРМУЛА —
+   * настройка проекта, не из книг. Используется в тай-брейке significance.
+   */
+  touchVolume?: number;
+  /**
    * Внутреннее поле: явная книжная полоса [lo … hi] с ролью (long-body/window).
    * Используется для маршрутизации по пробитию/полярности в collect().
    */
@@ -148,6 +155,15 @@ interface ZoneParams {
   lookback: number;
   /** Глубина окна свинг-детектора (±span свечей): на грубее ТФ — крупнее экстремумы */
   swingSpan: number;
+  /**
+   * ЗАДАЧА 8 (опционально, по умолчанию ВЫКЛЮЧЕН): дожи как книжный источник зон.
+   * Книга (ЯС гл. 8): «Дожи иногда задают зоны поддержки и сопротивления,
+   * особенно если образуются в районе значимых вершин и оснований»
+   * (рис. 8.17–8.18); ЗГ гл. 2, рис. 2.37: максимум дожи (конец верхней тени)
+   * нередко становится сопротивлением. Включается флагом среды
+   * NISON_DOJI_ZONES=1 — проектное решение о способе активации, не из книг.
+   */
+  dojiZones?: boolean;
 }
 
 const ZONE_PARAMS: Record<TimeframeKey, ZoneParams> = {
@@ -209,7 +225,12 @@ export class ZoneVoter {
     const cached = this.collectCache.get(cacheKey);
     if (cached) return cached;
 
-    const params = ZONE_PARAMS[tfKey];
+    const params = { ...ZONE_PARAMS[tfKey] };
+    // ЗАДАЧА 8: дожи как источник зон — по умолчанию ВЫКЛЮЧЕН; включается
+    // только явным флагом среды (проектный способ активации, не из книг).
+    if (typeof process !== 'undefined' && process.env?.NISON_DOJI_ZONES === '1') {
+      params.dojiZones = true;
+    }
     const supMap = new Map<number, ZoneClusterData>();
     const resMap = new Map<number, ZoneClusterData>();
 
@@ -248,6 +269,12 @@ export class ZoneVoter {
     // фактические границы; закрытие за дальней границей отменяет сценарий.
     this.addWindowLevels(candles, supMap, resMap, params.tolerance, market);
 
+    // 9. ЗАДАЧА 8 (по умолчанию выключена): дожи как зоны S/R вблизи значимых
+    // вершин/оснований (ЯС гл. 8, рис. 8.17–8.18; ЗГ гл. 2, рис. 2.37).
+    if (params.dojiZones) {
+      this.addDojiLevels(candles, supMap, resMap, params, atrVal);
+    }
+
     // Финальная транзитивная дедупликация
     dedupeZones(supMap, params.tolerance);
     dedupeZones(resMap, params.tolerance);
@@ -256,8 +283,17 @@ export class ZoneVoter {
     // затем touches (касания), затем расстояние до цены.
     // По ЯС гл. 11: "Чем больше технических индикаторов сходятся в одной зоне,
     // тем выше вероятность того, что эта зона окажется значимой".
+    // ЗАДАЧА 9 (ЯС гл. 11): «значимость … зависит от того, как долго она
+    // остается в силе, сколько раз рынок безуспешно пытается ее пробить и
+    // каковы объемы торгов во время этих попыток». Принцип книжный; порядок
+    // тай-брейков и формулы (touchVolume, возраст зоны) — проектные, не из книг.
+    const lastTime = lastCandle?.time ?? 0;
     const significance = (a: Zone, b: Zone) =>
       (b.votes - a.votes) || (b.touches - a.touches) ||
+      ((b.touchVolume ?? 0) - (a.touchVolume ?? 0)) ||
+      // возраст зоны: старше (меньше formedAt) — значимее (ЯС гл. 11, «как долго
+      // она остается в силе»; конкретное место в тай-брейке — проектное решение)
+      (a.formedAt - b.formedAt) ||
       Math.abs(a.level - price) - Math.abs(b.level - price);
 
     // Порог значимости адаптивен к ТФ
@@ -408,6 +444,7 @@ export class ZoneVoter {
   ) {
     const lookback = Math.min(params.lookback, candles.length);
     const tol = params.tolerance;
+    const windowCandles = candles.slice(candles.length - lookback);
 
     // Группируем свинги в зоны (кластеризация)
     const zoneDefs: Array<{ level: number; firstIndex: number; members: number[]; formedAt: number }> = [];
@@ -436,6 +473,14 @@ export class ZoneVoter {
     // Проектное решение: полоса касаний = ATR-полоса центра кластера, расширенная
     // до покрытия всех членов (кластер может быть шире одной ATR-полосы; тест
     // любого члена считается тестом зоны).
+    // ЗАДАЧА 9 (ЯС гл. 11): «значимость … зависит от … каковы объемы торгов
+    // во время этих попыток». Средний объём за lookback — проектная база;
+    // вес касания v/avgVolume и потолок 5× — проектные числа, НЕ из книг.
+    const avgVol = (() => {
+      const lb = windowCandles.length > 0 ? windowCandles : candles;
+      return lb.reduce((s, c) => s + c.volume, 0) / Math.max(1, lb.length);
+    })();
+
     for (const zone of zoneDefs) {
       const hwCenter = zoneHalfWidth(zone.level);
       const spread = Math.max(...zone.members.map((m) => Math.abs(m - zone.level)));
@@ -444,6 +489,8 @@ export class ZoneVoter {
       let resTouches = 0;
       let lastSupTime = 0;
       let lastResTime = 0;
+      let supVolSum = 0;
+      let resVolSum = 0;
 
       for (let j = zone.firstIndex + 1; j < candles.length; j++) {
         const c = candles[j];
@@ -459,10 +506,12 @@ export class ZoneVoter {
         if (hitSupport) {
           supTouches++;
           lastSupTime = c.time;
+          supVolSum += avgVol > 0 ? Math.min(c.volume / avgVol, 5) : 0;
         }
         if (hitResistance) {
           resTouches++;
           lastResTime = c.time;
+          resVolSum += avgVol > 0 ? Math.min(c.volume / avgVol, 5) : 0;
         }
       }
 
@@ -473,14 +522,16 @@ export class ZoneVoter {
         addLevelToMap(
           supMap, zone.level, `свинг-зона: ${supTouches} касание(й) поддержки`,
           lastSupTime, tol, supTouches,
-          { source: 'swing', halfWidth, formedAt: zone.formedAt },
+          // ЗАДАЧА 9: touchVolumeSum — проектная формула относительного объёма
+          // касаний (принцип ЯС гл. 11 книжный, числа — проекта).
+          { source: 'swing', halfWidth, formedAt: zone.formedAt, touchVolumeSum: supVolSum },
         );
       }
       if (asResistance) {
         addLevelToMap(
           resMap, zone.level, `свинг-зона: ${resTouches} касание(й) сопротивления`,
           lastResTime, tol, resTouches,
-          { source: 'swing', halfWidth, formedAt: zone.formedAt },
+          { source: 'swing', halfWidth, formedAt: zone.formedAt, touchVolumeSum: resVolSum },
         );
       }
     }
@@ -624,6 +675,78 @@ export class ZoneVoter {
           resMap, c.high,
           'климакс продаж после ралли → сопротивление (ЯС гл. 15; экстремум как зона и порог 2×avg — проектная операционализация, не из книг)',
           c.time, tolerance, 1, { source: 'volume', formedAt: c.time },
+        );
+      }
+    }
+  }
+
+  /**
+   * 9. Дожи как зоны S/R (ЗАДАЧА 8, по умолчанию выключена флагом dojiZones).
+   * Книга (ЯС гл. 8): «Дожи иногда задают зоны поддержки и сопротивления,
+   * особенно если образуются в районе значимых вершин и оснований»
+   * (рис. 8.17–8.18). ЗГ гл. 2, рис. 2.37: максимум дожи (конец верхней тени)
+   * нередко становится сопротивлением.
+   * Операционализации (проектные, не из книг):
+   *  - «район значимой вершины/основания» = близость к свингу findSwings
+   *    (±max(2×ATR, tolerance×level)); конкретная формула — настройка проекта;
+   *  - боковик НЕ является «значимой вершиной/основанием»: в flat-рынке
+   *    дожи-зоны не формируются (ЗГ гл. 2: в боковике дожи сигнала не даёт);
+   *    критерий flat (range < 4×ATR за lookback) — проектная эвристика;
+   *  - геометрия: поддержка = [low … close/open] дожи (тело ≈ линия),
+   *    сопротивление = [close/open … high] — книжная граница «максимум дожи
+   *    (конец верхней тени)» как ДАЛЬНЯЯ граница полосы (ЗГ гл. 2, рис. 2.37).
+   */
+  private static addDojiLevels(
+    candles: Candle[],
+    supMap: Map<number, ZoneClusterData>,
+    resMap: Map<number, ZoneClusterData>,
+    params: ZoneParams,
+    atrVal: number,
+  ) {
+    const lookback = Math.min(params.lookback, candles.length);
+    const startIdx = candles.length - lookback;
+    const windowCandles = candles.slice(startIdx);
+
+    // Проектный фильтр боковика: без выраженного движения за окно — flat.
+    const wHigh = Math.max(...windowCandles.map((c) => c.high));
+    const wLow = Math.min(...windowCandles.map((c) => c.low));
+    if (atrVal > 0 && wHigh - wLow < 4 * atrVal) return; // боковик: дожи-зон нет (ЗГ гл. 2)
+
+    const swings = findSwings(candles, lookback, params.swingSpan);
+    if (swings.length === 0) return;
+
+    for (let i = startIdx; i < candles.length - 1; i++) {
+      const c = candles[i];
+      if (!c.isDoji) continue;
+      const near = swings.find((s) => s.index !== i &&
+        Math.abs(s.level - c.bodyMid) <= Math.max(2 * atrVal, params.tolerance * c.bodyMid));
+      if (!near) continue; // дожи вне района значимой вершины/основания — не источник (ЯС гл. 8)
+
+      const mid = (c.open + c.close) / 2;
+      if (near.type === 'low') {
+        // Дожи у значимого основания → зона поддержки [low … mid].
+        const lo = c.low, hi = mid;
+        addLevelToMap(
+          supMap, (lo + hi) / 2,
+          `дожи у значимого основания → поддержка (ЯС гл. 8, рис. 8.17–8.18; зона [low…тело] — операционализация)`,
+          c.time, params.tolerance, 1,
+          {
+            source: 'doji', halfWidth: (hi - lo) / 2, formedAt: c.time,
+            startCheckIndex: i + 1, bookBand: { lo, hi, role: 'support' },
+          },
+        );
+      } else {
+        // Дожи у значимой вершины → зона сопротивления [mid … high]
+        // (ЗГ гл. 2, рис. 2.37: максимум дожи нередко становится сопротивлением).
+        const lo = mid, hi = c.high;
+        addLevelToMap(
+          resMap, (lo + hi) / 2,
+          `дожи у значимой вершины → сопротивление (ЯС гл. 8; ЗГ гл. 2, рис. 2.37: максимум дожи = дальняя граница)`,
+          c.time, params.tolerance, 1,
+          {
+            source: 'doji', halfWidth: (hi - lo) / 2, formedAt: c.time,
+            startCheckIndex: i + 1, bookBand: { lo, hi, role: 'resistance' },
+          },
         );
       }
     }
@@ -867,6 +990,9 @@ export class ZoneVoter {
         lastTouch: data.lastTouch,
         halfWidth,
         formedAt: data.formedAt ?? data.lastTouch ?? lastTime,
+        // ЗАДАЧА 9: относительный объём касаний (принцип ЯС гл. 11 книжный,
+        // накопленная формула — проектная эвристика).
+        touchVolume: data.touchVolumeSum,
         bookBand: data.bookBand
           ? { ...data.bookBand, startCheckIndex: data.startCheckIndex }
           : undefined,

@@ -46,7 +46,7 @@ export function findSwings(candles: Candle[], lookback: number = 50, span: numbe
 
 export type ZoneSource =
   | 'swing' | 'polarity' | 'ma' | 'volume' | 'long-body'
-  | 'round-number' | 'fibonacci' | 'window';
+  | 'round-number' | 'fibonacci' | 'window' | 'doji';
 
 /** Роль книжной полосы (закрытая граница, за которой зона инвалидируется). */
 export type BookBandRole = 'support' | 'resistance';
@@ -75,6 +75,13 @@ export interface ZoneClusterData {
   /** Книжная геометрия полосы (long-body/window) + изначальная роль. */
   bookBand?: BookBandGeom;
   /**
+   * ЗАДАЧА 9 (ЯС гл. 11): «значимость … зависит от того, сколько раз рынок
+   * безуспешно пытается ее пробить и каковы объемы торгов во время этих
+   * попыток». Суммарный относительный объём баров-касаний (v/avgVolume lookback).
+   * Принцип книжный; КОНКРЕТНАЯ ФОРМУЛА накопления — настройка проекта, не из книг.
+   */
+  touchVolumeSum?: number;
+  /**
    * Флаг «только для себя»: источник задал точную книжную геометрию и НЕ хочет
    * сливаться с другими уровнями (защита от поглощения длинного тела свинг-кластером).
    * Проектное решение: при кластеризации такой уровень образует отдельный кластер.
@@ -92,6 +99,8 @@ export interface ZoneClusterOptions {
   bookBand?: BookBandGeom;
   /** Не сливать с другими уровнями (см. ZoneClusterData.keepSeparate). */
   keepSeparate?: boolean;
+  /** ЗАДАЧА 9: суммарный относительный объём касаний (формула — проектная). */
+  touchVolumeSum?: number;
 }
 
 /**
@@ -138,6 +147,10 @@ export function addLevelToMap(
     if (options.bookBand !== undefined && data.bookBand === undefined) {
       data.bookBand = options.bookBand;
     }
+    // ЗАДАЧА 9: накопление относительного объёма касаний (формула — проектная).
+    if (options.touchVolumeSum !== undefined) {
+      data.touchVolumeSum = (data.touchVolumeSum ?? 0) + options.touchVolumeSum;
+    }
     if (options.keepSeparate) data.keepSeparate = true;
     return true;
   }
@@ -151,6 +164,7 @@ export function addLevelToMap(
     startCheckIndex: options.startCheckIndex,
     bookBand: options.bookBand,
     keepSeparate: options.keepSeparate,
+    touchVolumeSum: options.touchVolumeSum,
   });
   return false;
 }
@@ -259,6 +273,11 @@ export function dedupeZones<T extends ZoneClusterData>(
           last!.data.startCheckIndex ?? data.startCheckIndex, data.startCheckIndex);
       }
       if (data.bookBand) last!.bands.push({ level, band: data.bookBand });
+      // ЗАДАЧА 9: суммарный относительный объём касаний при слиянии кластеров.
+      if (data.touchVolumeSum !== undefined) {
+        last!.data.touchVolumeSum =
+          (last!.data.touchVolumeSum ?? 0) + data.touchVolumeSum;
+      }
     } else {
       clusters.push({
         levels: [level],
