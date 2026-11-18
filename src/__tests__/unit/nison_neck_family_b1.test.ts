@@ -61,11 +61,13 @@ describe('B1: семья шеи достижима при open₂ == close₁ (�
   });
 
   it('ТОЛЧОК: open₂ == close₁, close₂ внутри тела чёрной ниже середины', () => {
-    // По канону: закрытие внутри тела чёрной, но НИЖЕ её середины; тело белой
-    // не обязано быть малым. bodyMid₁ = close₁ + 5; close₂ = close₁ + 4 ∈
-    // (close₁, bodyMid₁). close₂ вне «шеи» ([close₁−tol, close₁+2tol], tol=0.575)
-    // и вне low₁ → ветки НИЖЕ ШЕИ / НА ШЕЕ не срабатывают, остаётся ТОЛЧОК.
-    const white = cc(black.close, black.close + 4.1, black.close - 0.1, black.close + 4);
+    // По канону (ЯС гл. 4): «толчок» — белая свеча с ЗАКРЫТИЕМ ВНУТРИ тела
+    // предыдущей чёрной, но НИЖЕ её середины; тело белой при этом БОЛЬШОЕ
+    // (не менее половины тела чёрной) — это единственное книжное отличие
+    // толчка от «на шее», у которого тело малое. Фикстура: bodyMid₁ = close₁+5,
+    // close₂ = close₁ + 4 ∈ (close₁, bodyMid₁); тело 6 > 0.5·body₁ = 5 →
+    // smallWhite = false → ветка НА ШЕЕ не срабатывает, остаётся ТОЛЧОК.
+    const white = cc(black.close, black.close + 6.1, black.close - 0.1, black.close + 4);
     const res = PatternDetector.isNeckFamily(black, white, prevDecline);
     expect(res.found).toBe(true);
     expect(res.name).toBe('ТОЛЧОК');
