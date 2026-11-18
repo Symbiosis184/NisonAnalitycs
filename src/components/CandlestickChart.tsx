@@ -148,7 +148,9 @@ export default function CandlestickChart({
 
     chart.priceScale('volume').applyOptions({
       scaleMargins: {
-        top: 0.8,
+        // Объём опущен ниже (было top: 0.8): исторические столбики не должны
+        // подниматься в зону последних свечей — между ними есть зазор.
+        top: 0.85,
         bottom: 0,
       },
     });

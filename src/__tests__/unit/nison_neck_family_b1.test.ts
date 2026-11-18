@@ -61,14 +61,47 @@ describe('B1: семья шеи достижима при open₂ == close₁ (�
   });
 
   it('ТОЛЧОК: open₂ == close₁, close₂ внутри тела чёрной ниже середины', () => {
-    // По канону: закрытие внутри тела чёрной, но НИЖЕ её середины; тело белой
-    // не обязано быть малым. bodyMid₁ = close₁ + 5; close₂ = close₁ + 4 ∈
-    // (close₁, bodyMid₁). close₂ вне «шеи» ([close₁−tol, close₁+2tol], tol=0.575)
-    // и вне low₁ → ветки НИЖЕ ШЕИ / НА ШЕЕ не срабатывают, остаётся ТОЛЧОК.
-    const white = cc(black.close, black.close + 4.1, black.close - 0.1, black.close + 4);
+    // По канону (ЯС гл. 4): «толчок» — белая свеча с ЗАКРЫТИЕМ ВНУТРИ тела
+    // предыдущей чёрной, но НИЖЕ её середины; тело белой при этом БОЛЬШОЕ
+    // (не менее половины тела чёрной) — это единственное книжное отличие
+    // толчка от «на шее», у которого тело малое. Фикстура: bodyMid₁ = close₁+5,
+    // close₂ = close₁ + 4 ∈ (close₁, bodyMid₁); тело 6 > 0.5·body₁ = 5 →
+    // smallWhite = false → ветка НА ШЕЕ не срабатывает, остаётся ТОЛЧОК.
+    const white = cc(black.close, black.close + 6.1, black.close - 0.1, black.close + 4);
     const res = PatternDetector.isNeckFamily(black, white, prevDecline);
     expect(res.found).toBe(true);
     expect(res.name).toBe('ТОЛЧОК');
+  });
+
+  it('глоссарий А: close₂ «немного выше минимумов чёрной» (между low₁ и close₁) → НА ШЕЕ', () => {
+    // ЯС глоссарий А, «На шее»: «ценой закрытия немного выше минимумов черной
+    // свечи». Фикстура без нижней тени (low₁ = bodyBottom₁ = close₁ — типичный
+    // канонический случай): close₂ = low₁ + 2·tol лежит ВЫШЕ окна ветки
+    // «НИЖЕ ШЕИ» (±tol от минимума), но внутри расширенного окна «НА ШЕЕ» по
+    // решению владельца (принимаются оба книжных определения: гл. 4 — «чуть
+    // выше цены закрытия», глоссарий А — «немного выше минимумов»). Толчок при
+    // close₂ < close₁ невозможен по определению (закрытие внутри тела).
+    const tol = black.totalRange * 0.05;
+    const noWick = cc(black.open, black.high, black.close, black.close);
+    const white = cc(noWick.close, noWick.low + 2 * tol + 0.1, noWick.low - 0.1, noWick.low + 2 * tol);
+    expect(white.open === noWick.close).toBe(true);
+    const res = PatternDetector.isNeckFamily(noWick, white, prevDecline);
+    expect(res.found).toBe(true);
+    expect(res.name).toBe('НА ШЕЕ');
+  });
+
+  it('глоссарий А + гэп вниз: close₂ между low₁ и close₁ при малом теле → НА ШЕЕ', () => {
+    // Чёрная свеча с гэпом вниз (close₁ < low₂ предыдущего дня не требуется —
+    // важен сам факт гэпа внутри тела): низ тела close₁ отделён от середины
+    // тела, и закрытие белой ЧУТЬ ВЫШЕ ЦЕНЫ ЗАКРЫТИЯ чёрной (гл. 4) должно
+    // давать «НА ШЕЕ», а не «ТОЛЧОК»: приоритет малого тела над зоной толчка
+    // обоснован тем, что единственный книжный признак толчка — БОЛЬШОЕ тело
+    // (не менее половины тела чёрной), у «на шее» — малое.
+    const gapBlack = cc(lastClose + 10, lastClose + 10.2, lastClose - 0.2, lastClose);
+    const w = cc(gapBlack.close, gapBlack.close + 0.6, gapBlack.close - 0.1, gapBlack.close + 0.5);
+    const res = PatternDetector.isNeckFamily(gapBlack, w, prevDecline);
+    expect(res.found).toBe(true);
+    expect(res.name).toBe('НА ШЕЕ');
   });
 
   it('open₂ выше close₁ более чем на допуск → found === false', () => {
