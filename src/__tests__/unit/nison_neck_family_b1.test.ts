@@ -75,12 +75,31 @@ describe('B1: семья шеи достижима при open₂ == close₁ (�
 
   it('глоссарий А: close₂ «немного выше минимумов чёрной» (между low₁ и close₁) → НА ШЕЕ', () => {
     // ЯС глоссарий А, «На шее»: «ценой закрытия немного выше минимумов черной
-    // свечи». close₂ = low₁ + 2·tol — ВЫШЕ окна ветки НИЖЕ ШЕИ (±tol от low₁),
-    // но внутри расширенного окна по решению владельца (оба книжных уровня).
-    const tol = black.totalRange * 0.05; // 0.575
-    const white = cc(black.close, black.low + 2 * tol + 0.1, black.low - 0.1, black.low + 2 * tol);
-    expect(white.open === black.close).toBe(true);
-    const res = PatternDetector.isNeckFamily(black, white, prevDecline);
+    // свечи». Фикстура без нижней тени (low₁ = bodyBottom₁ = close₁ — типичный
+    // канонический случай): close₂ = low₁ + 2·tol лежит ВЫШЕ окна ветки
+    // «НИЖЕ ШЕИ» (±tol от минимума), но внутри расширенного окна «НА ШЕЕ» по
+    // решению владельца (принимаются оба книжных определения: гл. 4 — «чуть
+    // выше цены закрытия», глоссарий А — «немного выше минимумов»). Толчок при
+    // close₂ < close₁ невозможен по определению (закрытие внутри тела).
+    const tol = black.totalRange * 0.05;
+    const noWick = cc(black.open, black.high, black.close, black.close);
+    const white = cc(noWick.close, noWick.low + 2 * tol + 0.1, noWick.low - 0.1, noWick.low + 2 * tol);
+    expect(white.open === noWick.close).toBe(true);
+    const res = PatternDetector.isNeckFamily(noWick, white, prevDecline);
+    expect(res.found).toBe(true);
+    expect(res.name).toBe('НА ШЕЕ');
+  });
+
+  it('глоссарий А + гэп вниз: close₂ между low₁ и close₁ при малом теле → НА ШЕЕ', () => {
+    // Чёрная свеча с гэпом вниз (close₁ < low₂ предыдущего дня не требуется —
+    // важен сам факт гэпа внутри тела): низ тела close₁ отделён от середины
+    // тела, и закрытие белой ЧУТЬ ВЫШЕ ЦЕНЫ ЗАКРЫТИЯ чёрной (гл. 4) должно
+    // давать «НА ШЕЕ», а не «ТОЛЧОК»: приоритет малого тела над зоной толчка
+    // обоснован тем, что единственный книжный признак толчка — БОЛЬШОЕ тело
+    // (не менее половины тела чёрной), у «на шее» — малое.
+    const gapBlack = cc(lastClose + 10, lastClose + 10.2, lastClose - 0.2, lastClose);
+    const w = cc(gapBlack.close, gapBlack.close + 0.6, gapBlack.close - 0.1, gapBlack.close + 0.5);
+    const res = PatternDetector.isNeckFamily(gapBlack, w, prevDecline);
     expect(res.found).toBe(true);
     expect(res.name).toBe('НА ШЕЕ');
   });
