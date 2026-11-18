@@ -6,14 +6,24 @@ import { useEffect } from 'react';
 import type { SignalDTO } from '../api/types';
 import { addSignal } from '../utils/signalJournal';
 
+/** Минимальный набор полей, нужный для записи в журнал (карточки дашборда
+ * отдают сокращённый DTO без story/индексов — см. MarketOverviewItem.signals). */
+type JournalableSignal = Pick<
+  SignalDTO,
+  'pattern' | 'direction' | 'entry_price' | 'stop_loss' | 'target' | 'rr' | 'quality' | 'confirmed'
+> & Partial<Pick<SignalDTO, 'bar_time' | 'lifecycle_status'>>;
+
 export function useAutoJournalSignals(
-  signals: SignalDTO[] | undefined,
+  signals: JournalableSignal[] | undefined,
   symbol: string | undefined,
   timeframe: string,
 ) {
   useEffect(() => {
     if (!signals) return;
-    signals.forEach((signal) => {
+    // Проходим по КОПИИ в исходном порядке: addSignal пишет через unshift,
+    // поэтому после сортировки по бару newest-first в журнале первым окажется
+    // самый свежий сигнал.
+    [...signals].forEach((signal) => {
       const st = signal.lifecycle_status ?? (signal.confirmed ? 'confirmed' : 'pending');
       if (st === 'pending' || st === 'confirmed') {
         const result = addSignal({

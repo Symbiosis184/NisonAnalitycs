@@ -822,6 +822,8 @@ export class ApiClient {
           rr: s.rr,
           quality: s.quality,
           confirmed: s.confirmed,
+          // Ключ дедупликации автозаписи в журнал с дашборда: бар формации.
+          bar_time: closedCandles[s.meta.entryIndex ?? s.meta.patternEndIdx]?.time ?? s.timestamp,
         })),
       support: zones.support.map((s) => s.level),
       resistance: zones.resistance.map((r) => r.level),
