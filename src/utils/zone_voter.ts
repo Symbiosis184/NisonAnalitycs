@@ -216,8 +216,8 @@ export class ZoneVoter {
     // 4. Объёмные климасы (главы 15)
     this.addVolumeClimaxLevels(candles, supMap, resMap, params.tolerance);
 
-    // 5. Середины длинных тел (глава 2)
-    this.addLongBodyLevels(candles, supMap, resMap, params.tolerance);
+    // 5. Длинное тело — одна зона [середина … основание/вершина свечи] (ЗГ гл. 2)
+    this.addLongBodyLevels(candles, supMap, resMap, params);
 
     // 6. Психологические круглые числа
     this.addRoundNumbers(price, supMap, resMap, params.tolerance, lastCandle?.time ?? 0);
@@ -482,28 +482,60 @@ export class ZoneVoter {
   }
 
   /**
-   * 5. Середины длинных тел
+   * 5. Длинное тело — ОДНА зона, а не две точки (ЗГ гл. 2, рис. 2.11).
+   * Цитата: «Откат цен должен встретить поддержку либо на уровне середины
+   * длинного белого тела, либо в основании всей белой свечи, включая и нижнюю
+   * тень». Глоссарий ЗГ: поддержка «от середины до основания белой свечи
+   * (включая и минимум нижней тени)»; для чёрной — сопротивление «от середины
+   * до вершины свечи (включая верхнюю тень)».
+   * Поэтому белая свеча даёт одну зону [c.low … mid], чёрная — [mid … c.high]
+   * (по образцу addWindowLevels: level=середина полосы, halfWidth=её полуширина).
+   * Книжный критерий «длинного тела» (ЗГ гл. 2): тело >= 3x тела ПРЕДЫДУЩЕЙ свечи.
    */
   private static addLongBodyLevels(
     candles: Candle[],
     supMap: Map<number, ZoneClusterData>,
     resMap: Map<number, ZoneClusterData>,
-    tolerance: number
+    params: ZoneParams
   ) {
-    const lookback = Math.min(60, candles.length);
-    const recent = candles.slice(-lookback);
+    const lookback = Math.min(params.lookback, candles.length);
+    const startIdx = candles.length - lookback;
+    const recent = candles.slice(startIdx);
+    // Проектное отклонение: дополнительный числовой фильтр body > 1.5*avgBody(60)
+    // книжным не является (в книгах среднего тела за 60 баров нет).
     const avgBody = recent.reduce((sum, c) => sum + c.body, 0) / recent.length;
 
-    for (const c of recent) {
-      if (c.isLongCandle && c.body > avgBody * 1.5) {
+    for (let i = 0; i < recent.length; i++) {
+      const c = recent[i];
+      const globalIdx = startIdx + i;
+      const prev = candles[globalIdx - 1];
+      // Инженерная защита (не из книг): без предыдущей свечи или при нулевом её
+      // теле отношение к «телу предыдущей» не определено — зону не формируем.
+      if (!prev || !(prev.body > 0)) continue;
+      // Книжный критерий ЗГ гл. 2: тело >= 3x тела предыдущей свечи.
+      const isLongByBook = c.body >= 3 * prev.body;
+      // Проектный дополнительный фильтр (помечен выше): сохранён как эвристика,
+      // из книжного критерия убран (книга avgBody не упоминает).
+      if (isLongByBook && c.isLongCandle && c.body > avgBody * 1.5) {
         const mid = (c.open + c.close) / 2;
 
         if (c.isBullish) {
-          addLevelToMap(supMap, mid, 'середина длинного белого тела (гл. 2)', c.time, tolerance, 1, { source: 'long-body', formedAt: c.time });
-          addLevelToMap(supMap, c.low, 'основание длинного белого тела (гл. 2)', c.time, tolerance, 1, { source: 'long-body', formedAt: c.time });
+          // Метка исправлена: раньше было «основание длинного белого тела», но
+          // код (и книга) используют c.low — ВЕСЬ диапазон свечи с нижней тенью.
+          addLevelToMap(
+            supMap, mid,
+            'зона длинного белого тела: от середины до основания свечи, включая нижнюю тень (ЗГ гл. 2, рис. 2.11)',
+            c.time, params.tolerance, 1,
+            { source: 'long-body', halfWidth: (mid - c.low) / 2, formedAt: c.time },
+          );
         } else {
-          addLevelToMap(resMap, mid, 'середина длинного чёрного тела (гл. 2)', c.time, tolerance, 1, { source: 'long-body', formedAt: c.time });
-          addLevelToMap(resMap, c.high, 'вершина длинного чёрного тела (гл. 2)', c.time, tolerance, 1, { source: 'long-body', formedAt: c.time });
+          // Аналогично: «вершина длинного чёрного тела» → вершина свечи с верхней тенью.
+          addLevelToMap(
+            resMap, mid,
+            'зона длинного чёрного тела: от середины до вершины свечи, включая верхнюю тень (ЗГ гл. 2, рис. 2.11)',
+            c.time, params.tolerance, 1,
+            { source: 'long-body', halfWidth: (c.high - mid) / 2, formedAt: c.time },
+          );
         }
       }
     }
