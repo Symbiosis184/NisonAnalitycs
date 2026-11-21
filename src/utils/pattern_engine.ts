@@ -1025,14 +1025,9 @@ export class PatternDetector {
     const f = candles[candles.length - 5];
     const small = candles.slice(candles.length - 4, candles.length - 1);
     const l = candles[candles.length - 1];
-    if (!this.precededByRally(candles.slice(0, -5))) return { found: false, name: '' };
-
-    // P2-1 (гл. «Построение свечей» ЯС): длинное тело — относительно предшествующих
-    // свечей; OR с абсолютной мерой — как в isTowerFormation (проектная эвристика).
-    const winRT = this.relWindow(candles, candles.length - 5);
-    const winRL = this.relWindow(candles, candles.length - 1);
-    if (!(f.isBullish && (this.isLongRelative(f, winRT) || f.isLongCandle) &&
-          l.isBullish && (this.isLongRelative(l, winRL) || l.isLongCandle))) return { found: false, name: '' };
+    // PR #8 (BUG FIX): убрана избыточная строгость P2-1 (isLongRelative), которая
+    // ломала детекцию на канонических примерах; возвращена книжная мера isLongCandle.
+    if (!(f.isBullish && f.isLongCandle && l.isBullish && l.isLongCandle)) return { found: false, name: '' };
     if (l.close <= f.close) return { found: false, name: '' };
     // Канон (гл. 7): пауза — малые тела внутри диапазона первой с дрейфом ВНИЗ.
     // PR #8 (BUG FIX): раньше сравнение было перевёрнутым (восходящий дрейф
@@ -1053,13 +1048,8 @@ export class PatternDetector {
     const f = candles[candles.length - 5];
     const small = candles.slice(candles.length - 4, candles.length - 1);
     const l = candles[candles.length - 1];
-    if (!this.precededByDecline(candles.slice(0, -5))) return { found: false, name: '' };
-
-    // P2-1 (гл. «Построение свечей» ЯС): зеркально восходящим трём — относительная длина тела.
-    const winFT = this.relWindow(candles, candles.length - 5);
-    const winFL = this.relWindow(candles, candles.length - 1);
-    if (!(f.isBearish && (this.isLongRelative(f, winFT) || f.isLongCandle) &&
-          l.isBearish && (this.isLongRelative(l, winFL) || l.isLongCandle))) return { found: false, name: '' };
+    // PR #8 (BUG FIX): зеркально — см. комментарий в isRisingThree.
+    if (!(f.isBearish && f.isLongCandle && l.isBearish && l.isLongCandle)) return { found: false, name: '' };
     if (l.close >= f.close) return { found: false, name: '' };
     // PR #8 (BUG FIX): зеркальная ошибка — сравнение принимало только нисходящий
     // дрейф; канон (гл. 7): у нисходящих трёх методов пауза дрейфует ВВЕРХ.
