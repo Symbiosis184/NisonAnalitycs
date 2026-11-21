@@ -1025,8 +1025,10 @@ export class PatternDetector {
     const f = candles[candles.length - 5];
     const small = candles.slice(candles.length - 4, candles.length - 1);
     const l = candles[candles.length - 1];
-    // PR #8 (BUG FIX): убрана избыточная строгость P2-1 (isLongRelative), которая
-    // ломала детекцию на канонических примерах; возвращена книжная мера isLongCandle.
+    // PR #8 (REBASE FIX): восстановлен контекст-гейт main (предшествующий рост
+    // обязателен по гл. 7 ЯС). Убрана только избыточная строгость P2-1
+    // (isLongRelative) — возвращена книжная мера isLongCandle.
+    if (!this.precededByRally(candles.slice(0, -5))) return { found: false, name: '' };
     if (!(f.isBullish && f.isLongCandle && l.isBullish && l.isLongCandle)) return { found: false, name: '' };
     if (l.close <= f.close) return { found: false, name: '' };
     // Канон (гл. 7): пауза — малые тела внутри диапазона первой с дрейфом ВНИЗ.
@@ -1048,6 +1050,8 @@ export class PatternDetector {
     const f = candles[candles.length - 5];
     const small = candles.slice(candles.length - 4, candles.length - 1);
     const l = candles[candles.length - 1];
+    // PR #8 (REBASE FIX): зеркально — контекст-гейт main восстановлен.
+    if (!this.precededByDecline(candles.slice(0, -5))) return { found: false, name: '' };
     // PR #8 (BUG FIX): зеркально — см. комментарий в isRisingThree.
     if (!(f.isBearish && f.isLongCandle && l.isBearish && l.isLongCandle)) return { found: false, name: '' };
     if (l.close >= f.close) return { found: false, name: '' };
