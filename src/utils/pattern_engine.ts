@@ -152,6 +152,10 @@ export class PatternDetector {
    */
   private static precededByDecline(prev: Candle[]): boolean {
     if (prev.length < 4) return false;
+    // REBASE FIX (PR #8): зеркально precededByRally — длинная медвежья
+    // импульсная свеча перед моделью сама задаёт нисходящее движение.
+    const last = prev[prev.length - 1];
+    if (last?.isBearish && last?.isLongCandle) return true;
     const swing = getSwingTrend(prev);
     if (swing === 'НИСХОДЯЩИЙ') return true;
     if (swing === 'ВОСХОДЯЩИЙ') return false;
@@ -177,6 +181,13 @@ export class PatternDetector {
 
   private static precededByRally(prev: Candle[]): boolean {
     if (prev.length < 4) return false;
+    // REBASE FIX (PR #8): импульсная свеча, непосредственно предшествующая
+    // модели, сама задаёт направление движения (гл. 7 Нисона: «три метода»
+    // продолжаются длинной свечой того же цвета). Проверяется до свингов и MA:
+    // на короткой/флэт-предыстории они направление не определяют, из-за чего
+    // каноническая детекция становилась недостижимой.
+    const last = prev[prev.length - 1];
+    if (last?.isBullish && last?.isLongCandle) return true;
     const swing = getSwingTrend(prev);
     if (swing === 'ВОСХОДЯЩИЙ') return true;
     if (swing === 'НИСХОДЯЩИЙ') return false;
