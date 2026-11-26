@@ -403,20 +403,30 @@ export class ZoneVoter {
       // входят: их статус fill/broken считается отдельно в gaps.ts (ЯС гл. 7),
       // и поглощение окна длинным телом ложно помечало бы его пробитым
       // (регрессия теста «окно вниз — сопротивление»).
-      const sameSource = (a: Zone, b: Zone): boolean => {
-        const sa = a.sources[0];
-        const sb = b.sources[0];
-        return sa !== undefined && sa === sb;
-      };
+      // F2 (аудит): объединять можно только полосы ОДНОГО И ТОГО ЖЕ источника.
+      // Ключ — весь набор sources (отсортированный), а не первый элемент:
+      // полоса long-body, усиленная касанием (sources=['long-body','touch']),
+      // и чистая long-body-полоса — это РАЗНЫЕ книжные свечи, их геометрию
+      // смешивать нельзя (иначе узкая свеча «съедает» возврат широкой).
+      // Проектное решение о представлении, не из книг.
+      const sourceKey = (z: Zone): string => [...z.sources].sort().join('|');
+      // Транзитивное объединение пересекающихся полос одного источника
+      // (компоненты связности по пересечению интервалов). Поэлементная
+      // проверка «пересекается ли o с z» теряла полосу, которая пересекалась
+      // с z только через третью полосу (A∩B≠∅, B∩C≠∅, A∩C=∅).
       const bandUnion = (z: Zone, band: BookBand): [number, number] => {
         let lo = band.lo;
         let hi = band.hi;
-        for (const o of raw) {
-          if (!o.bookBand || o === z || !sameSource(o, z)) continue;
-          const { startCheckIndex: _s, ...ob } = o.bookBand;
-          if (ob.lo <= band.hi && band.lo <= ob.hi) {
-            lo = Math.min(lo, ob.lo);
-            hi = Math.max(hi, ob.hi);
+        let grew = true;
+        while (grew) {
+          grew = false;
+          for (const o of raw) {
+            if (!o.bookBand || o === z || sourceKey(o) !== sourceKey(z)) continue;
+            const { startCheckIndex: _s, ...ob } = o.bookBand;
+            if (ob.lo <= hi && lo <= ob.hi) {
+              if (ob.lo < lo) { lo = ob.lo; grew = true; }
+              if (ob.hi > hi) { hi = ob.hi; grew = true; }
+            }
           }
         }
         return [lo, hi];
@@ -425,8 +435,15 @@ export class ZoneVoter {
         if (!z.bookBand) continue;
         const { startCheckIndex, ...band } = z.bookBand;
         const [unionLo, unionHi] = bandUnion(z, band);
-        // Индекс ПЕРВОГО закрытия за дальней границей (чтобы требовать
-        // возврата именно ПОСЛЕ пробоя):
+        // Индекс ПЕРВОГО закрытия за дальней границей СОБСТВЕННОЙ полосы
+        // (чтобы требовать возврата именно ПОСЛЕ пробоя). Граница — своя,
+        // не объединённая: объединение (bandUnion) применяется только к
+        // проверке возврата/удержания polarityReturnHeld, чтобы соседняя
+        // широкая полоса того же источника не помечала ложно «пробитой»
+        // узкую (регрессия теста «окно вниз — сопротивление»: окно
+        // [100.5…102] никогда не закрывалось выше 102*(1+breakPct), но
+        // лежало внутри long-body-полосы [99.5…101.5], и по объединённой
+        // границе считалось пробитым → зона терялась).
         let breakIdx = -1;
         for (let i = Math.max(0, startCheckIndex ?? 0); i < candles.length; i++) {
           const c = candles[i];
