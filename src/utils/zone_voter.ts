@@ -243,7 +243,8 @@ export class ZoneVoter {
     // свинг-кластер (findClusterZone для keepSeparate-уровней отключён — F6 в
     // levels.ts; там же книжные полосы никогда не сливаются между собой —
     // каждая хранит точную геометрию), а polarity-точка после long-body не
-    // поглощается книжной полосой через mergeIntoExact. Нумерация комментариев
+    // поглощает книжную полосу (кластеры keepSeparate не притягивают точек).
+    // Нумерация комментариев
     // ниже — исходная (1–9); фактический порядок вызовов отличается для
     // шага 2 (по пояснению в комментарии у addPolarityLevels).
 
@@ -261,14 +262,17 @@ export class ZoneVoter {
 
     // 2. Полярность: пробитые УРОВНИ (свинги) меняют роль.
     // F6 (аудит): точечные polarity-уровни добавляются ПОСЛЕ книжных полос
-    // (long-body выше), чтобы свинговый flip НЕ поглощался уже существующей
-    // книжной полосой через mergeIntoExact: при совпадении центра с
-    // bookBand-кластером (long-body той же свечи) точка «пробитая поддержка →
-    // сопротивление» вливалась в полосу и смещала её центр — отображаемая
-    // геометрия переставала быть книжной. Теперь findClusterZone пропускает
-    // keepSeparate-кластеры, и такой уровень образует ОТДЕЛЬНЫЙ кластер
-    // (точность книжной полосы приоритетна; confluence-голосование может
-    // уменьшиться — это приемлемо). Проектное решение о порядке, не из книг.
+    // (long-body выше), чтобы свинговый flip НЕ сливался с уже существующей
+    // книжной полосой: при совпадении/близости центров точка «пробитая
+    // поддержка → сопротивление» вливалась в полосу long-body той же свечи и
+    // смещала её центр — отображаемая геометрия переставала быть книжной.
+    // findClusterZone пропускает keepSeparate-кластеры, поэтому polarity-точка
+    // образует ОТДЕЛЬНЫЙ кластер, а маршрутизация routeBookZones отдаёт
+    // предпочтение книге: если в корзине есть непробитая книжная полоса,
+    // пересекающаяся с зоной flip-точки, точка выбрасывается (это тот же
+    // исходный эффект поглощения, но без искажения геометрии книги).
+    // Точность книжной полосы приоритетна; confluence-голосование может
+    // уменьшиться — это приемлемо (аудит F6). Проектное решение, не из книг.
     this.addPolarityLevels(lastClose, candles, supMap, resMap, params);
 
     // 6. Психологические круглые числа
@@ -403,6 +407,22 @@ export class ZoneVoter {
           // задаёт — это проектное решение о представлении flip-зоны полосой,
           // не из книг. Роль в bookBand — новая (polRole), поэтому отображение
           // рисует зону на стороне новой роли, а не старой.
+          const mirrorLo = polRole === 'resistance' ? band.lo : 2 * band.hi - band.lo;
+          const mirrorHi = polRole === 'resistance' ? 2 * band.lo - band.hi : band.hi;
+          const fl: Zone = {
+            ...z,
+            level: (mirrorLo + mirrorHi) / 2,
+            halfWidth: (mirrorHi - mirrorLo) / 2,
+            sources: [...z.sources, 'polarity'],
+            reasons: [
+              ...z.reasons,
+              `полярный разворот: ${origRole} пробита закрытием, возврат/удержание`
+              + ` подтверждены последним закрытием (ЯС гл. 11; ЗГ гл. 2,`
+              + ` «пока цены закрытия держатся выше поддержки, она остается в силе»)`,
+            ],
+            bookBand: { lo: mirrorLo, hi: mirrorHi, role: polRole },
+          };
+          flipped.push(fl);
         }
         // Пробита без возврата/удержания ИЛИ последняя закрытая цена не держит
         // новую роль (F2) — зона не выдаётся ни в одной роли (зоны
@@ -447,12 +467,31 @@ export class ZoneVoter {
       ...nonBookRes.filter((z) => inOwnRole(z, 'resistance')),
     ];
 
-    const support = [...allSupport.filter(significant), ...bookSupportFlipped]
+    // F6 (аудит): книга приоритетнее flip-ТОЧКИ. Свинговая polarity-точка из
+    // addPolarityLevels может попасть в ту же корзину, что и полярный flip
+    // книжной полосы (та же бар-хронология «пробой → возврат → удержание» для
+    // одного диапазона). Раньше такая точка вливалась в книжную полосу через
+    // кластеризацию и смещала её центр; теперь она образует отдельный кластер,
+    // поэтому здесь точка без bookBand отбрасывается, если пересекается с
+    // flip-полосой той же роли (тот же исходный эффект поглощения — без
+    // искажения книжной геометрии). Проектное решение, не из книг.
+    const overlapsFlippedBand = (z: Zone, flipped: Zone[]) => {
+      const lo = z.level - z.halfWidth;
+      const hi = z.level + z.halfWidth;
+      return flipped.some((f) => f.bookBand !== undefined &&
+        lo <= f.bookBand.hi && f.bookBand.lo <= hi);
+    };
+
+    const support = [...allSupport.filter((z) =>
+        significant(z) && !(z.bookBand === undefined && overlapsFlippedBand(z, bookSupportFlipped))),
+      ...bookSupportFlipped]
       .sort(significance)
       .slice(0, this.MAX_ZONES_PER_SIDE)
       .sort((a, b) => b.level - a.level);
 
-    const resistance = [...allResistance.filter(significant), ...bookResistanceFlipped]
+    const resistance = [...allResistance.filter((z) =>
+        significant(z) && !(z.bookBand === undefined && overlapsFlippedBand(z, bookResistanceFlipped))),
+      ...bookResistanceFlipped]
       .sort(significance)
       .slice(0, this.MAX_ZONES_PER_SIDE)
       .sort((a, b) => a.level - b.level);
@@ -796,7 +835,7 @@ export class ZoneVoter {
             // F6 (аудит): дожи — книжный источник с явной геометрией (bookBand);
             // он тоже не должен поглощаться свинг-кластерами (как long-body).
             // Проектное решение, не из книг.
-            keepSeparate: true, mergeIntoExact: true,
+            keepSeparate: true,
           },
         );
       } else {
@@ -811,7 +850,7 @@ export class ZoneVoter {
             source: 'doji', halfWidth: (hi - lo) / 2, formedAt: c.time,
             startCheckIndex: i + 1, bookBand: { lo, hi, role: 'resistance' },
             // F6 (аудит): см. ветвь поддержки — защита книжной геометрии дожи.
-            keepSeparate: true, mergeIntoExact: true,
+            keepSeparate: true,
           },
         );
       }
@@ -878,10 +917,6 @@ export class ZoneVoter {
               // Проектное решение: книжная полоса длинного тела не сливается со
               // свинг-кластерами — иначе её геометрия [low…mid] теряется.
               keepSeparate: true,
-              // F2 (аудит): если в supMap уже есть уровень с тем же центром
-              // (например, полярный flip того же тела из addPolarityLevels),
-              // полосы объединяются покрытием [min lo … max hi], а не теряются.
-              mergeIntoExact: true,
             },
           );
         } else {
@@ -895,8 +930,6 @@ export class ZoneVoter {
               source: 'long-body', halfWidth: (hi - lo) / 2, formedAt: c.time,
               startCheckIndex, bookBand: { lo, hi, role: 'resistance' },
               keepSeparate: true,
-              // F2 (аудит): см. ветвь поддержки — объединение полос по совпадению центра.
-              mergeIntoExact: true,
             },
           );
         }
@@ -1035,7 +1068,7 @@ export class ZoneVoter {
           bookBand: { lo: gap.bottom, hi: gap.top, role: isUp ? 'support' : 'resistance' },
           // F6 (аудит): окно — книжный источник с явной геометрией; его полоса
           // [bottom…top] не должна размываться свинг-кластерами. Проектное решение.
-          keepSeparate: true, mergeIntoExact: true,
+          keepSeparate: true,
         },
       );
     }
