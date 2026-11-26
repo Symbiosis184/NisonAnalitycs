@@ -390,7 +390,7 @@ export class ZoneVoter {
     };
 
     const routeBookZones = (
-      raw: Zone[], origRole: 'support' | 'resistance',
+      raw: Zone[], otherRaw: Zone[], origRole: 'support' | 'resistance',
       aliveSup: Zone[], aliveRes: Zone[], flippedSup: Zone[], flippedRes: Zone[],
     ) => {
       // F1 (аудит): роль книжной полосы задаётся ИСТОЧНИКОМ (белая свеча →
@@ -474,12 +474,93 @@ export class ZoneVoter {
         // лежало внутри long-body-полосы [99.5…101.5], и по объединённой
         // границе считалось пробитым → зона терялась).
         let breakIdx = -1;
+        // F2 (аудит task2): флаг «полоса лежит внутри/на основании полосы того
+        // же источника, пробитой позже её собственного первого закрытия за
+        // границей». Такая полоса НЕЖИВА в исходной роли даже без возврата
+        // (закрытия держатся над накрывшей полосой, т.е. и над её основанием),
+        // но может получить полярный flip по той же хронологии, что и
+        // накрывшая полоса. Проектное решение о представлении, не из книг.
+        let coveredByUnbrokenBand = false;
         for (let i = Math.max(0, startCheckIndex ?? 0); i < candles.length; i++) {
           const c = candles[i];
           if (origRoleOfZ === 'support' && c.close < band.lo * (1 - params.breakPct)) { breakIdx = i; break; }
           if (origRoleOfZ === 'resistance' && c.close > band.hi * (1 + params.breakPct)) { breakIdx = i; break; }
         }
-        if (breakIdx < 0) { (origRoleOfZ === 'support' ? aliveSup : aliveRes).push(z); continue; }
+        if (breakIdx < 0) {
+          // F2 (аудит task2): полоса не пробита по СВОЕЙ дальней границе, но
+          // может лежать ВНУТРИ/НА ОСНОВАНИИ уже пробитой полосы того же
+          // источника. В этом случае её книжная валидность производна от
+          // пробитой: цена закрытия «держится» уже не над ней, а над основанием
+          // пробитой — т.е. исходная роль поддержки больше не действует, и
+          // зона участвует в полярном разворотe на тех же условиях (возврат
+          // снизу + удержание последней закрытой ценой), что и сама пробитая
+          // полоса (ЗГ гл. 2, «пока цены закрытия держатся выше поддержки, она
+          // остается в силе»; ЯС гл. 11 — симметричная полярность). Иначе
+          // новая свеча, порождённая самим возвратом к пробитой зоне,
+          // «оживала» как поддержка и глушила flip (регрессия приёмки
+          // task2). Проектное решение о связывании геометрий одного окна,
+          // численных порогов книги не задают.
+          let coveredBreak = -1;
+          // F2 (аудит task2): поиск ведём по ВСЕМ книжным полосам обеих корзин
+          // (sup+res), т.к. кластеризация уровней может положить полосу белой
+          // свечи в resMap и наоборот — роль задаёт источник (roleOf), а не
+          // корзина. Проектное решение, не из книг.
+          const allRaw = origRole === 'support' ? [...raw, ...otherRaw] : [...otherRaw, ...raw];
+          for (const o of allRaw) {
+            if (!o.bookBand || o === z || sourceKey(o) !== sourceKey(z)) continue;
+            const os = o.bookBand.startCheckIndex ?? 0;
+            const ob = o.bookBand;
+            let oi = -1;
+            for (let i = Math.max(0, os); i < candles.length; i++) {
+              const c = candles[i];
+              if (roleOf(o) === 'support' && c.close < ob.lo * (1 - params.breakPct)) { oi = i; break; }
+              if (roleOf(o) === 'resistance' && c.close > ob.hi * (1 + params.breakPct)) { oi = i; break; }
+            }
+            if (oi < 0) continue;
+            if (origRoleOfZ === 'support' && band.lo >= ob.lo - 1e-9 && band.hi <= ob.hi + 1e-9) {
+              coveredBreak = Math.max(coveredBreak, oi);
+            } else if (origRoleOfZ === 'resistance' && band.hi <= ob.hi + 1e-9 && band.lo >= ob.lo - 1e-9) {
+              coveredBreak = Math.max(coveredBreak, oi);
+            }
+          }
+          if (coveredBreak < 0) {
+            // F2 (аудит task2): если накрывшая полоса того же источника НЕ
+            // пробита, а её первый выход цены за ГРАНИЦЫ z (в любую сторону —
+            // закрытие выше hi или ниже lo) произошёл ПОЗЖЕ начала проверки z,
+            // то z нежива в исходной роли: цена «держится» уже над ней, и
+            // поддержка более не действует. Для такой z breakIdx = индекс
+            // первого выхода за её собственные границы; полярный flip возможен
+            // только при полном ретесте снизу (возврат + удержание последней
+            // закрытой ценой), иначе зона не выдаётся ни в одной роли.
+            let firstOutside = -1;
+            for (const o of allRaw) {
+              if (!o.bookBand || o === z || sourceKey(o) !== sourceKey(z)) continue;
+              const ob = o.bookBand;
+              if (!(band.lo >= ob.lo - 1e-9 && band.hi <= ob.hi + 1e-9)) continue;
+              let oi = -1;
+              for (let i = Math.max(0, o.bookBand.startCheckIndex ?? 0); i < candles.length; i++) {
+                const c = candles[i];
+                if (roleOf(o) === 'support' && c.close < ob.lo * (1 - params.breakPct)) { oi = i; break; }
+                if (roleOf(o) === 'resistance' && c.close > ob.hi * (1 + params.breakPct)) { oi = i; break; }
+              }
+              if (oi >= 0) continue; // уже учтено в coveredBreak выше
+              for (let i = Math.max(0, startCheckIndex ?? 0); i < candles.length; i++) {
+                const c = candles[i];
+                if (c.close > band.hi + 1e-9 || c.close < band.lo - 1e-9) { firstOutside = i; break; }
+              }
+              if (firstOutside >= 0) break;
+            }
+            if (firstOutside < 0) {
+              (origRoleOfZ === 'support' ? aliveSup : aliveRes).push(z);
+              continue;
+            }
+            breakIdx = firstOutside;
+            coveredByUnbrokenBand = true;
+          } else {
+            // Полоса считается пробитой вместе с накрывшей её полосой того же
+            // источника: продолжаем обработку с coveredBreak как breakIdx.
+            breakIdx = coveredBreak;
+          }
         // F2 (ЗГ гл. 2, «пока цены закрытия держатся выше поддержки, она
         // остается в силе»; ЯС гл. 11 — полярность симметрична): ПОЛНОЕ
         // решение — повторная хронология с обратным flip. Если ПОСЛЕ первого
@@ -532,10 +613,17 @@ export class ZoneVoter {
             bookBand: { lo: mirrorLo, hi: mirrorHi, role: polRole },
           };
           (polRole === 'support' ? flippedSup : flippedRes).push(fl);
+        } else if (coveredByUnbrokenBand) {
+          // F2 (аудит task2): полоса пробита «вместе» с накрывшей её полосой
+          // того же источника, но возврат/удержание НЕ подтверждены — зона не
+          // выдаётся НИ В ОДНОЙ роли: поддержка уже не действует (закрытия под
+          // ней), а сопротивление без возврата книгой не обосновано.
+        } else {
+          // Пробита без возврата/удержания ИЛИ последняя закрытая цена не держит
+          // новую роль (F2) — зона не выдаётся ни в одной роли (зоны
+          // addPolarityLevels её ещё не «поймали»).
+          (origRoleOfZ === 'support' ? aliveSup : aliveRes).push(z);
         }
-        // Пробита без возврата/удержания ИЛИ последняя закрытая цена не держит
-        // новую роль (F2) — зона не выдаётся ни в одной роли (зоны
-        // addPolarityLevels её ещё не «поймали»).
       }
     };
 
@@ -550,8 +638,8 @@ export class ZoneVoter {
     // перестала бы выполняться. Проектное решение о представлении, не из книг.
     const bookSupportFlipped: Zone[] = [];
     const bookResistanceFlipped: Zone[] = [];
-    routeBookZones(bookSupRaw, 'support', bookSupportAlive, bookResistanceAlive, bookSupportFlipped, bookResistanceFlipped);
-    routeBookZones(bookResRaw, 'resistance', bookSupportAlive, bookResistanceAlive, bookSupportFlipped, bookResistanceFlipped);
+    routeBookZones(bookSupRaw, bookResRaw, 'support', bookSupportAlive, bookResistanceAlive, bookSupportFlipped, bookResistanceFlipped);
+    routeBookZones(bookResRaw, bookSupRaw, 'resistance', bookSupportAlive, bookResistanceAlive, bookSupportFlipped, bookResistanceFlipped);
 
     // ЗАДАЧА 3: для НЕкнижных зон роль остаётся корзиной источника + позиция
     // последней ЗАКРЫТОЙ цены относительно полосы (не live-price из аргумента).

@@ -1,6 +1,6 @@
 import { it } from 'vitest';
-import { Candle } from '../utils/candle';
-import { ZoneVoter } from '../utils/zone_voter';
+import { Candle } from '../../utils/candle';
+import { ZoneVoter } from '../../utils/zone_voter';
 
 const mk = (time: number, open: number, high: number, low: number, close: number, volume = 100) =>
   new Candle({ time, open, high, low, close, volume });
