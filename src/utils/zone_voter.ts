@@ -646,6 +646,30 @@ export class ZoneVoter {
     const last = candles[candles.length - 1];
     const BREAK_PCT = params.breakPct;
 
+    // F6 (аудит): если в этой же корзине уже есть НЕПРОБИТАЯ книжная полоса
+    // (long-body/window), пересекающаяся с уровнем flip-точки, точка не
+    // добавляется: иначе она вливалась в кластер книги и смещала её центр /
+    // раздувала halfWidth. Приоритет — точная книжная геометрия; confluence-
+    // голосование может уменьшиться — это приемлемо (проектное решение о
+    // представлении, не из книг).
+    const blockedByBookBand = (map: Map<number, ZoneClusterData>, level: number): boolean => {
+      for (const z of this.mapToZones(map, () => 0, candles)) {
+        if (!z.bookBand) continue;
+        const breakIdx = (() => {
+          const s = z.bookBand.startCheckIndex ?? 0;
+          for (let i = s; i < candles.length; i++) {
+            const c = candles[i];
+            if (z.bookBand!.role === 'support' && c.close < z.bookBand!.lo * (1 - BREAK_PCT)) return i;
+            if (z.bookBand!.role === 'resistance' && c.close > z.bookBand!.hi * (1 + BREAK_PCT)) return i;
+          }
+          return -1;
+        })();
+        if (breakIdx >= 0) continue; // пробитая полоса будет смаршрутизирована во flip
+        if (level >= z.bookBand.lo && level <= z.bookBand.hi) return true;
+      }
+      return false;
+    };
+
     for (const swing of swings) {
       const fromIdx = Math.max(swing.index + 1, candles.length - 40);
       const formedAt = candles[swing.index]?.time ?? swing.time;
@@ -917,6 +941,10 @@ export class ZoneVoter {
               // Проектное решение: книжная полоса длинного тела не сливается со
               // свинг-кластерами — иначе её геометрия [low…mid] теряется.
               keepSeparate: true,
+              // Дубли ровно того же центра (тот же бар, добавленный повторно
+              // другим шагом источника) объединяются в один кластер — иначе
+              // финальная дедупликация разрезает полосу и теряет halfWidth.
+              mergeIntoExact: true,
             },
           );
         } else {
@@ -930,6 +958,7 @@ export class ZoneVoter {
               source: 'long-body', halfWidth: (hi - lo) / 2, formedAt: c.time,
               startCheckIndex, bookBand: { lo, hi, role: 'resistance' },
               keepSeparate: true,
+              mergeIntoExact: true,
             },
           );
         }
@@ -1082,14 +1111,18 @@ export class ZoneVoter {
     map: Map<number, ZoneClusterData>,
     halfWidthOf: (level: number) => number,
     candles: Candle[],
-    bookOnly: boolean,
+    // bookOnly=true — только кластеры с явной книжной полосой; false — все
+    // остальные. undefined — ВСЕ кластеры (используется addPolarityLevels для
+    // проверки «не перекрывается ли flip-точка уже существующей книжной
+    // полосой той же корзины»).
+    bookOnly?: boolean,
   ): Zone[] {
     const zones: Zone[] = [];
     const lastTime = candles[candles.length - 1]?.time ?? 0;
 
     for (const [level, data] of map.entries()) {
       const hasBook = data.bookBand !== undefined;
-      if (hasBook !== bookOnly) continue;
+      if (bookOnly !== undefined && hasBook !== bookOnly) continue;
       const uniqueReasons = Array.from(new Set(data.reasons));
       const sources = Array.from(new Set(data.sources ?? []));
       const votes = sources.length || (uniqueReasons.length > 0 ? 1 : 0);

@@ -99,6 +99,16 @@ export interface ZoneClusterOptions {
   bookBand?: BookBandGeom;
   /** Не сливать с другими уровнями (см. ZoneClusterData.keepSeparate). */
   keepSeparate?: boolean;
+  /**
+   * Разрешить слияние ТОЛЬКО с книжной полосой, чей центр совпадает с уровнем
+   * данного бара «в точку» (с точностью до float-округления). Используется
+   * источником long-body: одна и та же свеча даёт в корзину одну полосу, но
+   * несколько источников (например, касания из addTouchBasedLevels) могут
+   * добавить тот же самый уровень повторно — такие дубли должны объединяться
+   * в один кластер, иначе финальный splitMultiBand теряет halfWidth=(hi−lo)/2.
+   * Проектное решение о представлении, не из книг.
+   */
+  mergeIntoExact?: boolean;
   /** ЗАДАЧА 9: суммарный относительный объём касаний (формула — проектная). */
   touchVolumeSum?: number;
 }
@@ -127,7 +137,18 @@ export function addLevelToMap(
   // полоса становилась шире книжной. Теперь уровень с keepSeparate никогда не
   // вливается в чужой кластер и всегда создаёт собственный (точное соответствие
   // геометрии источника; проектное решение о кластеризации, не из книг).
-  const hit = options.keepSeparate ? undefined : findClusterZone(map, level, tolerance);
+  const hit = options.keepSeparate
+    ? (options.mergeIntoExact
+        // mergeIntoExact: разрешено слиться только с кластером-полосой, чей
+        // ЦЕНТР совпадает с уровнем «в точку» (тот же самый бар-источник).
+        // Любая другая keepSeparate-полоса остаётся отдельной — книжная
+        // геометрия не размывается (F6, проектное решение о представлении).
+        ? [...map.keys()].find((k) => {
+            const d = map.get(k)!;
+            return d.keepSeparate === true && d.bookBand !== undefined && k === level;
+          })
+        : undefined)
+    : findClusterZone(map, level, tolerance);
   if (hit !== undefined) {
     const data = map.get(hit)!;
     data.reasons.push(reason);
