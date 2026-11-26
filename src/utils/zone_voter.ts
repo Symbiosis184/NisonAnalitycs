@@ -355,7 +355,7 @@ export class ZoneVoter {
       // F2: последнее закрытие должно держать сторону новой роли (валидность
       // в настоящем времени; конвенция дальней границы полосы).
       const lastCloseHoldsNewRole = polRole === 'support'
-        ? lastCandle.close >= band.lo * (1 - params.breakPct)
+        ? lastCandle.close >= band.lo * (1 + params.breakPct)
         : lastCandle.close <= band.hi * (1 + params.breakPct);
       if (!lastCloseHoldsNewRole) return false;
       // Хронология «возврат → удержание» ищется ПОСЛЕДОВАТЕЛЬНО: сначала бар
@@ -438,18 +438,26 @@ export class ZoneVoter {
           for (let i = Math.max(0, zStartCheckIndex ?? 0);
                i < candles.length; i++) {
             const c = candles[i];
-            if (roleOf(z) === 'support' && c.close < band.lo * (1 - params.breakPct)) return i;
+            if (roleOf(z) === 'support' && c.close < band.lo * (1 + params.breakPct)) return i;
             if (roleOf(z) === 'resistance' && c.close > band.hi * (1 + params.breakPct)) return i;
           }
           return Number.POSITIVE_INFINITY;
         };
-        const breakIdxLimit = ownBreak();
+        void ownBreak; // (старая эвристика limit по индексу пробоя заменена ниже)
         let grew = true;
         while (grew) {
           grew = false;
           for (const o of raw) {
             if (!o.bookBand || o === z || sourceKey(o) !== sourceKey(z)) continue;
-            if ((o.bookBand.startCheckIndex ?? 0) > breakIdxLimit) continue;
+            // F2 (аудит task2): в union берутся только полосы, сформированные
+            // СТРОГО РАНЬШЕ z. Полоса, порождённая более поздней свечой (в т.ч.
+            // баром возврата после пробоя), не должна «раздувать» дальнюю
+            // границу union — иначе её граница оказывается выше реального
+            // удержания и полярный flip теряется (регрессия приёмки task2:
+            // полоса бара 52 поднимала union-hi до 102.3, close 101.8 переставал
+            // быть «удержанием» над зоной). Проектное решение о представлении,
+            // не из книг.
+            if ((o.bookBand.startCheckIndex ?? 0) >= (zStartCheckIndex ?? 0)) continue;
             const { startCheckIndex: _s, ...ob } = o.bookBand;
             if (ob.lo <= hi && lo <= ob.hi) {
               if (ob.lo < lo) { lo = ob.lo; grew = true; }
@@ -483,7 +491,7 @@ export class ZoneVoter {
         let coveredByUnbrokenBand = false;
         for (let i = Math.max(0, startCheckIndex ?? 0); i < candles.length; i++) {
           const c = candles[i];
-          if (origRoleOfZ === 'support' && c.close < band.lo * (1 - params.breakPct)) { breakIdx = i; break; }
+          if (origRoleOfZ === 'support' && c.close < band.lo * (1 + params.breakPct)) { breakIdx = i; break; }
           if (origRoleOfZ === 'resistance' && c.close > band.hi * (1 + params.breakPct)) { breakIdx = i; break; }
         }
         if (breakIdx < 0) {
@@ -513,7 +521,7 @@ export class ZoneVoter {
             let oi = -1;
             for (let i = Math.max(0, os); i < candles.length; i++) {
               const c = candles[i];
-              if (roleOf(o) === 'support' && c.close < ob.lo * (1 - params.breakPct)) { oi = i; break; }
+              if (roleOf(o) === 'support' && c.close < ob.lo * (1 + params.breakPct)) { oi = i; break; }
               if (roleOf(o) === 'resistance' && c.close > ob.hi * (1 + params.breakPct)) { oi = i; break; }
             }
             if (oi < 0) continue;
@@ -545,49 +553,28 @@ export class ZoneVoter {
               let oi = -1;
               for (let i = Math.max(0, os); i < candles.length; i++) {
                 const c = candles[i];
-                if (roleOf(o) === 'support' && c.close < ob.lo * (1 - params.breakPct)) { oi = i; break; }
+                if (roleOf(o) === 'support' && c.close < ob.lo * (1 + params.breakPct)) { oi = i; break; }
                 if (roleOf(o) === 'resistance' && c.close > ob.hi * (1 + params.breakPct)) { oi = i; break; }
               }
               if (oi >= 0) continue; // накрывающая сама пробита — это ветка coveredBreak выше
+              // F2 (аудит task2): «общее основание» — дальней край z лежит
+              // ВНУТРИ накрывшей полосы (для поддержки: ob.lo <= band.lo <=
+              // ob.hi; зеркально для сопротивления). Строгое равенство границ
+              // не выполнялось в приёмке task2 (99.5 vs 99.4975 после
+              // кластеризации), из-за чего полоса возврата «оживала» как
+              // поддержка и глушила flip. Проектное решение о связывании
+              // геометрий одного окна; численных порогов книги не задают.
               const sameBase = origRoleOfZ === 'support'
-                ? Math.abs(band.lo - ob.lo) <= 1e-9
-                : Math.abs(band.hi - ob.hi) <= 1e-9;
+                ? (ob.lo - 1e-9 <= band.lo && band.lo <= ob.hi + 1e-9)
+                : (ob.lo - 1e-9 <= band.hi && band.hi <= ob.hi + 1e-9);
               if (sameBase) { coveredBreak = Number.POSITIVE_INFINITY; break; }
             }
           }
           if (coveredBreak < 0) {
-            // F2 (аудит task2): если накрывшая полоса того же источника НЕ
-            // пробита, а её первый выход цены за ГРАНИЦЫ z (в любую сторону —
-            // закрытие выше hi или ниже lo) произошёл ПОЗЖЕ начала проверки z,
-            // то z нежива в исходной роли: цена «держится» уже над ней, и
-            // поддержка более не действует. Для такой z breakIdx = индекс
-            // первого выхода за её собственные границы; полярный flip возможен
-            // только при полном ретесте снизу (возврат + удержание последней
-            // закрытой ценой), иначе зона не выдаётся ни в одной роли.
-            let firstOutside = -1;
-            for (const o of allRaw) {
-              if (!o.bookBand || o === z || sourceKey(o) !== sourceKey(z)) continue;
-              const ob = o.bookBand;
-              if (!(band.lo >= ob.lo - 1e-9 && band.hi <= ob.hi + 1e-9)) continue;
-              let oi = -1;
-              for (let i = Math.max(0, o.bookBand.startCheckIndex ?? 0); i < candles.length; i++) {
-                const c = candles[i];
-                if (roleOf(o) === 'support' && c.close < ob.lo * (1 - params.breakPct)) { oi = i; break; }
-                if (roleOf(o) === 'resistance' && c.close > ob.hi * (1 + params.breakPct)) { oi = i; break; }
-              }
-              if (oi >= 0) continue; // уже учтено в coveredBreak выше
-              for (let i = Math.max(0, startCheckIndex ?? 0); i < candles.length; i++) {
-                const c = candles[i];
-                if (c.close > band.hi + 1e-9 || c.close < band.lo - 1e-9) { firstOutside = i; break; }
-              }
-              if (firstOutside >= 0) break;
-            }
-            if (firstOutside < 0) {
-              (origRoleOfZ === 'support' ? aliveSup : aliveRes).push(z);
-              continue;
-            }
-            breakIdx = firstOutside;
-            coveredByUnbrokenBand = true;
+            // Полоса не пробита (ни сама, ни «связанно» с накрывшей полосой
+            // того же источника) — жива в исходной роли.
+            (origRoleOfZ === 'support' ? aliveSup : aliveRes).push(z);
+            continue;
           } else {
             // Полоса считается пробитой вместе с накрывшей её полосой того же
             // источника: продолжаем обработку с coveredBreak как breakIdx.
@@ -611,7 +598,7 @@ export class ZoneVoter {
           for (let i = breakIdx + 1; i < candles.length; i++) {
             const c = candles[i];
             if (origRoleOfZ === 'support' && c.close > band.hi * (1 + params.breakPct)) { reBreakIdx = i; break; }
-            if (origRoleOfZ === 'resistance' && c.close < band.lo * (1 - params.breakPct)) { reBreakIdx = i; break; }
+            if (origRoleOfZ === 'resistance' && c.close < band.lo * (1 + params.breakPct)) { reBreakIdx = i; break; }
           }
         }
         if (reBreakIdx >= 0) {
