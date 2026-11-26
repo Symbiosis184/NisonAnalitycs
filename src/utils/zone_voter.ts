@@ -410,6 +410,39 @@ export class ZoneVoter {
       return false;
     };
 
+    // F2 (аудит task2): индекс первого бара, закрывшегося за дальней границей
+    // полосы `b` в её исходной роли (поддержка → close < lo*(1+breakPct);
+    // сопротивление → close > hi*(1+breakPct)), начиная с `from`. -1 — пробоя нет.
+    // Только ЗАКРЫТЫЕ бары, поиск строго после формирования (без look-ahead).
+    const firstBreakIdxOf = (b: BookBand, role: 'support' | 'resistance', from: number): number => {
+      for (let i = Math.max(0, from); i < candles.length; i++) {
+        const c = candles[i];
+        if (role === 'support' && c.close < b.lo * (1 + params.breakPct)) return i;
+        if (role === 'resistance' && c.close > b.hi * (1 + params.breakPct)) return i;
+      }
+      return -1;
+    };
+
+    // F2 (аудит task2): «щит» для индекса i — более поздняя полоса o того же
+    // источника, ПОЛНОСТЬЮ накрывающая z и НЕ ПРОБИТАЯ к моменту i (все её
+    // закрытия от os до i включительно держатся внутри неё). Пока закрытия
+    // держатся внутри накрывшей полосы, промежуточный выход за собственную
+    // узкую границу z не считается подтверждённым пробоем (ЗГ гл. 2, «пока
+    // цены закрытия держатся выше поддержки, она остается в силе»). Проектное
+    // решение о связывании геометрий одного окна; численных порогов книги не
+    // задают.
+    const shieldedAt = (o: Zone, ob: BookBand, os: number, i: number): boolean => {
+      for (let j = os; j <= i; j++) {
+        const cc = candles[j];
+        if (cc.close < ob.lo - 1e-9 || cc.close > ob.hi + 1e-9) return false;
+      }
+      void roleOfRef(o);
+      return true;
+    };
+    // Роль полосы o определяем по bookBand.role (ставится источником); fallback —
+    // корзина (origRole), как в roleOf.
+    const roleOfRef = (o: Zone): 'support' | 'resistance' => o.bookBand?.role ?? 'support';
+
     const routeBookZones = (
       raw: Zone[], otherRaw: Zone[], origRole: 'support' | 'resistance',
       aliveSup: Zone[], aliveRes: Zone[], flippedSup: Zone[], flippedRes: Zone[],
@@ -459,36 +492,19 @@ export class ZoneVoter {
           for (let i = Math.max(0, zStartCheckIndex ?? 0);
                i < candles.length; i++) {
             const c = candles[i];
-            // F2 (аудит task2): бары, закрытия которых лежат ВНУТРИ более
-            // поздней непрогнутой полосы того же источника («щит», см.
-            // coveredByLaterBand), не считаются собственным подтверждённым
-            // пробоем — иначе щитовые бары порождовой зоны раньше самой зоны
-            // обрезают breakIdxLimit и union теряет накрывшую полосу.
-            // Проектное решение, не из книг.
-            // F2 (аудит task2): поиск «щита» ведём по обеим корзинам (raw +
-            // otherRaw), т.к. порождённая возвратом полоса может попасть в
-            // другую корзину кластеризацией; роль задаёт источник (roleOf).
-            // Проектное решение, не из книг.
-            const insideLater = [...raw, ...otherRaw].some((o) => {
+            // F2 (аудит task2): бары под «щитом» более поздней полностью
+            // накрывающей полосы того же источника (см. shieldedAt) не
+            // считаются собственным подтверждённым пробоем. Проектное
+            // решение, не из книг.
+            const shielded = [...raw, ...otherRaw].some((o) => {
               if (!o.bookBand || o === z || sourceKey(o) !== sourceKey(z)) return false;
               const os = o.bookBand.startCheckIndex ?? 0;
               if (os <= (zStartCheckIndex ?? 0) || i < os) return false;
               const ob = o.bookBand;
-              // F2 (аудит task2): «щит» для собственного пробоя — только
-              // ПОЛНОСТЬЮ накрывающая полоса (зеркало coveredByLaterBand):
-              // частично перекрывающая полоса не отменяет закрытие за
-              // собственной границей. Проектное решение, не из книг.
               if (!(ob.lo - 1e-9 <= band.lo && band.hi <= ob.hi + 1e-9)) return false;
-              let oi = -1;
-              for (let j = Math.max(0, os); j < candles.length; j++) {
-                const cc = candles[j];
-                if (roleOf(o) === 'support' && cc.close < ob.lo * (1 + params.breakPct)) { oi = j; break; }
-                if (roleOf(o) === 'resistance' && cc.close > ob.hi * (1 + params.breakPct)) { oi = j; break; }
-              }
-              if (oi >= 0) return false;
-              return c.close >= ob.lo - 1e-9 && c.close <= ob.hi + 1e-9;
+              return shieldedAt(o, ob, os, i);
             });
-            if (insideLater) continue;
+            if (shielded) continue;
             if (roleOf(z) === 'support' && c.close < band.lo * (1 + params.breakPct)) return i;
             if (roleOf(z) === 'resistance' && c.close > band.hi * (1 + params.breakPct)) return i;
           }
