@@ -349,6 +349,7 @@ export class ZoneVoter {
      */
     const polarityReturnHeld = (
       band: BookBand, breakIdx: number, polRole: 'support' | 'resistance',
+      startCheckIndexBound: number,
     ): boolean => {
       if (lastCandle === undefined) return false;
       // F2: последнее закрытие должно держать сторону новой роли (валидность
@@ -365,7 +366,12 @@ export class ZoneVoter {
       // реальные развороты (касание снизу с закрытием внутри полосы, затем
       // отрыв) не проходили проверку (регрессия приёмки F2).
       let returnSeen = false;
-      for (let i = breakIdx + 1; i < candles.length; i++) {
+      // Окно поиска возврата/удержания — не дальше lookback-истории полос:
+      // bars за пределами окна наблюдения источника не считаются (ср.
+      // addPolarityLevels, где поиск ограничен окном свинга). Проектное
+      // ограничение области поиска, не из книг.
+      const searchEnd = Math.min(candles.length, startCheckIndexBound + params.lookback);
+      for (let i = breakIdx + 1; i < searchEnd; i++) {
         const c = candles[i];
         const touched = c.high >= band.lo && c.low <= band.hi;
         // Бар может быть ОДНОВРЕМЕННО баром возврата (касание полосы) и баром
@@ -387,17 +393,26 @@ export class ZoneVoter {
       raw: Zone[], origRole: 'support' | 'resistance',
       alive: Zone[], flipped: Zone[],
     ) => {
-      // Аудит F2 (приёмка): если несколько книжных полос одной роли пересекаются
-      // (например, полосы длинных тел разных свечей с общим основанием), то
-      // «возврат/удержание» после пробоя проверяется по ОБЪЕДИНЁННОЙ полосе
-      // [min lo … max hi] — иначе более узкая вторая полоса не находит бар
-      // удержания (её дальняя граница лежит внутри тела возвратного бара) и
-      // обе зоны теряются. Проектное решение о представлении, не из книг.
-      const bandUnion = (band: BookBand): [number, number] => {
+      // Аудит F2 (приёмка): если несколько КНИЖНЫХ ПОЛОС ОДНОГО ИСТОЧНИКА
+      // пересекаются (например, полосы длинных тел разных свечей с общим
+      // основанием), то «возврат/удержание» после пробоя проверяется по
+      // ОБЪЕДИНЁННОЙ полосе [min lo … max hi] — иначе более узкая вторая
+      // полоса не находит бар удержания (её дальняя граница лежит внутри
+      // тела возвратного бара) и обе зоны теряются. Проектное решение о
+      // представлении, не из книг. Окна (source 'window') в объединение НЕ
+      // входят: их статус fill/broken считается отдельно в gaps.ts (ЯС гл. 7),
+      // и поглощение окна длинным телом ложно помечало бы его пробитым
+      // (регрессия теста «окно вниз — сопротивление»).
+      const sameSource = (a: Zone, b: Zone): boolean => {
+        const sa = a.sources[0];
+        const sb = b.sources[0];
+        return sa !== undefined && sa === sb;
+      };
+      const bandUnion = (z: Zone, band: BookBand): [number, number] => {
         let lo = band.lo;
         let hi = band.hi;
         for (const o of raw) {
-          if (!o.bookBand || o === undefined) continue;
+          if (!o.bookBand || o === z || !sameSource(o, z)) continue;
           const { startCheckIndex: _s, ...ob } = o.bookBand;
           if (ob.lo <= band.hi && band.lo <= ob.hi) {
             lo = Math.min(lo, ob.lo);
@@ -409,7 +424,7 @@ export class ZoneVoter {
       for (const z of raw) {
         if (!z.bookBand) continue;
         const { startCheckIndex, ...band } = z.bookBand;
-        const [unionLo, unionHi] = bandUnion(band);
+        const [unionLo, unionHi] = bandUnion(z, band);
         // Индекс ПЕРВОГО закрытия за дальней границей (чтобы требовать
         // возврата именно ПОСЛЕ пробоя):
         let breakIdx = -1;
@@ -443,7 +458,7 @@ export class ZoneVoter {
         const polRole: 'support' | 'resistance' = origRole === 'support' ? 'resistance' : 'support';
         // Проверка возврата/удержания — по объединённой полосе (см. bandUnion).
         const unionBand: BookBand = { ...band, lo: unionLo, hi: unionHi };
-        if (polarityReturnHeld(unionBand, breakIdx, polRole)) {
+        if (polarityReturnHeld(unionBand, breakIdx, polRole, startCheckIndex ?? 0)) {
           // F2: flip выдан только если ПОСЛЕДНЕЕ закрытие удержало новую роль
           // (проверка внутри polarityReturnHeld); иначе зона не выдаётся ни в
           // одной роли — минимум по аудиту.
