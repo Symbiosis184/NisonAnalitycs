@@ -394,6 +394,27 @@ export class ZoneVoter {
           if (origRole === 'resistance' && c.close > band.hi * (1 + params.breakPct)) { breakIdx = i; break; }
         }
         if (breakIdx < 0) { alive.push(z); continue; }
+        // F2 (ЗГ гл. 2, «пока цены закрытия держатся выше поддержки, она
+        // остается в силе»; ЯС гл. 11 — полярность симметрична): ПОЛНОЕ
+        // решение — повторная хронология с обратным flip. Если ПОСЛЕ первого
+        // подтверждённого пробоя нашёлся второй пробой в обратную сторону
+        // (закрытие за ПРОТИВОПОЛОЖНОЙ дальней границей полосы), полоса снова
+        // валидна в ИСХОДНОЙ роли — обратный flip разрешён той же книжной
+        // логикой симметричной полярности. Поиск второго пробоя — строго после
+        // бара первого пробоя, только по ЗАКРЫТЫМ барам (без look-ahead).
+        let reBreakIdx = -1;
+        for (let i = breakIdx + 1; i < candles.length; i++) {
+          const c = candles[i];
+          if (origRole === 'support' && c.close > band.hi * (1 + params.breakPct)) { reBreakIdx = i; break; }
+          if (origRole === 'resistance' && c.close < band.lo * (1 - params.breakPct)) { reBreakIdx = i; break; }
+        }
+        if (reBreakIdx >= 0) {
+          // Обратный flip: зона возвращается в исходную роль. Демонстрация
+          // «пробой → возврат → удержание» для неё уже есть (второй пробой и
+          // есть удержание на исходной стороне), поэтому зона жива.
+          alive.push(z);
+          continue;
+        }
         const polRole: 'support' | 'resistance' = origRole === 'support' ? 'resistance' : 'support';
         if (polarityReturnHeld(band, breakIdx, polRole)) {
           // F2: flip выдан только если ПОСЛЕДНЕЕ закрытие удержало новую роль
