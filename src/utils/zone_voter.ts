@@ -125,6 +125,28 @@ interface ZoneParams {
   dojiZones?: boolean;
 }
 
+/**
+ * Мелочь (аудит, не из книг): включатель дожи-зон. В браузерной сборке
+ * process.env недоступен, поэтому читаем и Vite-переменную import.meta.env,
+ * и явный программный override (для тестов/библиотечного использования).
+ */
+let dojiZonesOverride: boolean | undefined;
+export function setDojiZonesOverride(enabled: boolean | undefined): void {
+  dojiZonesOverride = enabled;
+}
+function readDojiZonesFlag(): boolean {
+  if (dojiZonesOverride !== undefined) return dojiZonesOverride;
+  try {
+    if (typeof process !== 'undefined' && process.env?.NISON_DOJI_ZONES === '1') return true;
+  } catch { /* process недоступен в браузере */ }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const meta: any = import.meta;
+    if (meta?.env?.VITE_NISON_DOJI_ZONES === '1') return true;
+  } catch { /* import.meta недоступно (CJS/тест-раннер) */ }
+  return false;
+}
+
 const ZONE_PARAMS: Record<TimeframeKey, ZoneParams> = {
   scalp:    { tolerance: 0.002, breakPct: 0.002, lookback: 200, swingSpan: 2 },
   intraday: { tolerance: 0.003, breakPct: 0.003, lookback: 180, swingSpan: 3 },
@@ -194,8 +216,10 @@ export class ZoneVoter {
     // цене, а последний закрытый бар уже ниже неё. Настройка проекта, не из книг.
     const lastClose = lastCandle?.close ?? price;
     // ЗАДАЧА 8: дожи как источник зон — по умолчанию ВЫКЛЮЧЕН; включается
-    // только явным флагом среды (проектный способ активации, не из книг).
-    if (typeof process !== 'undefined' && process.env?.NISON_DOJI_ZONES === '1') {
+    // только явным флагом (проектный способ активации, не из книг).
+    // Мелочь (аудит): вместо голого process.env (не работает в браузере) —
+    // readDojiZonesFlag(): import.meta.env / программный override / process.env.
+    if (readDojiZonesFlag()) {
       params.dojiZones = true;
     }
     const supMap = new Map<number, ZoneClusterData>();
@@ -317,13 +341,23 @@ export class ZoneVoter {
         ? lastCandle.close >= band.lo * (1 - params.breakPct)
         : lastCandle.close <= band.hi * (1 + params.breakPct);
       if (!lastCloseHoldsNewRole) return false;
+      // Хронология «возврат → удержание» ищется ПОСЛЕДОВАТЕЛЬНО: сначала бар
+      // возврата (high коснулся полосы), затем (не раньше) бар удержания с
+      // закрытием за дальней границей. Строгая хронология Нисона (ЯС гл. 11,
+      // «сначала пробой, затем возврат»; ср. addPolarityLevels: returnIndex >
+      // breakIndex). Раньше оба условия требовались от ОДНОГО бара — редкие
+      // реальные развороты (касание снизу с закрытием внутри полосы, затем
+      // отрыв) не проходили проверку (регрессия приёмки F2).
+      let returnSeen = false;
       for (let i = breakIdx + 1; i < candles.length; i++) {
         const c = candles[i];
-        if (polRole === 'support') {
-          if (c.high >= band.lo && c.low <= band.hi && c.close > band.hi) return true;
-        } else {
-          if (c.high >= band.lo && c.low <= band.hi && c.close < band.lo) return true;
+        const touched = c.high >= band.lo && c.low <= band.hi;
+        if (!returnSeen) {
+          if (touched) returnSeen = true;
+          continue;
         }
+        if (polRole === 'support' && c.close > band.hi) return true;
+        if (polRole === 'resistance' && c.close < band.lo) return true;
       }
       return false;
     };
@@ -364,8 +398,17 @@ export class ZoneVoter {
 
     const bookSupportAlive: Zone[] = [];
     const bookResistanceAlive: Zone[] = [];
-    routeBookZones(bookSupRaw, 'support', bookSupportAlive, bookResistanceAlive);
-    routeBookZones(bookResRaw, 'resistance', bookResistanceAlive, bookSupportAlive);
+    // F2 (аудит): flip-зоны собираем в ОТДЕЛЬНЫЕ корзины и добавляем к
+    // allSupport/allResistance ПОСЛЕ фильтра significant. Причина: у flipped-
+    // зоны reasons расширены меткой полярности, и если прогнать её через
+    // dedupeZones вместе с исходной полосой той же цены, текстовый дедуп
+    // разрезал бы flip на отдельную (неполную) зону — приёмка F2 («зона НЕ
+    // выдаётся как сопротивление» при нарушении удержания последним закрытием)
+    // перестала бы выполняться. Проектное решение о представлении, не из книг.
+    const bookSupportFlipped: Zone[] = [];
+    const bookResistanceFlipped: Zone[] = [];
+    routeBookZones(bookSupRaw, 'support', bookSupportAlive, bookResistanceFlipped);
+    routeBookZones(bookResRaw, 'resistance', bookSupportFlipped, bookResistanceAlive);
 
     // ЗАДАЧА 3: для НЕкнижных зон роль остаётся корзиной источника + позиция
     // последней ЗАКРЫТОЙ цены относительно полосы (не live-price из аргумента).
@@ -390,14 +433,12 @@ export class ZoneVoter {
       ...nonBookRes.filter((z) => inOwnRole(z, 'resistance')),
     ];
 
-    const support = allSupport
-      .filter(significant)
+    const support = [...allSupport.filter(significant), ...bookSupportFlipped]
       .sort(significance)
       .slice(0, this.MAX_ZONES_PER_SIDE)
       .sort((a, b) => b.level - a.level);
 
-    const resistance = allResistance
-      .filter(significant)
+    const resistance = [...allResistance.filter(significant), ...bookResistanceFlipped]
       .sort(significance)
       .slice(0, this.MAX_ZONES_PER_SIDE)
       .sort((a, b) => a.level - b.level);
@@ -738,6 +779,10 @@ export class ZoneVoter {
           {
             source: 'doji', halfWidth: (hi - lo) / 2, formedAt: c.time,
             startCheckIndex: i + 1, bookBand: { lo, hi, role: 'support' },
+            // F6 (аудит): дожи — книжный источник с явной геометрией (bookBand);
+            // он тоже не должен поглощаться свинг-кластерами (как long-body).
+            // Проектное решение, не из книг.
+            keepSeparate: true, mergeIntoExact: true,
           },
         );
       } else {
@@ -751,6 +796,8 @@ export class ZoneVoter {
           {
             source: 'doji', halfWidth: (hi - lo) / 2, formedAt: c.time,
             startCheckIndex: i + 1, bookBand: { lo, hi, role: 'resistance' },
+            // F6 (аудит): см. ветвь поддержки — защита книжной геометрии дожи.
+            keepSeparate: true, mergeIntoExact: true,
           },
         );
       }
@@ -817,6 +864,10 @@ export class ZoneVoter {
               // Проектное решение: книжная полоса длинного тела не сливается со
               // свинг-кластерами — иначе её геометрия [low…mid] теряется.
               keepSeparate: true,
+              // F2 (аудит): если в supMap уже есть уровень с тем же центром
+              // (например, полярный flip того же тела из addPolarityLevels),
+              // полосы объединяются покрытием [min lo … max hi], а не теряются.
+              mergeIntoExact: true,
             },
           );
         } else {
@@ -830,6 +881,8 @@ export class ZoneVoter {
               source: 'long-body', halfWidth: (hi - lo) / 2, formedAt: c.time,
               startCheckIndex, bookBand: { lo, hi, role: 'resistance' },
               keepSeparate: true,
+              // F2 (аудит): см. ветвь поддержки — объединение полос по совпадению центра.
+              mergeIntoExact: true,
             },
           );
         }
@@ -966,6 +1019,9 @@ export class ZoneVoter {
           source: 'window', halfWidth, formedAt: gap.time,
           startCheckIndex: startCheckIdx >= 0 ? startCheckIdx + 1 : 0,
           bookBand: { lo: gap.bottom, hi: gap.top, role: isUp ? 'support' : 'resistance' },
+          // F6 (аудит): окно — книжный источник с явной геометрией; его полоса
+          // [bottom…top] не должна размываться свинг-кластерами. Проектное решение.
+          keepSeparate: true, mergeIntoExact: true,
         },
       );
     }

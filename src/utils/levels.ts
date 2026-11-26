@@ -99,6 +99,15 @@ export interface ZoneClusterOptions {
   bookBand?: BookBandGeom;
   /** Не сливать с другими уровнями (см. ZoneClusterData.keepSeparate). */
   keepSeparate?: boolean;
+  /**
+   * F2 (аудит): при совпадении центра с существующим кластером уровень НЕ
+   * вливается в него, а объединяет книжные полосы: band = покрытие
+   * [min(lo) … max(hi)] (для полос одной роли — это точная книжная зона
+   * «от середины длинного тела до основания свечи, включая нижнюю тень»,
+   * ЗГ гл. 2: поддержка на середине ИЛИ в основании — одна полоса между ними).
+   * Проектное решение о представлении двух уровней одним кластером, не из книг.
+   */
+  mergeIntoExact?: boolean;
   /** ЗАДАЧА 9: суммарный относительный объём касаний (формула — проектная). */
   touchVolumeSum?: number;
 }
@@ -128,6 +137,54 @@ export function addLevelToMap(
   // вливается в чужой кластер и всегда создаёт собственный (точное соответствие
   // геометрии источника; проектное решение о кластеризации, не из книг).
   const hit = options.keepSeparate ? undefined : findClusterZone(map, level, tolerance);
+  // F2 (аудит): mergeIntoExact — уровень с точной книжной геометрией. При
+  // совпадении ЦЕНТРА с существующим кластером полосы объединяются покрытием
+  // [min(lo) … max(hi)] вместо «первая полоса остаётся, вторая теряется»
+  // (старый инкрементальный путь bookBand === undefined → присвоить). Это
+  // нужно, когда одна и та же бар-формация порождает два уровня в один центр
+  // (например, long-body зона и полярный flip того же тела) — иначе вторая
+  // полоса молча отбрасывалась и последующая маршрутизация F2 работала с
+  // неполной геометрией. Проектное решение о представлении, не из книг.
+  if (hit === undefined && options.mergeIntoExact && options.bookBand) {
+    const exact = map.get(level);
+    if (exact !== undefined) {
+      const data = exact;
+      data.reasons.push(reason);
+      data.touches += touchesCount ?? 1;
+      data.lastTouch = Math.max(data.lastTouch, touchTime);
+      if (options.source && !data.sources?.includes(options.source)) {
+        data.sources = [...(data.sources ?? []), options.source];
+      }
+      if (options.startCheckIndex !== undefined) {
+        data.startCheckIndex = Math.min(
+          data.startCheckIndex ?? options.startCheckIndex, options.startCheckIndex);
+      }
+      if (data.bookBand) {
+        // Объединение полос: покрытие. Роли у объединяемых полос одинаковы
+        // (вызовы идут в корзину одной роли); при неожиданном конфликте
+        // сохраняем роль существующей полосы (проектное решение).
+        data.bookBand = {
+          lo: Math.min(data.bookBand.lo, options.bookBand.lo),
+          hi: Math.max(data.bookBand.hi, options.bookBand.hi),
+          role: data.bookBand.role,
+        };
+        data.halfWidth = (data.bookBand.hi - data.bookBand.lo) / 2;
+      } else {
+        data.bookBand = options.bookBand;
+        if (options.halfWidth !== undefined) {
+          data.halfWidth = Math.max(data.halfWidth ?? 0, options.halfWidth);
+        }
+      }
+      if (options.formedAt !== undefined) {
+        data.formedAt = Math.min(data.formedAt ?? options.formedAt, options.formedAt);
+      }
+      if (options.touchVolumeSum !== undefined) {
+        data.touchVolumeSum = (data.touchVolumeSum ?? 0) + options.touchVolumeSum;
+      }
+      if (options.keepSeparate) data.keepSeparate = true;
+      return true;
+    }
+  }
   if (hit !== undefined) {
     const data = map.get(hit)!;
     data.reasons.push(reason);
