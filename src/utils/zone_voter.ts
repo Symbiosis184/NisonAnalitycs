@@ -349,7 +349,7 @@ export class ZoneVoter {
      */
     const polarityReturnHeld = (
       band: BookBand, breakIdx: number, polRole: 'support' | 'resistance',
-      startCheckIndexBound: number,
+      startCheckIndexBound: number, farEdge?: number,
     ): boolean => {
       if (lastCandle === undefined) return false;
       // F2: последнее закрытие должно держать сторону новой роли (валидность
@@ -371,9 +371,23 @@ export class ZoneVoter {
       // addPolarityLevels, где поиск ограничен окном свинга). Проектное
       // ограничение области поиска, не из книг.
       const searchEnd = Math.min(candles.length, startCheckIndexBound + params.lookback);
+      // F2 (аудит task2): бар возврата должен коснуться ДАЛЬНЕЙ ГРАНИЦЫ
+      // исходной (пробитой) роли полосы: для пробитой поддержки тест
+      // идёт снизу вверх по её верхней границе (ЗГ гл. 2: откат встречает
+      // поддержку «на уровне середины длинного белого тела либо в основании»;
+      // после потери середины повторный тест — именно потерянной границей).
+      // Касание произвольной точки старой полосы без выхода к её дальней
+      // границе возвратом не считается. farEdge передаётся вызывающим кодом
+      // (собственная границя полосы z, не union). Проектная операционализация,
+      // численных порогов книги не задают.
+      const farTouch = farEdge ?? (polRole === 'resistance' ? band.hi : band.lo);
       for (let i = breakIdx + 1; i < searchEnd; i++) {
         const c = candles[i];
-        const touched = c.high >= band.lo && c.low <= band.hi;
+        // Касание дальней границы исходной роли (для пробитой поддержки —
+        // тест снизу вверх по её верхней границе hi) ИЛИ пересечение полосы.
+        const touched = polRole === 'resistance'
+          ? c.high >= farTouch
+          : c.low <= farTouch;
         // Бар может быть ОДНОВРЕМЕННО баром возврата (касание полосы) и баром
         // удержания (закрытие за дальней границей) — строгая последовательность
         // «сначала отдельный касательный бар, затем отдельный удерживающий»
@@ -382,8 +396,15 @@ export class ZoneVoter {
         // (хронология «пробой → возврат/удержание» сохраняется).
         if (!returnSeen && touched) returnSeen = true;
         if (returnSeen) {
-          if (polRole === 'support' && c.close > band.hi) return true;
-          if (polRole === 'resistance' && c.close < band.lo) return true;
+          // F2 (аудит task2): «удержание» проверяется по ДАЛЬНЕЙ ГРАНИЦЕ
+          // собственной полосы (farEdge), а не по объединённой: соседняя
+          // полоса того же источника может раздуть union-границу выше реального
+          // удержания (регрессия: close 101.8 не считался удержанием из-за
+          // union-верха 102.3). Проектное решение о представлении, не из книг.
+          const holdHi = farEdge ?? band.hi;
+          const holdLo = farEdge ?? band.lo;
+          if (polRole === 'support' && c.close > holdHi) return true;
+          if (polRole === 'resistance' && c.close < holdLo) return true;
         }
       }
       return false;
@@ -438,6 +459,36 @@ export class ZoneVoter {
           for (let i = Math.max(0, zStartCheckIndex ?? 0);
                i < candles.length; i++) {
             const c = candles[i];
+            // F2 (аудит task2): бары, закрытия которых лежат ВНУТРИ более
+            // поздней непрогнутой полосы того же источника («щит», см.
+            // coveredByLaterBand), не считаются собственным подтверждённым
+            // пробоем — иначе щитовые бары порождовой зоны раньше самой зоны
+            // обрезают breakIdxLimit и union теряет накрывшую полосу.
+            // Проектное решение, не из книг.
+            // F2 (аудит task2): поиск «щита» ведём по обеим корзинам (raw +
+            // otherRaw), т.к. порождённая возвратом полоса может попасть в
+            // другую корзину кластеризацией; роль задаёт источник (roleOf).
+            // Проектное решение, не из книг.
+            const insideLater = [...raw, ...otherRaw].some((o) => {
+              if (!o.bookBand || o === z || sourceKey(o) !== sourceKey(z)) return false;
+              const os = o.bookBand.startCheckIndex ?? 0;
+              if (os <= (zStartCheckIndex ?? 0) || i < os) return false;
+              const ob = o.bookBand;
+              // F2 (аудит task2): «щит» для собственного пробоя — только
+              // ПОЛНОСТЬЮ накрывающая полоса (зеркало coveredByLaterBand):
+              // частично перекрывающая полоса не отменяет закрытие за
+              // собственной границей. Проектное решение, не из книг.
+              if (!(ob.lo - 1e-9 <= band.lo && band.hi <= ob.hi + 1e-9)) return false;
+              let oi = -1;
+              for (let j = Math.max(0, os); j < candles.length; j++) {
+                const cc = candles[j];
+                if (roleOf(o) === 'support' && cc.close < ob.lo * (1 + params.breakPct)) { oi = j; break; }
+                if (roleOf(o) === 'resistance' && cc.close > ob.hi * (1 + params.breakPct)) { oi = j; break; }
+              }
+              if (oi >= 0) return false;
+              return c.close >= ob.lo - 1e-9 && c.close <= ob.hi + 1e-9;
+            });
+            if (insideLater) continue;
             if (roleOf(z) === 'support' && c.close < band.lo * (1 + params.breakPct)) return i;
             if (roleOf(z) === 'resistance' && c.close > band.hi * (1 + params.breakPct)) return i;
           }
@@ -621,7 +672,7 @@ export class ZoneVoter {
               const sameBase = origRoleOfZ === 'support'
                 ? (ob.lo - 1e-9 <= band.lo && band.lo <= ob.hi + 1e-9)
                 : (ob.lo - 1e-9 <= band.hi && band.hi <= ob.hi + 1e-9);
-              if (sameBase) { coveredBreak = Number.POSITIVE_INFINITY; break; }
+              if (sameBase) { coveredBreak = os + 1; break; }
             }
           }
           if (coveredBreak < 0) {
@@ -629,6 +680,7 @@ export class ZoneVoter {
             // того же источника) — жива в исходной роли.
             (origRoleOfZ === 'support' ? aliveSup : aliveRes).push(z);
             continue;
+
           } else {
             // Полоса считается пробитой вместе с накрывшей её полосой того же
             // источника: продолжаем обработку с coveredBreak как breakIdx.
@@ -648,7 +700,7 @@ export class ZoneVoter {
         // нежива из-за перекрывающей полосы того же источника, а не из-за
         // собственного закрытия за границей) обратный flip по СВОЕЙ границе
         // не ищем — хронология привязана к накрывшей полосе.
-        if (Number.isFinite(breakIdx)) {
+        if (Number.isFinite(breakIdx) && breakIdx < candles.length) {
           for (let i = breakIdx + 1; i < candles.length; i++) {
             const c = candles[i];
             if (origRoleOfZ === 'support' && c.close > band.hi * (1 + params.breakPct)) { reBreakIdx = i; break; }
@@ -665,7 +717,8 @@ export class ZoneVoter {
         const polRole: 'support' | 'resistance' = origRoleOfZ === 'support' ? 'resistance' : 'support';
         // Проверка возврата/удержания — по объединённой полосе (см. bandUnion).
         const unionBand: BookBand = { ...band, lo: unionLo, hi: unionHi };
-        if (polarityReturnHeld(unionBand, breakIdx, polRole, startCheckIndex ?? 0)) {
+        if (polarityReturnHeld(unionBand, breakIdx, polRole, startCheckIndex ?? 0,
+              origRoleOfZ === 'support' ? band.hi : band.lo)) {
           // F2: flip выдан только если ПОСЛЕДНЕЕ закрытие удержало новую роль
           // (проверка внутри polarityReturnHeld); иначе зона не выдаётся ни в
           // одной роли — минимум по аудиту.
