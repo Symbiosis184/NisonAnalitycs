@@ -246,6 +246,22 @@ export class ZoneVoter {
       return atrVal > 0 ? Math.min(base, atrVal * 2) : base;
     };
 
+    // ПОРЯДОК ИСТОЧНИКОВ (аудит F1/F6): сначала добавляются КНИЖНЫЕ полосы с
+    // keepSeparate (long-body, окно), затем точечные источники (свинги,
+    // полярность, MA, климакс). Так входящий книжный уровень не может слиться в
+    // уже существующий свинг-кластер (F6 защищает обе стороны), а точечные
+    // уровни, напротив, могут усиливаться в книжной полосе — это и есть
+    // confluence без искажения книжной геометрии. Нумерация комментариев ниже
+    // отражает новый порядок; логика самих источников не менялась.
+
+    // 5. Длинное тело — одна зона [середина … основание/вершина свечи] (ЗГ гл. 2)
+    this.addLongBodyLevels(candles, supMap, resMap, params);
+
+    // 8. Нисон: окно — будущая зона поддержки/сопротивления. Сохраняем его
+    // фактические границы; закрытие за дальней границей отменяет сценарий.
+    // (bookBand-полоса, идёт вместе с длинным телом до точечных источников.)
+    this.addWindowLevels(candles, supMap, resMap, params.tolerance, market);
+
     // 1. Касательная классификация: уровень + число касаний ценой после его образования
     this.addTouchBasedLevels(price, candles, supMap, resMap, params, zoneHalfWidth);
 
@@ -258,18 +274,13 @@ export class ZoneVoter {
     // 4. Объёмные климасы (главы 15)
     this.addVolumeClimaxLevels(candles, supMap, resMap, params.tolerance);
 
-    // 5. Длинное тело — одна зона [середина … основание/вершина свечи] (ЗГ гл. 2)
-    this.addLongBodyLevels(candles, supMap, resMap, params);
-
     // 6. Психологические круглые числа
     this.addRoundNumbers(price, supMap, resMap, params.tolerance, lastCandle?.time ?? 0);
 
     // 7. Уровни Фибоначчи (гл. 12)
     this.addFibonacciLevels(candles, supMap, resMap, params);
 
-    // 8. Нисон: окно — будущая зона поддержки/сопротивления. Сохраняем его
-    // фактические границы; закрытие за дальней границей отменяет сценарий.
-    this.addWindowLevels(candles, supMap, resMap, params.tolerance, market);
+    // (8. Окно — вызывается выше, вместе с книжными полосами long-body.)
 
     // 9. ЗАДАЧА 8 (по умолчанию выключена): дожи как зоны S/R вблизи значимых
     // вершин/оснований (ЯС гл. 8, рис. 8.17–8.18; ЗГ гл. 2, рис. 2.37).
