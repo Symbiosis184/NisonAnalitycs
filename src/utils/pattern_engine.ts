@@ -159,6 +159,23 @@ export class PatternDetector {
   }
 
   /**
+   * PR #8 (REBASE FIX): направление движения может задавать сама модель —
+   * импульсная свеча f и финальная подтверждённая свеча l. Для «трёх методов»
+   * это канон Нисона гл. 7: длинная медвежья свеча → пауза → пробой вниз.
+   * Требуем оба тела медвежьими и существенное суммарное снижение (l.close
+   * заметно ниже стартовой точки f), чтобы не принимать флэт за тренд.
+   */
+  private static declineWithinFormation(f: Candle | undefined, l: Candle | undefined): boolean {
+    if (!f || !l) return false;
+    if (!f.isBearish || !l.isBearish) return false;
+    // Снижение закрытия относительно открытия импульса — не менее среднего
+    // тела двух импульсных свечей (самоподдерживающееся движение модели).
+    const drop = f.open - l.close;
+    const avgBody = (f.body + l.body) / 2;
+    return drop > 0 && drop >= avgBody;
+  }
+
+  /**
    * P2-6: контекст для разворотных моделей основания с длинной
    * формацией (лестничное дно — 5 свечей). При достаточной предыстории
    * требует подтверждённый спад как precededByDecline; при короткой истории
@@ -1054,7 +1071,14 @@ export class PatternDetector {
     const small = candles.slice(candles.length - 4, candles.length - 1);
     const l = candles[candles.length - 1];
     // PR #8 (REBASE FIX): зеркально — контекст включает импульсную свечу f.
-    if (!this.precededByDecline(candles.slice(0, -4))) return { found: false, name: '' };
+    // Дополнительно допускаем случай, когда сама модель формирует нисходящее
+    // движение: последняя подтверждённая формация над паузой — медвежья
+    // (гл. 7 ЯС: «три ступени вниз» продолжаются после падения; на короткой
+    // предыстории swing/MA не определяют направление, но импульс f и l — бычьи
+    // свечи модели уже задают его).
+    if (!this.precededByDecline(candles.slice(0, -4)) && !this.declineWithinFormation(f, l)) {
+      return { found: false, name: '' };
+    }
 
     // P2-1 (гл. «Построение свечей» ЯС): зеркально восходящим трём — относительная длина тела.
     const winFT = this.relWindow(candles, candles.length - 5);
