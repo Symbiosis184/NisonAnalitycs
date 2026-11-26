@@ -391,8 +391,16 @@ export class ZoneVoter {
 
     const routeBookZones = (
       raw: Zone[], origRole: 'support' | 'resistance',
-      alive: Zone[], flipped: Zone[],
+      aliveSup: Zone[], aliveRes: Zone[], flippedSup: Zone[], flippedRes: Zone[],
     ) => {
+      // F1 (аудит): роль книжной полосы задаётся ИСТОЧНИКОМ (белая свеча →
+      // поддержка, чёрная → сопротивление; см. addLongBodyLevels), а не
+      // корзиной supMap/resMap, в которую её положила кластеризация уровней.
+      // Корзина — лишь временное хранилище: если бы маршрутизация шла по
+      // корзине, чёрная длинная свеча (сопротивление по ЗГ гл. 2) попадала бы
+      // в «support-ветку» при кластерном слиянии и терялась. Полосы без явной
+      // роли (старые данные) идут по корзине (origRole) — обратная совместимость.
+      const roleOf = (z: Zone): 'support' | 'resistance' => z.bookBand?.role ?? origRole;
       // Аудит F2 (приёмка): если несколько КНИЖНЫХ ПОЛОС ОДНОГО ИСТОЧНИКА
       // пересекаются (например, полосы длинных тел разных свечей с общим
       // основанием), то «возврат/удержание» после пробоя проверяется по
@@ -417,11 +425,31 @@ export class ZoneVoter {
       const bandUnion = (z: Zone, band: BookBand): [number, number] => {
         let lo = band.lo;
         let hi = band.hi;
+        // F2 (аудит): в объединение берутся только полосы, сформированные НЕ
+        // ПОЗЖЕ первого закрытия за собственной дальней границей (пробоя).
+        // Полоса, порождённая баром ПОСЛЕ пробоя (например, новая long-body
+        // свеча, возникшая при возврате цены к уже пробитой зоне), не должна
+        // «раздувать» дальнюю границу union — иначе её верхняя граница
+        // поднимается выше реального удержания, и полярный flip теряется
+        // (регрессия приёмки F2/task2: close 101.8 > 101.5 переставало быть
+        // «удержанием» из-за union-границы 102.3 от бара возврата).
+        // Проектное решение о представлении, не из книг.
+        const ownBreak = (): number => {
+          for (let i = Math.max(0, band.startCheckIndex ?? z.bookBand?.startCheckIndex ?? 0);
+               i < candles.length; i++) {
+            const c = candles[i];
+            if (roleOf(z) === 'support' && c.close < band.lo * (1 - params.breakPct)) return i;
+            if (roleOf(z) === 'resistance' && c.close > band.hi * (1 + params.breakPct)) return i;
+          }
+          return Number.POSITIVE_INFINITY;
+        };
+        const breakIdxLimit = ownBreak();
         let grew = true;
         while (grew) {
           grew = false;
           for (const o of raw) {
             if (!o.bookBand || o === z || sourceKey(o) !== sourceKey(z)) continue;
+            if ((o.bookBand.startCheckIndex ?? 0) > breakIdxLimit) continue;
             const { startCheckIndex: _s, ...ob } = o.bookBand;
             if (ob.lo <= hi && lo <= ob.hi) {
               if (ob.lo < lo) { lo = ob.lo; grew = true; }
@@ -434,6 +462,7 @@ export class ZoneVoter {
       for (const z of raw) {
         if (!z.bookBand) continue;
         const { startCheckIndex, ...band } = z.bookBand;
+        const origRoleOfZ = roleOf(z);
         const [unionLo, unionHi] = bandUnion(z, band);
         // Индекс ПЕРВОГО закрытия за дальней границей СОБСТВЕННОЙ полосы
         // (чтобы требовать возврата именно ПОСЛЕ пробоя). Граница — своя,
@@ -447,10 +476,10 @@ export class ZoneVoter {
         let breakIdx = -1;
         for (let i = Math.max(0, startCheckIndex ?? 0); i < candles.length; i++) {
           const c = candles[i];
-          if (origRole === 'support' && c.close < band.lo * (1 - params.breakPct)) { breakIdx = i; break; }
-          if (origRole === 'resistance' && c.close > band.hi * (1 + params.breakPct)) { breakIdx = i; break; }
+          if (origRoleOfZ === 'support' && c.close < band.lo * (1 - params.breakPct)) { breakIdx = i; break; }
+          if (origRoleOfZ === 'resistance' && c.close > band.hi * (1 + params.breakPct)) { breakIdx = i; break; }
         }
-        if (breakIdx < 0) { alive.push(z); continue; }
+        if (breakIdx < 0) { (origRoleOfZ === 'support' ? aliveSup : aliveRes).push(z); continue; }
         // F2 (ЗГ гл. 2, «пока цены закрытия держатся выше поддержки, она
         // остается в силе»; ЯС гл. 11 — полярность симметрична): ПОЛНОЕ
         // решение — повторная хронология с обратным flip. Если ПОСЛЕ первого
@@ -462,17 +491,17 @@ export class ZoneVoter {
         let reBreakIdx = -1;
         for (let i = breakIdx + 1; i < candles.length; i++) {
           const c = candles[i];
-          if (origRole === 'support' && c.close > band.hi * (1 + params.breakPct)) { reBreakIdx = i; break; }
-          if (origRole === 'resistance' && c.close < band.lo * (1 - params.breakPct)) { reBreakIdx = i; break; }
+          if (origRoleOfZ === 'support' && c.close > band.hi * (1 + params.breakPct)) { reBreakIdx = i; break; }
+          if (origRoleOfZ === 'resistance' && c.close < band.lo * (1 - params.breakPct)) { reBreakIdx = i; break; }
         }
         if (reBreakIdx >= 0) {
           // Обратный flip: зона возвращается в исходную роль. Демонстрация
           // «пробой → возврат → удержание» для неё уже есть (второй пробой и
           // есть удержание на исходной стороне), поэтому зона жива.
-          alive.push(z);
+          (origRoleOfZ === 'support' ? aliveSup : aliveRes).push(z);
           continue;
         }
-        const polRole: 'support' | 'resistance' = origRole === 'support' ? 'resistance' : 'support';
+        const polRole: 'support' | 'resistance' = origRoleOfZ === 'support' ? 'resistance' : 'support';
         // Проверка возврата/удержания — по объединённой полосе (см. bandUnion).
         const unionBand: BookBand = { ...band, lo: unionLo, hi: unionHi };
         if (polarityReturnHeld(unionBand, breakIdx, polRole, startCheckIndex ?? 0)) {
@@ -496,13 +525,13 @@ export class ZoneVoter {
             sources: [...z.sources, 'polarity'],
             reasons: [
               ...z.reasons,
-              `полярный разворот: ${origRole} пробита закрытием, возврат/удержание`
+              `полярный разворот: ${origRoleOfZ} пробита закрытием, возврат/удержание`
               + ` подтверждены последним закрытием (ЯС гл. 11; ЗГ гл. 2,`
               + ` «пока цены закрытия держатся выше поддержки, она остается в силе»)`,
             ],
             bookBand: { lo: mirrorLo, hi: mirrorHi, role: polRole },
           };
-          flipped.push(fl);
+          (polRole === 'support' ? flippedSup : flippedRes).push(fl);
         }
         // Пробита без возврата/удержания ИЛИ последняя закрытая цена не держит
         // новую роль (F2) — зона не выдаётся ни в одной роли (зоны
@@ -521,8 +550,8 @@ export class ZoneVoter {
     // перестала бы выполняться. Проектное решение о представлении, не из книг.
     const bookSupportFlipped: Zone[] = [];
     const bookResistanceFlipped: Zone[] = [];
-    routeBookZones(bookSupRaw, 'support', bookSupportAlive, bookResistanceFlipped);
-    routeBookZones(bookResRaw, 'resistance', bookSupportFlipped, bookResistanceAlive);
+    routeBookZones(bookSupRaw, 'support', bookSupportAlive, bookResistanceAlive, bookSupportFlipped, bookResistanceFlipped);
+    routeBookZones(bookResRaw, 'resistance', bookSupportAlive, bookResistanceAlive, bookSupportFlipped, bookResistanceFlipped);
 
     // ЗАДАЧА 3: для НЕкнижных зон роль остаётся корзиной источника + позиция
     // последней ЗАКРЫТОЙ цены относительно полосы (не live-price из аргумента).
