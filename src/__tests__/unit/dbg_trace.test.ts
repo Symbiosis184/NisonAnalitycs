@@ -5,8 +5,8 @@ import { ZoneVoter } from '../../utils/zone_voter';
 const mk = (time: number, open: number, high: number, low: number, close: number, volume = 100) =>
   new Candle({ time, open, high, low, close, volume });
 
-it('trace task2 real', () => {
-  const broken = [
+it('trace collect', () => {
+  const hist = [
     ...Array.from({ length: 25 }, (_, i) => mk(i + 1, 99.95, 100.3, 99.7, 100.05)),
     mk(26, 100, 103.4, 99.5, 103),
     mk(27, 103, 103.2, 102.5, 102.8), mk(28, 102.8, 103.0, 102.2, 102.5),
@@ -19,21 +19,14 @@ it('trace task2 real', () => {
     mk(41, 99.5, 99.8, 99.0, 99.2), mk(42, 99.2, 99.5, 98.8, 99.0),
     mk(43, 99.0, 99.2, 98.5, 98.8), mk(44, 98.8, 99.0, 98.2, 98.5),
     mk(45, 98.5, 98.8, 98.0, 98.2), mk(46, 98.2, 98.5, 97.5, 98.0),
-  ];
-  const hist = [
-    ...broken.slice(0, 46),
     mk(47, 98.0, 98.5, 97.8, 98.2), mk(48, 98.2, 98.8, 98.0, 98.5),
     mk(49, 98.5, 99.0, 98.2, 98.8), mk(50, 98.8, 99.5, 98.5, 99.2),
     mk(51, 99.2, 100.0, 99.0, 99.8), mk(52, 99.8, 102.0, 99.5, 101.8),
     mk(53, 101.8, 102.2, 101.5, 102.0), mk(54, 102.0, 102.5, 101.8, 102.2),
     mk(55, 102.2, 102.8, 102.0, 102.5),
   ];
-  // source map check
-  const supMap = new Map(); const resMap = new Map();
-  (ZoneVoter as any).addLongBodyLevels(hist, supMap, resMap, { tolerance: 0.005, breakPct: 0.003, lookback: 150, swingSpan: 3 });
-  console.log('SRC-SUP:', [...supMap.entries()].map(([k,v]: any)=>({k, band:v.bookBand})));
-  const prh = (ZoneVoter as any);
-  const zones = ZoneVoter.collect(hist[hist.length-1].close, hist, 'swing');
-  console.log('RES:', JSON.stringify(zones.resistance.map(z=>({level:z.level,src:z.sources,band:z.bookBand}))));
-  console.log('SUP:', JSON.stringify(zones.support.map(z=>({level:z.level,src:z.sources,band:z.bookBand?.lo ?? null}))));
+  ZoneVoter.clearCache();
+  const zones = ZoneVoter.collect(hist[hist.length - 1].close, hist, 'swing');
+  console.log('RES:', JSON.stringify(zones.resistance.map(z => ({ level: z.level, hw: z.halfWidth, src: z.sources, band: z.bookBand }))));
+  console.log('SUP:', JSON.stringify(zones.support.map(z => ({ level: z.level, src: z.sources }))));
 });

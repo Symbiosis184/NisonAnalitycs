@@ -368,12 +368,17 @@ export class ZoneVoter {
       for (let i = breakIdx + 1; i < candles.length; i++) {
         const c = candles[i];
         const touched = c.high >= band.lo && c.low <= band.hi;
-        if (!returnSeen) {
-          if (touched) returnSeen = true;
-          continue;
+        // Бар может быть ОДНОВРЕМЕННО баром возврата (касание полосы) и баром
+        // удержания (закрытие за дальней границей) — строгая последовательность
+        // «сначала отдельный касательный бар, затем отдельный удерживающий»
+        // отбрасывала типичный книжный разворот: возвратный бар с длинной тенью
+        // к полосе и закрытием за её дальней границей. Разрешаем совмещение
+        // (хронология «пробой → возврат/удержание» сохраняется).
+        if (!returnSeen && touched) returnSeen = true;
+        if (returnSeen) {
+          if (polRole === 'support' && c.close > band.hi) return true;
+          if (polRole === 'resistance' && c.close < band.lo) return true;
         }
-        if (polRole === 'support' && c.close > band.hi) return true;
-        if (polRole === 'resistance' && c.close < band.lo) return true;
       }
       return false;
     };
@@ -382,9 +387,29 @@ export class ZoneVoter {
       raw: Zone[], origRole: 'support' | 'resistance',
       alive: Zone[], flipped: Zone[],
     ) => {
+      // Аудит F2 (приёмка): если несколько книжных полос одной роли пересекаются
+      // (например, полосы длинных тел разных свечей с общим основанием), то
+      // «возврат/удержание» после пробоя проверяется по ОБЪЕДИНЁННОЙ полосе
+      // [min lo … max hi] — иначе более узкая вторая полоса не находит бар
+      // удержания (её дальняя граница лежит внутри тела возвратного бара) и
+      // обе зоны теряются. Проектное решение о представлении, не из книг.
+      const bandUnion = (band: BookBand): [number, number] => {
+        let lo = band.lo;
+        let hi = band.hi;
+        for (const o of raw) {
+          if (!o.bookBand || o === undefined) continue;
+          const { startCheckIndex: _s, ...ob } = o.bookBand;
+          if (ob.lo <= band.hi && band.lo <= ob.hi) {
+            lo = Math.min(lo, ob.lo);
+            hi = Math.max(hi, ob.hi);
+          }
+        }
+        return [lo, hi];
+      };
       for (const z of raw) {
         if (!z.bookBand) continue;
         const { startCheckIndex, ...band } = z.bookBand;
+        const [unionLo, unionHi] = bandUnion(band);
         // Индекс ПЕРВОГО закрытия за дальней границей (чтобы требовать
         // возврата именно ПОСЛЕ пробоя):
         let breakIdx = -1;
@@ -416,7 +441,9 @@ export class ZoneVoter {
           continue;
         }
         const polRole: 'support' | 'resistance' = origRole === 'support' ? 'resistance' : 'support';
-        if (polarityReturnHeld(band, breakIdx, polRole)) {
+        // Проверка возврата/удержания — по объединённой полосе (см. bandUnion).
+        const unionBand: BookBand = { ...band, lo: unionLo, hi: unionHi };
+        if (polarityReturnHeld(unionBand, breakIdx, polRole)) {
           // F2: flip выдан только если ПОСЛЕДНЕЕ закрытие удержало новую роль
           // (проверка внутри polarityReturnHeld); иначе зона не выдаётся ни в
           // одной роли — минимум по аудиту.
@@ -631,7 +658,21 @@ export class ZoneVoter {
       const asSupport = supTouches > 0 && zone.level <= price;
       const asResistance = resTouches > 0 && zone.level >= price;
 
-      if (asSupport) {
+      // Аудит F1/F6: не «съедать» книжную геометрию. Если центр свинг-зоны
+      // лежит ВНУТРИ уже существующей книжной полосы (long-body/doji/window,
+      // добавленной другим источником с keepSeparate), свинг-кластер в этот
+      // центр не создаётся — иначе последующая полоса слилась бы с ним
+      // (mergeIntoExact допускает слияние только с кластером того же центра) и
+      // её halfWidth разбухла бы до покрывающей, нарушив точную книжную
+      // геометрию [low … mid]. Проектное решение о представлении, не из книг.
+      const insideExistingBookBand = (map: Map<number, ZoneClusterData>, level: number): boolean => {
+        for (const d of map.values()) {
+          if (d.bookBand && level >= d.bookBand.lo && level <= d.bookBand.hi) return true;
+        }
+        return false;
+      };
+
+      if (asSupport && !insideExistingBookBand(supMap, zone.level)) {
         addLevelToMap(
           supMap, zone.level, `свинг-зона: ${supTouches} касание(й) поддержки`,
           lastSupTime, tol, supTouches,
@@ -640,7 +681,7 @@ export class ZoneVoter {
           { source: 'swing', halfWidth, formedAt: zone.formedAt, touchVolumeSum: supVolSum },
         );
       }
-      if (asResistance) {
+      if (asResistance && !insideExistingBookBand(resMap, zone.level)) {
         addLevelToMap(
           resMap, zone.level, `свинг-зона: ${resTouches} касание(й) сопротивления`,
           lastResTime, tol, resTouches,
