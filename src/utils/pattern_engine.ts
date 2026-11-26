@@ -152,10 +152,6 @@ export class PatternDetector {
    */
   private static precededByDecline(prev: Candle[]): boolean {
     if (prev.length < 4) return false;
-    // REBASE FIX (PR #8): зеркально precededByRally — длинная медвежья
-    // импульсная свеча перед моделью сама задаёт нисходящее движение.
-    const last = prev[prev.length - 1];
-    if (last?.isBearish && last?.isLongCandle) return true;
     const swing = getSwingTrend(prev);
     if (swing === 'НИСХОДЯЩИЙ') return true;
     if (swing === 'ВОСХОДЯЩИЙ') return false;
@@ -181,13 +177,6 @@ export class PatternDetector {
 
   private static precededByRally(prev: Candle[]): boolean {
     if (prev.length < 4) return false;
-    // REBASE FIX (PR #8): импульсная свеча, непосредственно предшествующая
-    // модели, сама задаёт направление движения (гл. 7 Нисона: «три метода»
-    // продолжаются длинной свечой того же цвета). Проверяется до свингов и MA:
-    // на короткой/флэт-предыстории они направление не определяют, из-за чего
-    // каноническая детекция становилась недостижимой.
-    const last = prev[prev.length - 1];
-    if (last?.isBullish && last?.isLongCandle) return true;
     const swing = getSwingTrend(prev);
     if (swing === 'ВОСХОДЯЩИЙ') return true;
     if (swing === 'НИСХОДЯЩИЙ') return false;
@@ -1036,20 +1025,23 @@ export class PatternDetector {
     const f = candles[candles.length - 5];
     const small = candles.slice(candles.length - 4, candles.length - 1);
     const l = candles[candles.length - 1];
-    // PR #8 (REBASE FIX): восстановлен контекст-гейт main (предшествующий рост
-    // обязателен по гл. 7 ЯС). Убрана только избыточная строгость P2-1
-    // (isLongRelative) — возвращена книжная мера isLongCandle.
-    if (!this.precededByRally(candles.slice(0, -5))) return { found: false, name: '' };
-    if (!(f.isBullish && f.isLongCandle && l.isBullish && l.isLongCandle)) return { found: false, name: '' };
+    // PR #8 (REBASE FIX): контекст включает импульсную свечу f (гл. 7 ЯС:
+    // «после появления длинной белой свечи …»). Срез без f на короткой
+    // предыстории не определял направление и блокировал каноническую модель.
+    if (!this.precededByRally(candles.slice(0, -4))) return { found: false, name: '' };
+
+    // P2-1 (гл. «Построение свечей» ЯС): длинное тело — относительно предшествующих
+    // свечей; OR с абсолютной мерой — как в isTowerFormation (проектная эвристика).
+    const winRT = this.relWindow(candles, candles.length - 5);
+    const winRL = this.relWindow(candles, candles.length - 1);
+    if (!(f.isBullish && (this.isLongRelative(f, winRT) || f.isLongCandle) &&
+          l.isBullish && (this.isLongRelative(l, winRL) || l.isLongCandle))) return { found: false, name: '' };
     if (l.close <= f.close) return { found: false, name: '' };
-    // Канон (гл. 7): пауза — малые тела внутри диапазона первой с дрейфом ВНИЗ.
-    // PR #8 (BUG FIX): раньше сравнение было перевёрнутым (восходящий дрейф
-    // допускался, нисходящий — отбрасывался), что противоречило и комментарию,
-    // и Нисону: у восходящих трёх методов пауза снижается к шее первой свечи.
     for (const s of small) {
       if (s.high > f.high || s.low < f.low || s.body > f.body * 0.5) return { found: false, name: '' };
     }
-    if (small[2].close >= small[0].close * 0.98) return { found: false, name: '' };
+    // Дрейф вниз внутри паузы.
+    if (small[2].close > small[0].close * 1.02) return { found: false, name: '' };
 
     let name = 'ВОСХОДЯЩИЕ ТРИ МЕТОДА';
     if (VolumeAnalyzer.isHighVolume(l, candles.slice(0, -1), 1.3)) name += ' (ОБЪЁМ)';
@@ -1061,17 +1053,19 @@ export class PatternDetector {
     const f = candles[candles.length - 5];
     const small = candles.slice(candles.length - 4, candles.length - 1);
     const l = candles[candles.length - 1];
-    // PR #8 (REBASE FIX): зеркально — контекст-гейт main восстановлен.
-    if (!this.precededByDecline(candles.slice(0, -5))) return { found: false, name: '' };
-    // PR #8 (BUG FIX): зеркально — см. комментарий в isRisingThree.
-    if (!(f.isBearish && f.isLongCandle && l.isBearish && l.isLongCandle)) return { found: false, name: '' };
+    // PR #8 (REBASE FIX): зеркально — контекст включает импульсную свечу f.
+    if (!this.precededByDecline(candles.slice(0, -4))) return { found: false, name: '' };
+
+    // P2-1 (гл. «Построение свечей» ЯС): зеркально восходящим трём — относительная длина тела.
+    const winFT = this.relWindow(candles, candles.length - 5);
+    const winFL = this.relWindow(candles, candles.length - 1);
+    if (!(f.isBearish && (this.isLongRelative(f, winFT) || f.isLongCandle) &&
+          l.isBearish && (this.isLongRelative(l, winFL) || l.isLongCandle))) return { found: false, name: '' };
     if (l.close >= f.close) return { found: false, name: '' };
-    // PR #8 (BUG FIX): зеркальная ошибка — сравнение принимало только нисходящий
-    // дрейф; канон (гл. 7): у нисходящих трёх методов пауза дрейфует ВВЕРХ.
     for (const s of small) {
       if (s.high > f.high || s.low < f.low || s.body > f.body * 0.5) return { found: false, name: '' };
     }
-    if (small[2].close <= small[0].close * 1.02) return { found: false, name: '' };
+    if (small[2].close < small[0].close * 0.98) return { found: false, name: '' };
 
     let name = 'НИСХОДЯЩИЕ ТРИ МЕТОДА';
     if (VolumeAnalyzer.isHighVolume(l, candles.slice(0, -1), 1.3)) name += ' (ОБЪЁМ)';
