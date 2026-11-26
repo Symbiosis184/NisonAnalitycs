@@ -1,20 +1,12 @@
-import { it, expect } from 'vitest';
+import { it } from 'vitest';
 import { Candle } from '../../utils/candle';
 import { ZoneVoter } from '../../utils/zone_voter';
+
 const mk = (time: number, open: number, high: number, low: number, close: number, volume = 100) =>
   new Candle({ time, open, high, low, close, volume });
-it('dbg task2 flip', () => {
+
+it('dbg', () => {
   const hist = [
-    ...Array.from({ length: 25 }, (_, i) => mk(i + 1, 99.95, 100.3, 99.7, 100.05)),
-    mk(26, 100, 103.4, 99.5, 103),
-    mk(27, 103, 103.2, 102.5, 102.8),
-    mk(46, 98.2, 98.5, 97.5, 98.0),
-    mk(51, 99.2, 100.0, 99.0, 99.8),
-    mk(52, 99.8, 102.0, 99.5, 101.8),
-    mk(53, 101.8, 102.2, 101.5, 102.0),
-  ];
-  // воспроизводим полный тестовый массив
-  const brokenSupportHistory = [
     ...Array.from({ length: 25 }, (_, i) => mk(i + 1, 99.95, 100.3, 99.7, 100.05)),
     mk(26, 100, 103.4, 99.5, 103),
     mk(27, 103, 103.2, 102.5, 102.8),
@@ -40,13 +32,6 @@ it('dbg task2 flip', () => {
     mk(47, 98.0, 98.5, 97.8, 98.2),
     mk(48, 98.2, 98.8, 98.0, 98.5),
     mk(49, 98.5, 99.0, 98.2, 98.8),
-    mk(50, 98.8, 99.2, 98.5, 99.0),
-  ];
-  const h2 = [
-    ...brokenSupportHistory.slice(0, 46),
-    mk(47, 98.0, 98.5, 97.8, 98.2),
-    mk(48, 98.2, 98.8, 98.0, 98.5),
-    mk(49, 98.5, 99.0, 98.2, 98.8),
     mk(50, 98.8, 99.5, 98.5, 99.2),
     mk(51, 99.2, 100.0, 99.0, 99.8),
     mk(52, 99.8, 102.0, 99.5, 101.8),
@@ -54,9 +39,9 @@ it('dbg task2 flip', () => {
     mk(54, 102.0, 102.5, 101.8, 102.2),
     mk(55, 102.2, 102.8, 102.0, 102.5),
   ];
-  const zones = ZoneVoter.collect(h2[h2.length-1].close, h2, 'swing');
-  console.log('SUPPORT long-body:', JSON.stringify(zones.support.filter(z=>z.sources.includes('long-body')).map(z=>({level:z.level,hw:z.hWidth??z.halfWidth,band:z.bookBand,src:z.sources})),null,1));
-  console.log('RESIST long-body:', JSON.stringify(zones.resistance.filter(z=>z.sources.includes('long-body')).map(z=>({level:z.level,hw:z.halfWidth,band:z.bookBand,src:z.sources})),null,1));
-  console.log('ALL RES:', JSON.stringify(zones.resistance.map(z=>({level:z.level,src:z.sources,touches:z.touches,votes:z.votes})),null,1));
-  expect(true).toBe(true);
+  const zones = ZoneVoter.collect(102.5, hist, 'swing');
+  console.log('SUPPORT:');
+  for (const z of zones.support) console.log(JSON.stringify({ lvl: z.level, hw: z.halfWidth, src: z.sources, band: z.bookBand, reasons: z.reasons.map(r=>r.slice(0,60)) }));
+  console.log('RESISTANCE:');
+  for (const z of zones.resistance) console.log(JSON.stringify({ lvl: z.level, hw: z.halfWidth, src: z.sources, band: z.bookBand, reasons: z.reasons.map(r=>r.slice(0,60)) }));
 });

@@ -422,7 +422,7 @@ export class ZoneVoter {
       // (компоненты связности по пересечению интервалов). Поэлементная
       // проверка «пересекается ли o с z» теряла полосу, которая пересекалась
       // с z только через третью полосу (A∩B≠∅, B∩C≠∅, A∩C=∅).
-      const bandUnion = (z: Zone, band: BookBand): [number, number] => {
+      const bandUnion = (z: Zone, band: BookBand, zStartCheckIndex: number | undefined): [number, number] => {
         let lo = band.lo;
         let hi = band.hi;
         // F2 (аудит): в объединение берутся только полосы, сформированные НЕ
@@ -435,7 +435,7 @@ export class ZoneVoter {
         // «удержанием» из-за union-границы 102.3 от бара возврата).
         // Проектное решение о представлении, не из книг.
         const ownBreak = (): number => {
-          for (let i = Math.max(0, band.startCheckIndex ?? z.bookBand?.startCheckIndex ?? 0);
+          for (let i = Math.max(0, zStartCheckIndex ?? 0);
                i < candles.length; i++) {
             const c = candles[i];
             if (roleOf(z) === 'support' && c.close < band.lo * (1 - params.breakPct)) return i;
@@ -463,7 +463,7 @@ export class ZoneVoter {
         if (!z.bookBand) continue;
         const { startCheckIndex, ...band } = z.bookBand;
         const origRoleOfZ = roleOf(z);
-        const [unionLo, unionHi] = bandUnion(z, band);
+        const [unionLo, unionHi] = bandUnion(z, band, startCheckIndex);
         // Индекс ПЕРВОГО закрытия за дальней границей СОБСТВЕННОЙ полосы
         // (чтобы требовать возврата именно ПОСЛЕ пробоя). Граница — своя,
         // не объединённая: объединение (bandUnion) применяется только к
@@ -523,6 +523,38 @@ export class ZoneVoter {
               coveredBreak = Math.max(coveredBreak, oi);
             }
           }
+          // F2 (аудит task2): полосы z и o ПЕРЕКРЫВАЮТСЯ, но ни одна не лежит
+          // в другой полностью. Если более ПОЗДНЯЯ полоса того же источника
+          // (startCheckIndex больше) НЕ пробита и её основание совпадает с
+          // основанием z (для поддержки; зеркально для сопротивления), то
+          // «цены закрытия держатся» уже над общим основанием — исходная роль
+          // z больше не действует (ЗГ гл. 2), и z участвует в полярном флипе
+          // на тех же условиях, что и пробитая полоса. Иначе новая свеча,
+          // порождённая самим возвратом к пробитой зоне, «оживала» как
+          // поддержка и глушила flip (регрессия приёмки task2). Проектное
+          // решение о связывании геометрий одного окна; численных порогов
+          // книги не задают.
+          if (coveredBreak < 0) {
+            for (const o of allRaw) {
+              if (!o.bookBand || o === z || sourceKey(o) !== sourceKey(z)) continue;
+              const os = o.bookBand.startCheckIndex ?? 0;
+              if (os <= (startCheckIndex ?? 0)) continue; // только более поздние полосы
+              const ob = o.bookBand;
+              const overlaps = band.lo <= ob.hi + 1e-9 && ob.lo <= band.hi + 1e-9;
+              if (!overlaps) continue;
+              let oi = -1;
+              for (let i = Math.max(0, os); i < candles.length; i++) {
+                const c = candles[i];
+                if (roleOf(o) === 'support' && c.close < ob.lo * (1 - params.breakPct)) { oi = i; break; }
+                if (roleOf(o) === 'resistance' && c.close > ob.hi * (1 + params.breakPct)) { oi = i; break; }
+              }
+              if (oi >= 0) continue; // накрывающая сама пробита — это ветка coveredBreak выше
+              const sameBase = origRoleOfZ === 'support'
+                ? Math.abs(band.lo - ob.lo) <= 1e-9
+                : Math.abs(band.hi - ob.hi) <= 1e-9;
+              if (sameBase) { coveredBreak = Number.POSITIVE_INFINITY; break; }
+            }
+          }
           if (coveredBreak < 0) {
             // F2 (аудит task2): если накрывшая полоса того же источника НЕ
             // пробита, а её первый выход цены за ГРАНИЦЫ z (в любую сторону —
@@ -571,10 +603,16 @@ export class ZoneVoter {
         // логикой симметричной полярности. Поиск второго пробоя — строго после
         // бара первого пробоя, только по ЗАКРЫТЫМ барам (без look-ahead).
         let reBreakIdx = -1;
-        for (let i = breakIdx + 1; i < candles.length; i++) {
-          const c = candles[i];
-          if (origRoleOfZ === 'support' && c.close > band.hi * (1 + params.breakPct)) { reBreakIdx = i; break; }
-          if (origRoleOfZ === 'resistance' && c.close < band.lo * (1 - params.breakPct)) { reBreakIdx = i; break; }
+        // F2 (аудит task2): при «связанном» пробое (breakIdx = +∞, полоса z
+        // нежива из-за перекрывающей полосы того же источника, а не из-за
+        // собственного закрытия за границей) обратный flip по СВОЕЙ границе
+        // не ищем — хронология привязана к накрывшей полосе.
+        if (Number.isFinite(breakIdx)) {
+          for (let i = breakIdx + 1; i < candles.length; i++) {
+            const c = candles[i];
+            if (origRoleOfZ === 'support' && c.close > band.hi * (1 + params.breakPct)) { reBreakIdx = i; break; }
+            if (origRoleOfZ === 'resistance' && c.close < band.lo * (1 - params.breakPct)) { reBreakIdx = i; break; }
+          }
         }
         if (reBreakIdx >= 0) {
           // Обратный flip: зона возвращается в исходную роль. Демонстрация
