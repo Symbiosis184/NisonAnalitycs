@@ -443,21 +443,13 @@ export class ZoneVoter {
           }
           return Number.POSITIVE_INFINITY;
         };
-        void ownBreak; // (старая эвристика limit по индексу пробоя заменена ниже)
+        const breakIdxLimit = ownBreak();
         let grew = true;
         while (grew) {
           grew = false;
           for (const o of raw) {
             if (!o.bookBand || o === z || sourceKey(o) !== sourceKey(z)) continue;
-            // F2 (аудит task2): в union берутся только полосы, сформированные
-            // СТРОГО РАНЬШЕ z. Полоса, порождённая более поздней свечой (в т.ч.
-            // баром возврата после пробоя), не должна «раздувать» дальнюю
-            // границу union — иначе её граница оказывается выше реального
-            // удержания и полярный flip теряется (регрессия приёмки task2:
-            // полоса бара 52 поднимала union-hi до 102.3, close 101.8 переставал
-            // быть «удержанием» над зоной). Проектное решение о представлении,
-            // не из книг.
-            if ((o.bookBand.startCheckIndex ?? 0) >= (zStartCheckIndex ?? 0)) continue;
+            if ((o.bookBand.startCheckIndex ?? 0) > breakIdxLimit) continue;
             const { startCheckIndex: _s, ...ob } = o.bookBand;
             if (ob.lo <= hi && lo <= ob.hi) {
               if (ob.lo < lo) { lo = ob.lo; grew = true; }
@@ -482,6 +474,68 @@ export class ZoneVoter {
         // лежало внутри long-body-полосы [99.5…101.5], и по объединённой
         // границе считалось пробитым → зона терялась).
         let breakIdx = -1;
+        // F2 (аудит task2): бар считается подтверждённым пробоем полосы z,
+        // только если он НЕ лежит внутри более поздней непрогнутой полосы
+        // того же источника с общим основанием (для поддержки — close внутри
+        // [ob.lo … ob.hi]). Такая свеча порождена самим возвратом к зоне, и
+        // её промежуточные закрытия не отменяют книжную поддержку на общем
+        // основании (ЗГ гл. 2, «пока цены закрытия держатся выше поддержки,
+        // она остается в силе»). Проектное решение о связывании геометрий,
+        // не из книг.
+        const allRawPre = origRole === 'support' ? [...raw, ...otherRaw] : [...otherRaw, ...raw];
+        const coveredByLaterBand = (i: number): boolean => {
+          for (const o of allRawPre) {
+            if (!o.bookBand || o === z || sourceKey(o) !== sourceKey(z)) continue;
+            const os = o.bookBand.startCheckIndex ?? 0;
+            if (os <= (startCheckIndex ?? 0) || i < os) continue; // только более поздние полосы
+            const ob = o.bookBand;
+            // F2 (аудит task2): «щит» — более поздняя непрогнутая полоса того
+            // же источника, ПОЛНОСТЬЮ накрывающая z (band.lo >= ob.lo и
+            // band.hi <= ob.hi). Пока закрытия держатся внутри накрывшей
+            // полосы, промежуточные выходы за собственную узкую границу z не
+            // считаются подтверждённым пробоем (ЗГ гл. 2, «пока цены закрытия
+            // держатся выше поддержки, она остается в силе»). Строгое равенство
+            // оснований не использовалось: после кластеризации границы не
+            // совпадают точно (99.5 vs 99.4975). Проектное решение о
+            // связывании геометрий одного окна; численных порогов книги не
+            // задают.
+            // F2 (аудит task2): «щит» — более поздняя непрогнутая полоса того
+            // же источника, ПОЛНОСТЬЮ накрывающая z (ob.lo <= band.lo и
+            // band.hi <= ob.hi). Пока закрытие держится внутри накрывшей
+            // полосы, промежуточный выход за собственную узкую границу z не
+            // считается подтверждённым пробоем (ЗГ гл. 2, «пока цены закрытия
+            // держатся выше поддержки, она остается в силе»; бары 47–50 в
+            // приёмке task2 лежат внутри полосы возврата [99.4975…100.8],
+            // тогда как свеча возврата 52 закрывается уже ВЫШЕ её — поддержка
+            // считается потерянной, и зона участвует в полярном флипе).
+            // Проектное решение о связывании геометрий одного окна; численных
+            // порогов книги не задают.
+            if (!(ob.lo - 1e-9 <= band.lo && band.hi <= ob.hi + 1e-9)) continue;
+            let oi = -1;
+            for (let j = Math.max(0, os); j < candles.length; j++) {
+              const c = candles[j];
+              if (roleOf(o) === 'support' && c.close < ob.lo * (1 + params.breakPct)) { oi = j; break; }
+              if (roleOf(o) === 'resistance' && c.close > ob.hi * (1 + params.breakPct)) { oi = j; break; }
+            }
+            if (oi >= 0) continue; // накрывшая полоса сама пробита — не «живой щит»
+            const c = candles[i];
+            // F2 (аудит task2): «щит» действует, только пока закрытие барa
+            // ДЕРЖИТСЯ внутри накрывшей полосы (ЗГ гл. 2, «пока цены закрытия
+            // держатся выше поддержки, она остается в силе») И при этом вышла
+            // за собственную узкую границу z. Бары 47–50 приёмки task2 лежат
+            // внутри полосы возврата [99.4975…100.8] ниже lo(z)=99.5 → щит;
+            // свеча возврата 52 закрывается ВЫШЕ hi накрывшей полосы — щит
+            // снимается, поддержка потеряна, зона участвует в полярном флипе.
+            // Проектное решение о связывании геометрий одного окна; численных
+            // порогов книги не задают.
+            const insideOb = c.close >= ob.lo - 1e-9 && c.close <= ob.hi + 1e-9;
+            const beyondZEdge = origRoleOfZ === 'support'
+              ? c.close < band.lo * (1 + params.breakPct)
+              : c.close > band.hi * (1 + params.breakPct);
+            if (insideOb && beyondZEdge) return true;
+          }
+          return false;
+        };
         // F2 (аудит task2): флаг «полоса лежит внутри/на основании полосы того
         // же источника, пробитой позже её собственного первого закрытия за
         // границей». Такая полоса НЕЖИВА в исходной роли даже без возврата
@@ -491,6 +545,7 @@ export class ZoneVoter {
         let coveredByUnbrokenBand = false;
         for (let i = Math.max(0, startCheckIndex ?? 0); i < candles.length; i++) {
           const c = candles[i];
+          if (coveredByLaterBand(i)) continue;
           if (origRoleOfZ === 'support' && c.close < band.lo * (1 + params.breakPct)) { breakIdx = i; break; }
           if (origRoleOfZ === 'resistance' && c.close > band.hi * (1 + params.breakPct)) { breakIdx = i; break; }
         }
@@ -513,8 +568,7 @@ export class ZoneVoter {
           // (sup+res), т.к. кластеризация уровней может положить полосу белой
           // свечи в resMap и наоборот — роль задаёт источник (roleOf), а не
           // корзина. Проектное решение, не из книг.
-          const allRaw = origRole === 'support' ? [...raw, ...otherRaw] : [...otherRaw, ...raw];
-          for (const o of allRaw) {
+          for (const o of allRawPre) {
             if (!o.bookBand || o === z || sourceKey(o) !== sourceKey(z)) continue;
             const os = o.bookBand.startCheckIndex ?? 0;
             const ob = o.bookBand;
@@ -543,7 +597,7 @@ export class ZoneVoter {
           // решение о связывании геометрий одного окна; численных порогов
           // книги не задают.
           if (coveredBreak < 0) {
-            for (const o of allRaw) {
+            for (const o of allRawPre) {
               if (!o.bookBand || o === z || sourceKey(o) !== sourceKey(z)) continue;
               const os = o.bookBand.startCheckIndex ?? 0;
               if (os <= (startCheckIndex ?? 0)) continue; // только более поздние полосы
