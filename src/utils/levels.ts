@@ -299,7 +299,30 @@ export function dedupeZones<T extends ZoneClusterData>(
     }
   }
   map.clear();
-  for (const cluster of clusters) {
+  // F6 (аудит): книжные полосы (bookBand) никогда не сливаются между собой —
+  // каждая сохраняет СВОЮ точную геометрию [lo … hi] и halfWidth=(hi−lo)/2.
+  // Если в один кластер попали несколько разных полос, они разделяются на
+  // отдельные кластеры по исходным уровням (проектное решение о кластеризации;
+  // приоритет — точная книжная геометрия, confluence-голосование при этом может
+  // уменьшиться — это приемлемо).
+  const splitMultiBand = (cluster: (typeof clusters)[number]): Array<(typeof clusters)[number]> => {
+    if (cluster.bands.length <= 1) return [cluster];
+    return cluster.levels.map((lv) => {
+      const band = cluster.bands.find((b) => b.level === lv);
+      const data: T = { ...cluster.data };
+      if (band) {
+        data.bookBand = band.band as T['bookBand'];
+        data.halfWidth = (band.band.hi - band.band.lo) / 2;
+      } else {
+        data.bookBand = undefined as T['bookBand'];
+        const w = cluster.widths.find((x) => x.level === lv);
+        data.halfWidth = w ? w.halfWidth : undefined as T['halfWidth'];
+      }
+      return { levels: [lv], widths: [{ level: lv, halfWidth: data.halfWidth }], bands: band ? [band] : [], data };
+    });
+  };
+  const finalClusters = clusters.flatMap(splitMultiBand);
+  for (const cluster of finalClusters) {
     const avg = cluster.levels.reduce((s, lv) => s + lv, 0) / cluster.levels.length;
     // После смещения центра зона обязана по-прежнему покрывать исходные
     // диапазоны (особенно фактические границы окна), а не только max(width).

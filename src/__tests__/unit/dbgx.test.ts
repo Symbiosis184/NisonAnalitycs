@@ -1,6 +1,6 @@
 import { it } from 'vitest';
 import { Candle } from '../../utils/candle';
-import { ZoneVoter } from '../../utils/zone_voter';
+import { ZoneVoter, type Zone } from '../../utils/zone_voter';
 const mk = (time: number, open: number, high: number, low: number, close: number, volume = 100) =>
   new Candle({ time, open, high, low, close, volume });
 it('dbg2', () => {
@@ -23,9 +23,10 @@ it('dbg2', () => {
     mk(53, 101.8, 102.2, 101.5, 102.0), mk(54, 102.0, 102.5, 101.8, 102.2),
     mk(55, 102.2, 102.8, 102.0, 102.5),
   ];
-  const zones = ZoneVoter.collect(102.5, hist, 'swing');
-  for (const z of zones.resistance.filter(z=>z.sources.includes('long-body')))
-    console.log('LB-RES', JSON.stringify({level:z.level,hw:z.halfWidth,band:z.bookBand,reasons:z.reasons.map(r=>r.slice(0,60))}));
-  for (const z of zones.support.filter(z=>z.sources.includes('long-body')))
-    console.log('LB-SUP', JSON.stringify({level:z.level,hw:z.halfWidth,band:z.bookBand,reasons:z.reasons.map(r=>r.slice(0,60))}));
+  const dump = (tag: string, zs: Zone[]) => {
+    for (const z of zs.filter(z=>z.sources.includes('long-body')))
+      console.log(tag, JSON.stringify({level:z.level,hw:+z.halfWidth.toFixed(4),band:z.bookBand,votes:z.votes,touches:z.touches}));
+  };
+  dump('SUP', ZoneVoter.collect(102.5, hist, 'swing').support);
+  dump('RES', ZoneVoter.collect(102.5, hist, 'swing').resistance);
 });

@@ -25,47 +25,6 @@ export type ZoneMarket = 'stock' | 'crypto';
  */
 type BookBand = BookBandGeom;
 
-/** Полоса зоны как [level ± halfWidth] с ролью по умолчанию 'support'. */
-function bandOf(b: { level: number; halfWidth: number; role?: BookBandRole }): BookBand {
-  return { lo: b.level - b.halfWidth, hi: b.level + b.halfWidth, role: b.role ?? 'support' };
-}
-
-/**
- * Источники с ЯВНОЙ книжной геометрией полосы (ЗГ гл. 2 — длинные тела,
- * ЗГ гл. 3 / ЯС гл. 7 — окна). Для них halfWidth НЕ расширяется ATR-полосой
- * проекта (см. mapToZones) и применяется инвалидация по закрытию за дальней
- * границей (см. closedBeyondFarEdge).
- */
-const BOOK_GEOMETRY_SOURCES: ReadonlySet<ZoneSource> = new Set(['long-body', 'window']);
-
-/** Есть ли у кластера источник с книжной геометрией. */
-function hasBookGeometry(data: ZoneClusterData): boolean {
-  return (data.sources ?? []).some((s) => BOOK_GEOMETRY_SOURCES.has(s));
-}
-
-/**
- * Инвалидация книжной зоны по ЗАКРЫТИЮ (ЗГ гл. 2): «прорывы этих зон поддержки
- * могут происходить неоднократно в течение сессии, но пока цены закрытия
- * держатся выше поддержки, она остается в силе». То есть зона жива, пока нет
- * закрытия за ДАЛЬНЕЙ границей полосы: поддержка пробивается закрытием ниже
- * нижней границы, сопротивление — закрытием выше верхней.
- * Настройка проекта: порог breakPct (книга числового порога не задаёт).
- */
-function closedBeyondFarEdge(
-  candles: Candle[],
-  fromIdx: number,
-  band: BookBand,
-  role: 'support' | 'resistance',
-  breakPct: number,
-): boolean {
-  for (let i = Math.max(0, fromIdx); i < candles.length; i++) {
-    const c = candles[i];
-    if (role === 'support' && c.close < band.lo * (1 - breakPct)) return true;
-    if (role === 'resistance' && c.close > band.hi * (1 + breakPct)) return true;
-  }
-  return false;
-}
-
 /** Wilder ATR (последнее значение) по закрытым свечам; 0 при нехватке данных. */
 function atrWilder(candles: Candle[], period = 14): number {
   if (candles.length <= period) return 0;
@@ -228,6 +187,12 @@ export class ZoneVoter {
     if (cached) return cached;
 
     const params = { ...ZONE_PARAMS[tfKey], ...(overrides ?? {}) };
+    // Аудит (мелочи): классификация источников (swing-корзины, MA) ведётся по
+    // ПОСЛЕДНЕЙ ЗАКРЫТОЙ цене, а не по live-price аргумента `price` — единая
+    // конвенция с финальной маршрутизацией collect (задача 3) и F2. Это
+    // исключает ситуацию, когда зона заведётся в корзине «поддержка» по живой
+    // цене, а последний закрытый бар уже ниже неё. Настройка проекта, не из книг.
+    const lastClose = lastCandle?.close ?? price;
     // ЗАДАЧА 8: дожи как источник зон — по умолчанию ВЫКЛЮЧЕН; включается
     // только явным флагом среды (проектный способ активации, не из книг).
     if (typeof process !== 'undefined' && process.env?.NISON_DOJI_ZONES === '1') {
@@ -247,27 +212,23 @@ export class ZoneVoter {
     };
 
     // ПОРЯДОК ИСТОЧНИКОВ (аудит F6): сначала ТОЧЕЧНЫЕ источники (свинги,
-    // полярность, MA, климакс, круглые числа, fib, дожи), затем КНИЖНЫЕ полосы
-    // с keepSeparate (long-body, окно). Смысл порядка: входящий книжный уровень
-    // не сливается в уже существующий свинг-кластер (шаг findClusterZone для
-    // keepSeparate-уровней отключён — F6 в levels.ts), а точечные уровни были
-    // добавлены РАНЬШЕ и потому не поглощаются книжной полосой инкрементально.
-    // Окончательная защита геометрии — в dedupeZones: кластеры с bookBand
-    // (keepSeparate) не сливаются ни в какую сторону, а обычные точечные зоны
-    // могут сливаться МЕЖДУ СОБОЙ; если при таком слиянии появляется overlap с
-    // книжной полосой, она разворачивается (reverse) и остаётся отдельной
-    // зоной со СВОЕЙ точной геометрией. Это и есть confluence без искажения
-    // книжной геометрии. Нумерация комментариев ниже — исходная (1–9), она же
-    // фактический порядок вызовов.
+    // полярность, MA, климакс, круглые числа, fib), затем КНИЖНЫЕ полосы
+    // с keepSeparate (long-body, окно, дожи). Смысл порядка: входящий книжный
+    // уровень не сливается в уже существующий свинг-кластер (шаг findClusterZone
+    // для keepSeparate-уровней отключён — F6 в levels.ts; там же книжные полосы
+    // никогда не сливаются между собой — каждая хранит точную геометрию), а
+    // точечные уровни были добавлены РАНЬШЕ и потому не поглощаются книжной
+    // полосой инкрементально. Нумерация комментариев ниже — исходная (1–9), она
+    // же фактический порядок вызовов.
 
     // 1. Касательная классификация: уровень + число касаний ценой после его образования
-    this.addTouchBasedLevels(price, candles, supMap, resMap, params, zoneHalfWidth);
+    this.addTouchBasedLevels(lastClose, candles, supMap, resMap, params, zoneHalfWidth);
 
     // 2. Полярность: пробитые уровни меняют роль
-    this.addPolarityLevels(price, candles, supMap, resMap, params);
+    this.addPolarityLevels(lastClose, candles, supMap, resMap, params);
 
     // 3. Скользящие средние как динамические уровни
-    this.addMALevels(price, candles, supMap, resMap, params.tolerance);
+    this.addMALevels(lastClose, candles, supMap, resMap, params.tolerance);
 
     // 4. Объёмные климасы (главы 15)
     this.addVolumeClimaxLevels(candles, supMap, resMap, params.tolerance);
@@ -322,8 +283,6 @@ export class ZoneVoter {
     const significant = (z: Zone) =>
       z.bookBand !== undefined || z.sources.includes('window') ||
       z.touches >= minTouches || z.votes >= this.STRONG_ZONE_MIN_VOTES;
-
-    const lastClose = lastCandle?.close ?? price;
 
     // ЗАДАЧА 2/3: книжные полосы (long-body/window) маршрутизируются по СВОЕЙ
     // роли и статусу пробоя по закрытию, а не по позиции live-цены относительно
