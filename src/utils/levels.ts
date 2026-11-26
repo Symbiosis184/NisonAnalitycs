@@ -120,7 +120,14 @@ export function addLevelToMap(
   touchesCount?: number,
   options: ZoneClusterOptions = {},
 ): boolean {
-  const hit = findClusterZone(map, level, tolerance);
+  // F6 (аудит): keepSeparate защищает книжную геометрию В ОБЕ СТОРОНЫ.
+  // Раньше findClusterZone пропускал кластеры-цели с keepSeparate, но входящий
+  // книжный уровень всё равно сливался в уже существующий (например, свинг-)
+  // кластер: центр смещался, halfWidth разбухала до покрывающей — отображаемая
+  // полоса становилась шире книжной. Теперь уровень с keepSeparate никогда не
+  // вливается в чужой кластер и всегда создаёт собственный (точное соответствие
+  // геометрии источника; проектное решение о кластеризации, не из книг).
+  const hit = options.keepSeparate ? undefined : findClusterZone(map, level, tolerance);
   if (hit !== undefined) {
     const data = map.get(hit)!;
     data.reasons.push(reason);
