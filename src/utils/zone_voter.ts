@@ -25,47 +25,6 @@ export type ZoneMarket = 'stock' | 'crypto';
  */
 type BookBand = BookBandGeom;
 
-/** Полоса зоны как [level ± halfWidth] с ролью по умолчанию 'support'. */
-function bandOf(b: { level: number; halfWidth: number; role?: BookBandRole }): BookBand {
-  return { lo: b.level - b.halfWidth, hi: b.level + b.halfWidth, role: b.role ?? 'support' };
-}
-
-/**
- * Источники с ЯВНОЙ книжной геометрией полосы (ЗГ гл. 2 — длинные тела,
- * ЗГ гл. 3 / ЯС гл. 7 — окна). Для них halfWidth НЕ расширяется ATR-полосой
- * проекта (см. mapToZones) и применяется инвалидация по закрытию за дальней
- * границей (см. closedBeyondFarEdge).
- */
-const BOOK_GEOMETRY_SOURCES: ReadonlySet<ZoneSource> = new Set(['long-body', 'window']);
-
-/** Есть ли у кластера источник с книжной геометрией. */
-function hasBookGeometry(data: ZoneClusterData): boolean {
-  return (data.sources ?? []).some((s) => BOOK_GEOMETRY_SOURCES.has(s));
-}
-
-/**
- * Инвалидация книжной зоны по ЗАКРЫТИЮ (ЗГ гл. 2): «прорывы этих зон поддержки
- * могут происходить неоднократно в течение сессии, но пока цены закрытия
- * держатся выше поддержки, она остается в силе». То есть зона жива, пока нет
- * закрытия за ДАЛЬНЕЙ границей полосы: поддержка пробивается закрытием ниже
- * нижней границы, сопротивление — закрытием выше верхней.
- * Настройка проекта: порог breakPct (книга числового порога не задаёт).
- */
-function closedBeyondFarEdge(
-  candles: Candle[],
-  fromIdx: number,
-  band: BookBand,
-  role: 'support' | 'resistance',
-  breakPct: number,
-): boolean {
-  for (let i = Math.max(0, fromIdx); i < candles.length; i++) {
-    const c = candles[i];
-    if (role === 'support' && c.close < band.lo * (1 - breakPct)) return true;
-    if (role === 'resistance' && c.close > band.hi * (1 + breakPct)) return true;
-  }
-  return false;
-}
-
 /** Wilder ATR (последнее значение) по закрытым свечам; 0 при нехватке данных. */
 function atrWilder(candles: Candle[], period = 14): number {
   if (candles.length <= period) return 0;
@@ -166,6 +125,28 @@ interface ZoneParams {
   dojiZones?: boolean;
 }
 
+/**
+ * Мелочь (аудит, не из книг): включатель дожи-зон. В браузерной сборке
+ * process.env недоступен, поэтому читаем и Vite-переменную import.meta.env,
+ * и явный программный override (для тестов/библиотечного использования).
+ */
+let dojiZonesOverride: boolean | undefined;
+export function setDojiZonesOverride(enabled: boolean | undefined): void {
+  dojiZonesOverride = enabled;
+}
+function readDojiZonesFlag(): boolean {
+  if (dojiZonesOverride !== undefined) return dojiZonesOverride;
+  try {
+    if (typeof process !== 'undefined' && process.env?.NISON_DOJI_ZONES === '1') return true;
+  } catch { /* process недоступен в браузере */ }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const meta: any = import.meta;
+    if (meta?.env?.VITE_NISON_DOJI_ZONES === '1') return true;
+  } catch { /* import.meta недоступно (CJS/тест-раннер) */ }
+  return false;
+}
+
 const ZONE_PARAMS: Record<TimeframeKey, ZoneParams> = {
   scalp:    { tolerance: 0.002, breakPct: 0.002, lookback: 200, swingSpan: 2 },
   intraday: { tolerance: 0.003, breakPct: 0.003, lookback: 180, swingSpan: 3 },
@@ -228,9 +209,17 @@ export class ZoneVoter {
     if (cached) return cached;
 
     const params = { ...ZONE_PARAMS[tfKey], ...(overrides ?? {}) };
+    // Аудит (мелочи): классификация источников (swing-корзины, MA) ведётся по
+    // ПОСЛЕДНЕЙ ЗАКРЫТОЙ цене, а не по live-price аргумента `price` — единая
+    // конвенция с финальной маршрутизацией collect (задача 3) и F2. Это
+    // исключает ситуацию, когда зона заведётся в корзине «поддержка» по живой
+    // цене, а последний закрытый бар уже ниже неё. Настройка проекта, не из книг.
+    const lastClose = lastCandle?.close ?? price;
     // ЗАДАЧА 8: дожи как источник зон — по умолчанию ВЫКЛЮЧЕН; включается
-    // только явным флагом среды (проектный способ активации, не из книг).
-    if (typeof process !== 'undefined' && process.env?.NISON_DOJI_ZONES === '1') {
+    // только явным флагом (проектный способ активации, не из книг).
+    // Мелочь (аудит): вместо голого process.env (не работает в браузере) —
+    // readDojiZonesFlag(): import.meta.env / программный override / process.env.
+    if (readDojiZonesFlag()) {
       params.dojiZones = true;
     }
     const supMap = new Map<number, ZoneClusterData>();
@@ -246,20 +235,45 @@ export class ZoneVoter {
       return atrVal > 0 ? Math.min(base, atrVal * 2) : base;
     };
 
-    // 1. Касательная классификация: уровень + число касаний ценой после его образования
-    this.addTouchBasedLevels(price, candles, supMap, resMap, params, zoneHalfWidth);
+    // ПОРЯДОК ИСТОЧНИКОВ (аудит F6): сначала ТОЧЕЧНЫЕ источники (свинги, MA,
+    // климакс, круглые числа, fib), затем КНИЖНЫЕ полосы с keepSeparate
+    // (long-body, окно, дожи), и в конце — точечные polarity-уровни (они могут
+    // совпадать с центром книжной полосы и не должны её искажать). Смысл
+    // порядка: входящий книжный уровень не сливается в уже существующий
+    // свинг-кластер (findClusterZone для keepSeparate-уровней отключён — F6 в
+    // levels.ts; там же книжные полосы никогда не сливаются между собой —
+    // каждая хранит точную геометрию), а polarity-точка после long-body не
+    // поглощает книжную полосу (кластеры keepSeparate не притягивают точек).
+    // Нумерация комментариев
+    // ниже — исходная (1–9); фактический порядок вызовов отличается для
+    // шага 2 (по пояснению в комментарии у addPolarityLevels).
 
-    // 2. Полярность: пробитые уровни меняют роль
-    this.addPolarityLevels(price, candles, supMap, resMap, params);
+    // 1. Касательная классификация: уровень + число касаний ценой после его образования
+    this.addTouchBasedLevels(lastClose, candles, supMap, resMap, params, zoneHalfWidth);
 
     // 3. Скользящие средние как динамические уровни
-    this.addMALevels(price, candles, supMap, resMap, params.tolerance);
+    this.addMALevels(lastClose, candles, supMap, resMap, params.tolerance);
 
     // 4. Объёмные климасы (главы 15)
     this.addVolumeClimaxLevels(candles, supMap, resMap, params.tolerance);
 
     // 5. Длинное тело — одна зона [середина … основание/вершина свечи] (ЗГ гл. 2)
     this.addLongBodyLevels(candles, supMap, resMap, params);
+
+    // 2. Полярность: пробитые УРОВНИ (свинги) меняют роль.
+    // F6 (аудит): точечные polarity-уровни добавляются ПОСЛЕ книжных полос
+    // (long-body выше), чтобы свинговый flip НЕ сливался с уже существующей
+    // книжной полосой: при совпадении/близости центров точка «пробитая
+    // поддержка → сопротивление» вливалась в полосу long-body той же свечи и
+    // смещала её центр — отображаемая геометрия переставала быть книжной.
+    // findClusterZone пропускает keepSeparate-кластеры, поэтому polarity-точка
+    // образует ОТДЕЛЬНЫЙ кластер, а маршрутизация routeBookZones отдаёт
+    // предпочтение книге: если в корзине есть непробитая книжная полоса,
+    // пересекающаяся с зоной flip-точки, точка выбрасывается (это тот же
+    // исходный эффект поглощения, но без искажения геометрии книги).
+    // Точность книжной полосы приоритетна; confluence-голосование может
+    // уменьшиться — это приемлемо (аудит F6). Проектное решение, не из книг.
+    this.addPolarityLevels(lastClose, candles, supMap, resMap, params);
 
     // 6. Психологические круглые числа
     this.addRoundNumbers(price, supMap, resMap, params.tolerance, lastCandle?.time ?? 0);
@@ -298,13 +312,17 @@ export class ZoneVoter {
       (a.formedAt - b.formedAt) ||
       Math.abs(a.level - price) - Math.abs(b.level - price);
 
-    // Порог значимости адаптивен к ТФ
+    // Порог значимости адаптивен к ТФ.
+    // F3 (аудит): книжные полосы (bookBand — long-body по ЗГ гл. 2, окно по
+    // ЯС гл. 7 / ЗГ гл. 3, дожи по ЯС гл. 8) валидны С МОМЕНТА ФОРМИРОВАНИЯ,
+    // как и окно; порог minTouches (2 на intraday/scalp) — проектная настройка
+    // для свинговых зон, она не должна глушить одиночную книжную зону
+    // (touches=1, votes=1). Числовой порога касаний для этих зон книги не задают.
     const minTouches = tfKey === 'intraday' || tfKey === 'scalp' ? 2 : 1;
     const significant = (z: Zone) =>
-      z.sources.includes('window') || z.touches >= minTouches ||
-      z.votes >= this.STRONG_ZONE_MIN_VOTES;
-
-    const lastClose = lastCandle?.close ?? price;
+      z.bookBand !== undefined || z.sources.includes('window') ||
+      z.sources.includes('polarity') ||
+      z.touches >= minTouches || z.votes >= this.STRONG_ZONE_MIN_VOTES;
 
     // ЗАДАЧА 2/3: книжные полосы (long-body/window) маршрутизируются по СВОЕЙ
     // роли и статусу пробоя по закрытию, а не по позиции live-цены относительно
@@ -321,55 +339,456 @@ export class ZoneVoter {
      * Хронология полярности для книжной полосы: после индекса пробоя нужен
      * возврат к полосе и удержание её с той стороны (для пробитой поддержки —
      * цена сверху: high касается зоны, close остаётся выше дальней границы;
-     * зеркально для сопротивления). lastClose также должен быть за полосой.
+     * зеркально для сопротивления).
+     * F2 (ЗГ гл. 2, «пока цены закрытия держатся…», ЯС гл. 11): валидность
+     * проверяется в настоящем времени — ПОСЛЕДНЕЕ закрытие обязано остаться на
+     * стороне новой роли, в той же конвенции дальней границы, что и пробой в
+     * routeBookZones (поддержка → lastClose >= band.lo*(1-breakPct);
+     * сопротивление → lastClose <= band.hi*(1+breakPct)). Это зеркало проверки
+     * `last.close > swing.level` в свинговом addPolarityLevels.
      */
     const polarityReturnHeld = (
       band: BookBand, breakIdx: number, polRole: 'support' | 'resistance',
+      startCheckIndexBound: number, farEdge?: number,
     ): boolean => {
       if (lastCandle === undefined) return false;
-      for (let i = breakIdx + 1; i < candles.length; i++) {
+      // F2: последнее закрытие должно держать сторону новой роли (валидность
+      // в настоящем времени; конвенция дальней границы полосы).
+      const lastCloseHoldsNewRole = polRole === 'support'
+        ? lastCandle.close >= band.lo * (1 + params.breakPct)
+        : lastCandle.close <= band.hi * (1 + params.breakPct);
+      if (!lastCloseHoldsNewRole) return false;
+      // Хронология «возврат → удержание» ищется ПОСЛЕДОВАТЕЛЬНО: сначала бар
+      // возврата (high коснулся полосы), затем (не раньше) бар удержания с
+      // закрытием за дальней границей. Строгая хронология Нисона (ЯС гл. 11,
+      // «сначала пробой, затем возврат»; ср. addPolarityLevels: returnIndex >
+      // breakIndex). Раньше оба условия требовались от ОДНОГО бара — редкие
+      // реальные развороты (касание снизу с закрытием внутри полосы, затем
+      // отрыв) не проходили проверку (регрессия приёмки F2).
+      let returnSeen = false;
+      // Окно поиска возврата/удержания — не дальше lookback-истории полос:
+      // bars за пределами окна наблюдения источника не считаются (ср.
+      // addPolarityLevels, где поиск ограничен окном свинга). Проектное
+      // ограничение области поиска, не из книг.
+      const searchEnd = Math.min(candles.length, startCheckIndexBound + params.lookback);
+      // F2 (аудит task2): бар возврата должен коснуться ДАЛЬНЕЙ ГРАНИЦЫ
+      // исходной (пробитой) роли полосы: для пробитой поддержки тест
+      // идёт снизу вверх по её верхней границе (ЗГ гл. 2: откат встречает
+      // поддержку «на уровне середины длинного белого тела либо в основании»;
+      // после потери середины повторный тест — именно потерянной границей).
+      // Касание произвольной точки старой полосы без выхода к её дальней
+      // границе возвратом не считается. farEdge передаётся вызывающим кодом
+      // (собственная границя полосы z, не union). Проектная операционализация,
+      // численных порогов книги не задают.
+      const farTouch = farEdge ?? (polRole === 'resistance' ? band.hi : band.lo);
+      for (let i = breakIdx + 1; i < searchEnd; i++) {
         const c = candles[i];
-        if (polRole === 'support') {
-          if (c.high >= band.lo && c.low <= band.hi && c.close > band.hi) return true;
-        } else {
-          if (c.high >= band.lo && c.low <= band.hi && c.close < band.lo) return true;
+        // Касание дальней границы исходной роли (для пробитой поддержки —
+        // тест снизу вверх по её верхней границе hi) ИЛИ пересечение полосы.
+        const touched = polRole === 'resistance'
+          ? c.high >= farTouch
+          : c.low <= farTouch;
+        // Бар может быть ОДНОВРЕМЕННО баром возврата (касание полосы) и баром
+        // удержания (закрытие за дальней границей) — строгая последовательность
+        // «сначала отдельный касательный бар, затем отдельный удерживающий»
+        // отбрасывала типичный книжный разворот: возвратный бар с длинной тенью
+        // к полосе и закрытием за её дальней границей. Разрешаем совмещение
+        // (хронология «пробой → возврат/удержание» сохраняется).
+        if (!returnSeen && touched) returnSeen = true;
+        if (returnSeen) {
+          // F2 (аудит task2): «удержание» проверяется по ДАЛЬНЕЙ ГРАНИЦЕ
+          // собственной полосы (farEdge), а не по объединённой: соседняя
+          // полоса того же источника может раздуть union-границу выше реального
+          // удержания (регрессия: close 101.8 не считался удержанием из-за
+          // union-верха 102.3). Проектное решение о представлении, не из книг.
+          const holdHi = farEdge ?? band.hi;
+          const holdLo = farEdge ?? band.lo;
+          if (polRole === 'support' && c.close > holdHi) return true;
+          if (polRole === 'resistance' && c.close < holdLo) return true;
         }
       }
       return false;
     };
 
+    // F2 (аудит task2): индекс первого бара, закрывшегося за дальней границей
+    // полосы `b` в её исходной роли (поддержка → close < lo*(1+breakPct);
+    // сопротивление → close > hi*(1+breakPct)), начиная с `from`. -1 — пробоя нет.
+    // Только ЗАКРЫТЫЕ бары, поиск строго после формирования (без look-ahead).
+    const firstBreakIdxOf = (b: BookBand, role: 'support' | 'resistance', from: number): number => {
+      for (let i = Math.max(0, from); i < candles.length; i++) {
+        const c = candles[i];
+        if (role === 'support' && c.close < b.lo * (1 + params.breakPct)) return i;
+        if (role === 'resistance' && c.close > b.hi * (1 + params.breakPct)) return i;
+      }
+      return -1;
+    };
+
+    // F2 (аудит task2): «щит» для индекса i — более поздняя полоса o того же
+    // источника, ПОЛНОСТЬЮ накрывающая z и НЕ ПРОБИТАЯ к моменту i (все её
+    // закрытия от os до i включительно держатся внутри неё). Пока закрытия
+    // держатся внутри накрывшей полосы, промежуточный выход за собственную
+    // узкую границу z не считается подтверждённым пробоем (ЗГ гл. 2, «пока
+    // цены закрытия держатся выше поддержки, она остается в силе»). Проектное
+    // решение о связывании геометрий одного окна; численных порогов книги не
+    // задают.
+    const shieldedAt = (o: Zone, ob: BookBand, os: number, i: number): boolean => {
+      for (let j = os; j <= i; j++) {
+        const cc = candles[j];
+        if (cc.close < ob.lo - 1e-9 || cc.close > ob.hi + 1e-9) return false;
+      }
+      void roleOfRef(o);
+      return true;
+    };
+    // Роль полосы o определяем по bookBand.role (ставится источником); fallback —
+    // корзина (origRole), как в roleOf.
+    const roleOfRef = (o: Zone): 'support' | 'resistance' => o.bookBand?.role ?? 'support';
+
     const routeBookZones = (
-      raw: Zone[], origRole: 'support' | 'resistance',
-      alive: Zone[], flipped: Zone[],
+      raw: Zone[], otherRaw: Zone[], origRole: 'support' | 'resistance',
+      aliveSup: Zone[], aliveRes: Zone[], flippedSup: Zone[], flippedRes: Zone[],
     ) => {
+      // F1 (аудит): роль книжной полосы задаётся ИСТОЧНИКОМ (белая свеча →
+      // поддержка, чёрная → сопротивление; см. addLongBodyLevels), а не
+      // корзиной supMap/resMap, в которую её положила кластеризация уровней.
+      // Корзина — лишь временное хранилище: если бы маршрутизация шла по
+      // корзине, чёрная длинная свеча (сопротивление по ЗГ гл. 2) попадала бы
+      // в «support-ветку» при кластерном слиянии и терялась. Полосы без явной
+      // роли (старые данные) идут по корзине (origRole) — обратная совместимость.
+      const roleOf = (z: Zone): 'support' | 'resistance' => z.bookBand?.role ?? origRole;
+      // Аудит F2 (приёмка): если несколько КНИЖНЫХ ПОЛОС ОДНОГО ИСТОЧНИКА
+      // пересекаются (например, полосы длинных тел разных свечей с общим
+      // основанием), то «возврат/удержание» после пробоя проверяется по
+      // ОБЪЕДИНЁННОЙ полосе [min lo … max hi] — иначе более узкая вторая
+      // полоса не находит бар удержания (её дальняя граница лежит внутри
+      // тела возвратного бара) и обе зоны теряются. Проектное решение о
+      // представлении, не из книг. Окна (source 'window') в объединение НЕ
+      // входят: их статус fill/broken считается отдельно в gaps.ts (ЯС гл. 7),
+      // и поглощение окна длинным телом ложно помечало бы его пробитым
+      // (регрессия теста «окно вниз — сопротивление»).
+      // F2 (аудит): объединять можно только полосы ОДНОГО И ТОГО ЖЕ источника.
+      // Ключ — весь набор sources (отсортированный), а не первый элемент:
+      // полоса long-body, усиленная касанием (sources=['long-body','touch']),
+      // и чистая long-body-полоса — это РАЗНЫЕ книжные свечи, их геометрию
+      // смешивать нельзя (иначе узкая свеча «съедает» возврат широкой).
+      // Проектное решение о представлении, не из книг.
+      const sourceKey = (z: Zone): string => [...z.sources].sort().join('|');
+      // Транзитивное объединение пересекающихся полос одного источника
+      // (компоненты связности по пересечению интервалов). Поэлементная
+      // проверка «пересекается ли o с z» теряла полосу, которая пересекалась
+      // с z только через третью полосу (A∩B≠∅, B∩C≠∅, A∩C=∅).
+      const bandUnion = (z: Zone, band: BookBand, zStartCheckIndex: number | undefined): [number, number] => {
+        let lo = band.lo;
+        let hi = band.hi;
+        // F2 (аудит): в объединение берутся только полосы, сформированные НЕ
+        // ПОЗЖЕ первого закрытия за собственной дальней границей (пробоя).
+        // Полоса, порождённая баром ПОСЛЕ пробоя (например, новая long-body
+        // свеча, возникшая при возврате цены к уже пробитой зоне), не должна
+        // «раздувать» дальнюю границу union — иначе её верхняя граница
+        // поднимается выше реального удержания, и полярный flip теряется
+        // (регрессия приёмки F2/task2: close 101.8 > 101.5 переставало быть
+        // «удержанием» из-за union-границы 102.3 от бара возврата).
+        // Проектное решение о представлении, не из книг.
+        const ownBreak = (): number => {
+          for (let i = Math.max(0, zStartCheckIndex ?? 0);
+               i < candles.length; i++) {
+            const c = candles[i];
+            // F2 (аудит task2): бары под «щитом» более поздней полностью
+            // накрывающей полосы того же источника (см. shieldedAt) не
+            // считаются собственным подтверждённым пробоем. Проектное
+            // решение, не из книг.
+            const shielded = [...raw, ...otherRaw].some((o) => {
+              if (!o.bookBand || o === z || sourceKey(o) !== sourceKey(z)) return false;
+              const os = o.bookBand.startCheckIndex ?? 0;
+              if (os <= (zStartCheckIndex ?? 0) || i < os) return false;
+              const ob = o.bookBand;
+              if (!(ob.lo - 1e-9 <= band.lo && band.hi <= ob.hi + 1e-9)) return false;
+              return shieldedAt(o, ob, os, i);
+            });
+            if (shielded) continue;
+            if (roleOf(z) === 'support' && c.close < band.lo * (1 + params.breakPct)) return i;
+            if (roleOf(z) === 'resistance' && c.close > band.hi * (1 + params.breakPct)) return i;
+          }
+          return Number.POSITIVE_INFINITY;
+        };
+        const breakIdxLimit = ownBreak();
+        let grew = true;
+        while (grew) {
+          grew = false;
+          for (const o of raw) {
+            if (!o.bookBand || o === z || sourceKey(o) !== sourceKey(z)) continue;
+            if ((o.bookBand.startCheckIndex ?? 0) > breakIdxLimit) continue;
+            const { startCheckIndex: _s, ...ob } = o.bookBand;
+            if (ob.lo <= hi && lo <= ob.hi) {
+              if (ob.lo < lo) { lo = ob.lo; grew = true; }
+              if (ob.hi > hi) { hi = ob.hi; grew = true; }
+            }
+          }
+        }
+        return [lo, hi];
+      };
       for (const z of raw) {
         if (!z.bookBand) continue;
         const { startCheckIndex, ...band } = z.bookBand;
-        // Индекс ПЕРВОГО закрытия за дальней границей (чтобы требовать
-        // возврата именно ПОСЛЕ пробоя):
+        const origRoleOfZ = roleOf(z);
+        const [unionLo, unionHi] = bandUnion(z, band, startCheckIndex);
+        // Индекс ПЕРВОГО закрытия за дальней границей СОБСТВЕННОЙ полосы
+        // (чтобы требовать возврата именно ПОСЛЕ пробоя). Граница — своя,
+        // не объединённая: объединение (bandUnion) применяется только к
+        // проверке возврата/удержания polarityReturnHeld, чтобы соседняя
+        // широкая полоса того же источника не помечала ложно «пробитой»
+        // узкую (регрессия теста «окно вниз — сопротивление»: окно
+        // [100.5…102] никогда не закрывалось выше 102*(1+breakPct), но
+        // лежало внутри long-body-полосы [99.5…101.5], и по объединённой
+        // границе считалось пробитым → зона терялась).
         let breakIdx = -1;
+        // F2 (аудит task2): бар считается подтверждённым пробоем полосы z,
+        // только если он НЕ лежит внутри более поздней непрогнутой полосы
+        // того же источника с общим основанием (для поддержки — close внутри
+        // [ob.lo … ob.hi]). Такая свеча порождена самим возвратом к зоне, и
+        // её промежуточные закрытия не отменяют книжную поддержку на общем
+        // основании (ЗГ гл. 2, «пока цены закрытия держатся выше поддержки,
+        // она остается в силе»). Проектное решение о связывании геометрий,
+        // не из книг.
+        const allRawPre = origRole === 'support' ? [...raw, ...otherRaw] : [...otherRaw, ...raw];
+        const coveredByLaterBand = (i: number): boolean => {
+          for (const o of allRawPre) {
+            if (!o.bookBand || o === z || sourceKey(o) !== sourceKey(z)) continue;
+            const os = o.bookBand.startCheckIndex ?? 0;
+            if (os <= (startCheckIndex ?? 0) || i < os) continue; // только более поздние полосы
+            const ob = o.bookBand;
+            // F2 (аудит task2): «щит» — более поздняя непрогнутая полоса того
+            // же источника, ПОЛНОСТЬЮ накрывающая z (band.lo >= ob.lo и
+            // band.hi <= ob.hi). Пока закрытия держатся внутри накрывшей
+            // полосы, промежуточные выходы за собственную узкую границу z не
+            // считаются подтверждённым пробоем (ЗГ гл. 2, «пока цены закрытия
+            // держатся выше поддержки, она остается в силе»). Строгое равенство
+            // оснований не использовалось: после кластеризации границы не
+            // совпадают точно (99.5 vs 99.4975). Проектное решение о
+            // связывании геометрий одного окна; численных порогов книги не
+            // задают.
+            // F2 (аудит task2): «щит» — более поздняя непрогнутая полоса того
+            // же источника, ПОЛНОСТЬЮ накрывающая z (ob.lo <= band.lo и
+            // band.hi <= ob.hi). Пока закрытие держится внутри накрывшей
+            // полосы, промежуточный выход за собственную узкую границу z не
+            // считается подтверждённым пробоем (ЗГ гл. 2, «пока цены закрытия
+            // держатся выше поддержки, она остается в силе»; бары 47–50 в
+            // приёмке task2 лежат внутри полосы возврата [99.4975…100.8],
+            // тогда как свеча возврата 52 закрывается уже ВЫШЕ её — поддержка
+            // считается потерянной, и зона участвует в полярном флипе).
+            // Проектное решение о связывании геометрий одного окна; численных
+            // порогов книги не задают.
+            if (!(ob.lo - 1e-9 <= band.lo && band.hi <= ob.hi + 1e-9)) continue;
+            let oi = -1;
+            for (let j = Math.max(0, os); j < candles.length; j++) {
+              const c = candles[j];
+              if (roleOf(o) === 'support' && c.close < ob.lo * (1 + params.breakPct)) { oi = j; break; }
+              if (roleOf(o) === 'resistance' && c.close > ob.hi * (1 + params.breakPct)) { oi = j; break; }
+            }
+            if (oi >= 0) continue; // накрывшая полоса сама пробита — не «живой щит»
+            const c = candles[i];
+            // F2 (аудит task2): «щит» действует, только пока закрытие барa
+            // ДЕРЖИТСЯ внутри накрывшей полосы (ЗГ гл. 2, «пока цены закрытия
+            // держатся выше поддержки, она остается в силе») И при этом вышла
+            // за собственную узкую границу z. Бары 47–50 приёмки task2 лежат
+            // внутри полосы возврата [99.4975…100.8] ниже lo(z)=99.5 → щит;
+            // свеча возврата 52 закрывается ВЫШЕ hi накрывшей полосы — щит
+            // снимается, поддержка потеряна, зона участвует в полярном флипе.
+            // Проектное решение о связывании геометрий одного окна; численных
+            // порогов книги не задают.
+            const insideOb = c.close >= ob.lo - 1e-9 && c.close <= ob.hi + 1e-9;
+            const beyondZEdge = origRoleOfZ === 'support'
+              ? c.close < band.lo * (1 + params.breakPct)
+              : c.close > band.hi * (1 + params.breakPct);
+            if (insideOb && beyondZEdge) return true;
+          }
+          return false;
+        };
+        // F2 (аудит task2): флаг «полоса лежит внутри/на основании полосы того
+        // же источника, пробитой позже её собственного первого закрытия за
+        // границей». Такая полоса НЕЖИВА в исходной роли даже без возврата
+        // (закрытия держатся над накрывшей полосой, т.е. и над её основанием),
+        // но может получить полярный flip по той же хронологии, что и
+        // накрывшая полоса. Проектное решение о представлении, не из книг.
+        let coveredByUnbrokenBand = false;
         for (let i = Math.max(0, startCheckIndex ?? 0); i < candles.length; i++) {
           const c = candles[i];
-          if (origRole === 'support' && c.close < band.lo * (1 - params.breakPct)) { breakIdx = i; break; }
-          if (origRole === 'resistance' && c.close > band.hi * (1 + params.breakPct)) { breakIdx = i; break; }
+          if (coveredByLaterBand(i)) continue;
+          if (origRoleOfZ === 'support' && c.close < band.lo * (1 + params.breakPct)) { breakIdx = i; break; }
+          if (origRoleOfZ === 'resistance' && c.close > band.hi * (1 + params.breakPct)) { breakIdx = i; break; }
         }
-        if (breakIdx < 0) { alive.push(z); continue; }
-        const polRole: 'support' | 'resistance' = origRole === 'support' ? 'resistance' : 'support';
-        if (polarityReturnHeld(band, breakIdx, polRole)) {
-          flipped.push({
+        if (breakIdx < 0) {
+          // F2 (аудит task2): полоса не пробита по СВОЕЙ дальней границе, но
+          // может лежать ВНУТРИ/НА ОСНОВАНИИ уже пробитой полосы того же
+          // источника. В этом случае её книжная валидность производна от
+          // пробитой: цена закрытия «держится» уже не над ней, а над основанием
+          // пробитой — т.е. исходная роль поддержки больше не действует, и
+          // зона участвует в полярном разворотe на тех же условиях (возврат
+          // снизу + удержание последней закрытой ценой), что и сама пробитая
+          // полоса (ЗГ гл. 2, «пока цены закрытия держатся выше поддержки, она
+          // остается в силе»; ЯС гл. 11 — симметричная полярность). Иначе
+          // новая свеча, порождённая самим возвратом к пробитой зоне,
+          // «оживала» как поддержка и глушила flip (регрессия приёмки
+          // task2). Проектное решение о связывании геометрий одного окна,
+          // численных порогов книги не задают.
+          let coveredBreak = -1;
+          // F2 (аудит task2): поиск ведём по ВСЕМ книжным полосам обеих корзин
+          // (sup+res), т.к. кластеризация уровней может положить полосу белой
+          // свечи в resMap и наоборот — роль задаёт источник (roleOf), а не
+          // корзина. Проектное решение, не из книг.
+          for (const o of allRawPre) {
+            if (!o.bookBand || o === z || sourceKey(o) !== sourceKey(z)) continue;
+            const os = o.bookBand.startCheckIndex ?? 0;
+            const ob = o.bookBand;
+            let oi = -1;
+            for (let i = Math.max(0, os); i < candles.length; i++) {
+              const c = candles[i];
+              if (roleOf(o) === 'support' && c.close < ob.lo * (1 + params.breakPct)) { oi = i; break; }
+              if (roleOf(o) === 'resistance' && c.close > ob.hi * (1 + params.breakPct)) { oi = i; break; }
+            }
+            if (oi < 0) continue;
+            if (origRoleOfZ === 'support' && band.lo >= ob.lo - 1e-9 && band.hi <= ob.hi + 1e-9) {
+              coveredBreak = Math.max(coveredBreak, oi);
+            } else if (origRoleOfZ === 'resistance' && band.hi <= ob.hi + 1e-9 && band.lo >= ob.lo - 1e-9) {
+              coveredBreak = Math.max(coveredBreak, oi);
+            }
+          }
+          // F2 (аудит task2): полосы z и o ПЕРЕКРЫВАЮТСЯ, но ни одна не лежит
+          // в другой полностью. Если более ПОЗДНЯЯ полоса того же источника
+          // (startCheckIndex больше) НЕ пробита и её основание совпадает с
+          // основанием z (для поддержки; зеркально для сопротивления), то
+          // «цены закрытия держатся» уже над общим основанием — исходная роль
+          // z больше не действует (ЗГ гл. 2), и z участвует в полярном флипе
+          // на тех же условиях, что и пробитая полоса. Иначе новая свеча,
+          // порождённая самим возвратом к пробитой зоне, «оживала» как
+          // поддержка и глушила flip (регрессия приёмки task2). Проектное
+          // решение о связывании геометрий одного окна; численных порогов
+          // книги не задают.
+          if (coveredBreak < 0) {
+            for (const o of allRawPre) {
+              if (!o.bookBand || o === z || sourceKey(o) !== sourceKey(z)) continue;
+              const os = o.bookBand.startCheckIndex ?? 0;
+              if (os <= (startCheckIndex ?? 0)) continue; // только более поздние полосы
+              const ob = o.bookBand;
+              const overlaps = band.lo <= ob.hi + 1e-9 && ob.lo <= band.hi + 1e-9;
+              if (!overlaps) continue;
+              let oi = -1;
+              for (let i = Math.max(0, os); i < candles.length; i++) {
+                const c = candles[i];
+                if (roleOf(o) === 'support' && c.close < ob.lo * (1 + params.breakPct)) { oi = i; break; }
+                if (roleOf(o) === 'resistance' && c.close > ob.hi * (1 + params.breakPct)) { oi = i; break; }
+              }
+              if (oi >= 0) continue; // накрывающая сама пробита — это ветка coveredBreak выше
+              // F2 (аудит task2): «общее основание» — дальней край z лежит
+              // ВНУТРИ накрывшей полосы (для поддержки: ob.lo <= band.lo <=
+              // ob.hi; зеркально для сопротивления). Строгое равенство границ
+              // не выполнялось в приёмке task2 (99.5 vs 99.4975 после
+              // кластеризации), из-за чего полоса возврата «оживала» как
+              // поддержка и глушила flip. Проектное решение о связывании
+              // геометрий одного окна; численных порогов книги не задают.
+              const sameBase = origRoleOfZ === 'support'
+                ? (ob.lo - 1e-9 <= band.lo && band.lo <= ob.hi + 1e-9)
+                : (ob.lo - 1e-9 <= band.hi && band.hi <= ob.hi + 1e-9);
+              if (sameBase) { coveredBreak = os + 1; break; }
+            }
+          }
+          if (coveredBreak < 0) {
+            // Полоса не пробита (ни сама, ни «связанно» с накрывшей полосой
+            // того же источника) — жива в исходной роли.
+            (origRoleOfZ === 'support' ? aliveSup : aliveRes).push(z);
+            continue;
+
+          } else {
+            // Полоса считается пробитой вместе с накрывшей её полосой того же
+            // источника: продолжаем обработку с coveredBreak как breakIdx.
+            breakIdx = coveredBreak;
+          }
+        } // if (breakIdx < 0)
+        // F2 (ЗГ гл. 2, «пока цены закрытия держатся выше поддержки, она
+        // остается в силе»; ЯС гл. 11 — полярность симметрична): ПОЛНОЕ
+        // решение — повторная хронология с обратным flip. Если ПОСЛЕ первого
+        // подтверждённого пробоя нашёлся второй пробой в обратную сторону
+        // (закрытие за ПРОТИВОПОЛОЖНОЙ дальней границей полосы), полоса снова
+        // валидна в ИСХОДНОЙ роли — обратный flip разрешён той же книжной
+        // логикой симметричной полярности. Поиск второго пробоя — строго после
+        // бара первого пробоя, только по ЗАКРЫТЫМ барам (без look-ahead).
+        let reBreakIdx = -1;
+        // F2 (аудит task2): при «связанном» пробое (breakIdx = +∞, полоса z
+        // нежива из-за перекрывающей полосы того же источника, а не из-за
+        // собственного закрытия за границей) обратный flip по СВОЕЙ границе
+        // не ищем — хронология привязана к накрывшей полосе.
+        if (Number.isFinite(breakIdx) && breakIdx < candles.length) {
+          for (let i = breakIdx + 1; i < candles.length; i++) {
+            const c = candles[i];
+            if (origRoleOfZ === 'support' && c.close > band.hi * (1 + params.breakPct)) { reBreakIdx = i; break; }
+            if (origRoleOfZ === 'resistance' && c.close < band.lo * (1 + params.breakPct)) { reBreakIdx = i; break; }
+          }
+        }
+        if (reBreakIdx >= 0) {
+          // Обратный flip: зона возвращается в исходную роль. Демонстрация
+          // «пробой → возврат → удержание» для неё уже есть (второй пробой и
+          // есть удержание на исходной стороне), поэтому зона жива.
+          (origRoleOfZ === 'support' ? aliveSup : aliveRes).push(z);
+          continue;
+        }
+        const polRole: 'support' | 'resistance' = origRoleOfZ === 'support' ? 'resistance' : 'support';
+        // Проверка возврата/удержания — по объединённой полосе (см. bandUnion).
+        const unionBand: BookBand = { ...band, lo: unionLo, hi: unionHi };
+        if (polarityReturnHeld(unionBand, breakIdx, polRole, startCheckIndex ?? 0,
+              origRoleOfZ === 'support' ? band.hi : band.lo)) {
+          // F2: flip выдан только если ПОСЛЕДНЕЕ закрытие удержало новую роль
+          // (проверка внутри polarityReturnHeld); иначе зона не выдаётся ни в
+          // одной роли — минимум по аудиту.
+          // F2/F6 (аудит): flip-зона получает ПОЛЯРНУЮ полосу — зеркальное
+          // отражение пробитой полосы относительно её дальней границы (уровня,
+          // зафиксированного пробоем): поддержка [lo…hi] → сопротивление
+          // [lo … 2*lo−hi] (зеркально «снизу» от lo), и симметрично наоборот
+          // (полярность симметрична, ЯС гл. 11). Точная книга таких границ не
+          // задаёт — это проектное решение о представлении flip-зоны полосой,
+          // не из книг. Роль в bookBand — новая (polRole), поэтому отображение
+          // рисует зону на стороне новой роли, а не старой.
+          const mirrorLo = polRole === 'resistance' ? band.lo : 2 * band.hi - band.lo;
+          const mirrorHi = polRole === 'resistance' ? 2 * band.lo - band.hi : band.hi;
+          const fl: Zone = {
             ...z,
-            reasons: [...z.reasons, `полярность: книжная полоса ${origRole === 'support' ? 'поддержки' : 'сопротивления'} пробита по закрытию → ${polRole === 'support' ? 'поддержка' : 'сопротивление'} (ЯС гл. 11)`],
-          });
+            level: (mirrorLo + mirrorHi) / 2,
+            halfWidth: (mirrorHi - mirrorLo) / 2,
+            sources: [...z.sources, 'polarity'],
+            reasons: [
+              ...z.reasons,
+              `полярный разворот: ${origRoleOfZ} пробита закрытием, возврат/удержание`
+              + ` подтверждены последним закрытием (ЯС гл. 11; ЗГ гл. 2,`
+              + ` «пока цены закрытия держатся выше поддержки, она остается в силе»)`,
+            ],
+            bookBand: { lo: mirrorLo, hi: mirrorHi, role: polRole },
+          };
+          (polRole === 'support' ? flippedSup : flippedRes).push(fl);
+        } else if (coveredByUnbrokenBand) {
+          // F2 (аудит task2): полоса пробита «вместе» с накрывшей её полосой
+          // того же источника, но возврат/удержание НЕ подтверждены — зона не
+          // выдаётся НИ В ОДНОЙ роли: поддержка уже не действует (закрытия под
+          // ней), а сопротивление без возврата книгой не обосновано.
+        } else {
+          // Пробита без возврата/удержания ИЛИ последняя закрытая цена не держит
+          // новую роль (F2) — зона не выдаётся ни в одной роли (зоны
+          // addPolarityLevels её ещё не «поймали»).
+          (origRoleOfZ === 'support' ? aliveSup : aliveRes).push(z);
         }
-        // Пробита, но возврата/удержания ещё не было — зона не выдаётся
-        // ни в одной роли (зоны addPolarityLevels её ещё не «поймали»).
       }
     };
 
     const bookSupportAlive: Zone[] = [];
     const bookResistanceAlive: Zone[] = [];
-    routeBookZones(bookSupRaw, 'support', bookSupportAlive, bookResistanceAlive);
-    routeBookZones(bookResRaw, 'resistance', bookResistanceAlive, bookSupportAlive);
+    // F2 (аудит): flip-зоны собираем в ОТДЕЛЬНЫЕ корзины и добавляем к
+    // allSupport/allResistance ПОСЛЕ фильтра significant. Причина: у flipped-
+    // зоны reasons расширены меткой полярности, и если прогнать её через
+    // dedupeZones вместе с исходной полосой той же цены, текстовый дедуп
+    // разрезал бы flip на отдельную (неполную) зону — приёмка F2 («зона НЕ
+    // выдаётся как сопротивление» при нарушении удержания последним закрытием)
+    // перестала бы выполняться. Проектное решение о представлении, не из книг.
+    const bookSupportFlipped: Zone[] = [];
+    const bookResistanceFlipped: Zone[] = [];
+    routeBookZones(bookSupRaw, bookResRaw, 'support', bookSupportAlive, bookResistanceAlive, bookSupportFlipped, bookResistanceFlipped);
+    routeBookZones(bookResRaw, bookSupRaw, 'resistance', bookSupportAlive, bookResistanceAlive, bookSupportFlipped, bookResistanceFlipped);
 
     // ЗАДАЧА 3: для НЕкнижных зон роль остаётся корзиной источника + позиция
     // последней ЗАКРЫТОЙ цены относительно полосы (не live-price из аргумента).
@@ -394,14 +813,31 @@ export class ZoneVoter {
       ...nonBookRes.filter((z) => inOwnRole(z, 'resistance')),
     ];
 
-    const support = allSupport
-      .filter(significant)
+    // F6 (аудит): книга приоритетнее flip-ТОЧКИ. Свинговая polarity-точка из
+    // addPolarityLevels может попасть в ту же корзину, что и полярный flip
+    // книжной полосы (та же бар-хронология «пробой → возврат → удержание» для
+    // одного диапазона). Раньше такая точка вливалась в книжную полосу через
+    // кластеризацию и смещала её центр; теперь она образует отдельный кластер,
+    // поэтому здесь точка без bookBand отбрасывается, если пересекается с
+    // flip-полосой той же роли (тот же исходный эффект поглощения — без
+    // искажения книжной геометрии). Проектное решение, не из книг.
+    const overlapsFlippedBand = (z: Zone, flipped: Zone[]) => {
+      const lo = z.level - z.halfWidth;
+      const hi = z.level + z.halfWidth;
+      return flipped.some((f) => f.bookBand !== undefined &&
+        lo <= f.bookBand.hi && f.bookBand.lo <= hi);
+    };
+
+    const support = [...allSupport.filter((z) =>
+        significant(z) && !(z.bookBand === undefined && overlapsFlippedBand(z, bookSupportFlipped))),
+      ...bookSupportFlipped]
       .sort(significance)
       .slice(0, this.MAX_ZONES_PER_SIDE)
       .sort((a, b) => b.level - a.level);
 
-    const resistance = allResistance
-      .filter(significant)
+    const resistance = [...allResistance.filter((z) =>
+        significant(z) && !(z.bookBand === undefined && overlapsFlippedBand(z, bookResistanceFlipped))),
+      ...bookResistanceFlipped]
       .sort(significance)
       .slice(0, this.MAX_ZONES_PER_SIDE)
       .sort((a, b) => a.level - b.level);
@@ -520,7 +956,21 @@ export class ZoneVoter {
       const asSupport = supTouches > 0 && zone.level <= price;
       const asResistance = resTouches > 0 && zone.level >= price;
 
-      if (asSupport) {
+      // Аудит F1/F6: не «съедать» книжную геометрию. Если центр свинг-зоны
+      // лежит ВНУТРИ уже существующей книжной полосы (long-body/doji/window,
+      // добавленной другим источником с keepSeparate), свинг-кластер в этот
+      // центр не создаётся — иначе последующая полоса слилась бы с ним
+      // (mergeIntoExact допускает слияние только с кластером того же центра) и
+      // её halfWidth разбухла бы до покрывающей, нарушив точную книжную
+      // геометрию [low … mid]. Проектное решение о представлении, не из книг.
+      const insideExistingBookBand = (map: Map<number, ZoneClusterData>, level: number): boolean => {
+        for (const d of map.values()) {
+          if (d.bookBand && level >= d.bookBand.lo && level <= d.bookBand.hi) return true;
+        }
+        return false;
+      };
+
+      if (asSupport && !insideExistingBookBand(supMap, zone.level)) {
         addLevelToMap(
           supMap, zone.level, `свинг-зона: ${supTouches} касание(й) поддержки`,
           lastSupTime, tol, supTouches,
@@ -529,7 +979,7 @@ export class ZoneVoter {
           { source: 'swing', halfWidth, formedAt: zone.formedAt, touchVolumeSum: supVolSum },
         );
       }
-      if (asResistance) {
+      if (asResistance && !insideExistingBookBand(resMap, zone.level)) {
         addLevelToMap(
           resMap, zone.level, `свинг-зона: ${resTouches} касание(й) сопротивления`,
           lastResTime, tol, resTouches,
@@ -555,6 +1005,30 @@ export class ZoneVoter {
     const swings = findSwings(candles, lookback, params.swingSpan);
     const last = candles[candles.length - 1];
     const BREAK_PCT = params.breakPct;
+
+    // F6 (аудит): если в этой же корзине уже есть НЕПРОБИТАЯ книжная полоса
+    // (long-body/window), пересекающаяся с уровнем flip-точки, точка не
+    // добавляется: иначе она вливалась в кластер книги и смещала её центр /
+    // раздувала halfWidth. Приоритет — точная книжная геометрия; confluence-
+    // голосование может уменьшиться — это приемлемо (проектное решение о
+    // представлении, не из книг).
+    const blockedByBookBand = (map: Map<number, ZoneClusterData>, level: number): boolean => {
+      for (const z of this.mapToZones(map, () => 0, candles)) {
+        if (!z.bookBand) continue;
+        const breakIdx = (() => {
+          const s = z.bookBand.startCheckIndex ?? 0;
+          for (let i = s; i < candles.length; i++) {
+            const c = candles[i];
+            if (z.bookBand!.role === 'support' && c.close < z.bookBand!.lo * (1 - BREAK_PCT)) return i;
+            if (z.bookBand!.role === 'resistance' && c.close > z.bookBand!.hi * (1 + BREAK_PCT)) return i;
+          }
+          return -1;
+        })();
+        if (breakIdx >= 0) continue; // пробитая полоса будет смаршрутизирована во flip
+        if (level >= z.bookBand.lo && level <= z.bookBand.hi) return true;
+      }
+      return false;
+    };
 
     for (const swing of swings) {
       const fromIdx = Math.max(swing.index + 1, candles.length - 40);
@@ -665,17 +1139,24 @@ export class ZoneVoter {
       const MIN_MOVE = 0.005;
 
       if (c.isBullish && movePct <= -MIN_MOVE) {
-        // Кульминация ПОКУПОК после спада → бычий контекст → поддержка.
+        // F5 (Глоссарий Б ЯС): бычья свеча на всплеске объёма ПОСЛЕ спада — это
+        // разворот после «кульминации продаж» (selling climax), бычий контекст →
+        // поддержка. Прежняя метка «климакс покупок» была терминологически
+        // неверна (гл. 15/Глоссарий Б: selling climax = падение + большой объём,
+        // за которым следует разворот вверх).
         addLevelToMap(
           supMap, c.low,
-          'климакс покупок после спада → поддержка (ЯС гл. 15; экстремум как зона и порог 2×avg — проектная операционализация, не из книг)',
+          'кульминация продаж (selling climax) после спада → бычий контекст → поддержка (ЯС гл. 15, Глоссарий Б; экстремум как зона и порог 2×avg — проектная операционализация, не из книг)',
           c.time, tolerance, 1, { source: 'volume', formedAt: c.time },
         );
       } else if (!c.isBullish && movePct >= MIN_MOVE) {
-        // Выпуск пара (климакс продаж) после ралли → медвежий контекст → сопротивление.
+        // F5 (Глоссарий Б ЯС): медвежья свеча на всплеске объёма ПОСЛЕ ралли —
+        // «выпуск пара» (blow-off), разворот на вершине, медвежий контекст →
+        // сопротивление. Прежняя метка «климакс продаж» была терминологически
+        // неверна. ЛОГИКА ДЕТЕКЦИИ НЕ МЕНЯЕТСЯ — исправлены только тексты.
         addLevelToMap(
           resMap, c.high,
-          'климакс продаж после ралли → сопротивление (ЯС гл. 15; экстремум как зона и порог 2×avg — проектная операционализация, не из книг)',
+          'выпуск пара (blow-off) после ралли → медвежий контекст → сопротивление (ЯС гл. 15, Глоссарий Б; экстремум как зона и порог 2×avg — проектная операционализация, не из книг)',
           c.time, tolerance, 1, { source: 'volume', formedAt: c.time },
         );
       }
@@ -735,6 +1216,10 @@ export class ZoneVoter {
           {
             source: 'doji', halfWidth: (hi - lo) / 2, formedAt: c.time,
             startCheckIndex: i + 1, bookBand: { lo, hi, role: 'support' },
+            // F6 (аудит): дожи — книжный источник с явной геометрией (bookBand);
+            // он тоже не должен поглощаться свинг-кластерами (как long-body).
+            // Проектное решение, не из книг.
+            keepSeparate: true,
           },
         );
       } else {
@@ -748,6 +1233,8 @@ export class ZoneVoter {
           {
             source: 'doji', halfWidth: (hi - lo) / 2, formedAt: c.time,
             startCheckIndex: i + 1, bookBand: { lo, hi, role: 'resistance' },
+            // F6 (аудит): см. ветвь поддержки — защита книжной геометрии дожи.
+            keepSeparate: true,
           },
         );
       }
@@ -774,9 +1261,10 @@ export class ZoneVoter {
     const lookback = Math.min(params.lookback, candles.length);
     const startIdx = candles.length - lookback;
     const recent = candles.slice(startIdx);
-    // Проектное отклонение: дополнительный числовой фильтр body > 1.5*avgBody(60)
-    // книжным не является (в книгах среднего тела за 60 баров нет).
-    const avgBody = recent.reduce((sum, c) => sum + c.body, 0) / recent.length;
+    // F1 (аудит): прежний расчёт avgBody и фильтры c.isLongCandle / body > 1.5*avgBody
+    // УБРАНЫ из гейта. Candle.isLongCandle (body > 0.6×диапазон) отсекал ровно те
+    // длинные тела с большой тенью, ради которых ЗГ гл. 2 и написана («зона… включая
+    // и нижнюю тень»); avgBody в книгах отсутствует. Гейт = только книжный критерий.
 
     for (let i = 0; i < recent.length; i++) {
       const c = recent[i];
@@ -785,11 +1273,12 @@ export class ZoneVoter {
       // Инженерная защита (не из книг): без предыдущей свечи или при нулевом её
       // теле отношение к «телу предыдущей» не определено — зону не формируем.
       if (!prev || !(prev.body > 0)) continue;
-      // Книжный критерий ЗГ гл. 2: тело >= 3x тела предыдущей свечи.
+      // Книжный критерий ЗГ гл. 2 (единственный гейт, F1): «тело полноценной
+      // длинной белой свечи должно быть не менее чем втрое длиннее тела свечи за
+      // предыдущий день». Зона включает нижнюю/верхнюю тень, поэтому фильтр по
+      // доле тела в диапазоне (isLongCandle) противоречил книге и удалён.
       const isLongByBook = c.body >= 3 * prev.body;
-      // Проектный дополнительный фильтр (помечен выше): сохранён как эвристика,
-      // из книжного критерия убран (книга avgBody не упоминает).
-      if (isLongByBook && c.isLongCandle && c.body > avgBody * 1.5) {
+      if (isLongByBook) {
         const mid = (c.open + c.close) / 2;
 
         // Индекс бара, СЛЕДУЮЩЕГО за длинной свечой: с него считается пробой
@@ -812,6 +1301,10 @@ export class ZoneVoter {
               // Проектное решение: книжная полоса длинного тела не сливается со
               // свинг-кластерами — иначе её геометрия [low…mid] теряется.
               keepSeparate: true,
+              // Дубли ровно того же центра (тот же бар, добавленный повторно
+              // другим шагом источника) объединяются в один кластер — иначе
+              // финальная дедупликация разрезает полосу и теряет halfWidth.
+              mergeIntoExact: true,
             },
           );
         } else {
@@ -825,6 +1318,7 @@ export class ZoneVoter {
               source: 'long-body', halfWidth: (hi - lo) / 2, formedAt: c.time,
               startCheckIndex, bookBand: { lo, hi, role: 'resistance' },
               keepSeparate: true,
+              mergeIntoExact: true,
             },
           );
         }
@@ -867,13 +1361,18 @@ export class ZoneVoter {
   }
 
   /**
-   * 7. Уровни Фибоначчи — строго ЯС гл. 12 (задача 6).
+   * 7. Уровни Фибоначчи — строго ЯС гл. 12 (задача 6 + F4 аудита).
    * Книга: «Наиболее распространенными уровнями таких коррекций являются
    * 50%-ный, а также 38%-ный и 62%-ный»; коррекция измеряется от КОНКРЕТНОГО
    * движения A→B (рис. 12.1–12.7), а не от безымянного min/max окна.
-   * Подъём low→high → коррекция вниз = поддержка на low + ratio×range;
-   * спад high→low → отскок вверх = сопротивление на той же формуле
-   * low + ratio×range (отсчёт от основания импульса).
+   * F4: ГЛУБИНА КОРРЕКЦИИ ОТСЧИТЫВАЕТСЯ ОТ КОНЕЧНОЙ ТОЧКИ ИМПУЛЬСА B
+   * (подписи рис. 12.1–12.2: «38%-ная коррекция после подъёма/спада от A к В»):
+   *  - подъём A(low)→B(high): коррекция вниз → поддержка на B − ratio×range;
+   *    (пример: 60→100, 38% = 100 − 0.38×40 = 84.8; 62% = 75.28);
+   *  - спад A(high)→B(low): отскок вверх → сопротивление на B + ratio×range
+   *    = impulseLow + ratio×range (пример: 100→60, 38% = 60 + 0.38×40 = 75.2).
+   * Раньше обе ветви использовали одну формулу impulseLow + ratio×range, из-за
+   * чего для подъёма метка «38%» стояла на уровне 62%-ной коррекции (F4).
    * Операционализация (пометить): пара A/B выбирается по последним двум
    * свингам findSwings за lookback — в книге способ поиска пары не формализован.
    * 23.6% и 78.6% удалены: в ЯС гл. 12 их нет (раньше ошибочно числились
@@ -908,9 +1407,13 @@ export class ZoneVoter {
 
     for (const ratio of fibRatios) {
       const pctLabel = `${Math.round(ratio * 100)}%`;
-      // Коррекция всегда измеряется от основания импульса: при подъёме —
-      // глубина коррекции вниз, при спаде — высота отскока вверх.
-      const level = impulseLow + range * ratio;
+      // F4 (ЯС гл. 12, рис. 12.1–12.2): глубина коррекции отсчитывается от
+      // КОНЕЧНОЙ точки импульса B, поэтому формулы для подъёма и спада РАЗНЫЕ:
+      // подъём → B(high) − ratio×range (коррекция вниз, поддержка);
+      // спад  → B(low) + ratio×range = impulseLow + ratio×range (отскок, сопротивление).
+      const level = isUpImpulse
+        ? impulseHigh - range * ratio
+        : impulseLow + range * ratio;
       const reason = `Фибо ${pctLabel} коррекции импульса ${dirTag} ${impulseLow.toFixed(2)}\u2192${impulseHigh.toFixed(2)} (ЯС гл. 12)`;
       if (isUpImpulse) {
         // Подъём A→B: коррекция вниз встречает поддержку на уровнях ретрейса.
@@ -952,6 +1455,9 @@ export class ZoneVoter {
           source: 'window', halfWidth, formedAt: gap.time,
           startCheckIndex: startCheckIdx >= 0 ? startCheckIdx + 1 : 0,
           bookBand: { lo: gap.bottom, hi: gap.top, role: isUp ? 'support' : 'resistance' },
+          // F6 (аудит): окно — книжный источник с явной геометрией; его полоса
+          // [bottom…top] не должна размываться свинг-кластерами. Проектное решение.
+          keepSeparate: true,
         },
       );
     }
@@ -965,14 +1471,18 @@ export class ZoneVoter {
     map: Map<number, ZoneClusterData>,
     halfWidthOf: (level: number) => number,
     candles: Candle[],
-    bookOnly: boolean,
+    // bookOnly=true — только кластеры с явной книжной полосой; false — все
+    // остальные. undefined — ВСЕ кластеры (используется addPolarityLevels для
+    // проверки «не перекрывается ли flip-точка уже существующей книжной
+    // полосой той же корзины»).
+    bookOnly?: boolean,
   ): Zone[] {
     const zones: Zone[] = [];
     const lastTime = candles[candles.length - 1]?.time ?? 0;
 
     for (const [level, data] of map.entries()) {
       const hasBook = data.bookBand !== undefined;
-      if (hasBook !== bookOnly) continue;
+      if (bookOnly !== undefined && hasBook !== bookOnly) continue;
       const uniqueReasons = Array.from(new Set(data.reasons));
       const sources = Array.from(new Set(data.sources ?? []));
       const votes = sources.length || (uniqueReasons.length > 0 ? 1 : 0);

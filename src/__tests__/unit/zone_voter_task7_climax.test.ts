@@ -64,7 +64,9 @@ describe('Задача 7: климакс объёма требует предш�
     const supMap = new Map(); const resMap = new Map();
     (ZoneVoter as any).addVolumeClimaxLevels(sellingClimaxHistory(), supMap, resMap, 0.005);
     const resReasons = [...resMap.values()].flatMap((d: any) => d.reasons);
-    expect(resReasons.some((r: string) => /климакс продаж/i.test(r))).toBe(true);
+    // F5 (Глоссарий Б ЯС): климакс ПОСЛЕ ралли — «выпуск пара» (blow-off),
+    // а не «климакс продаж»; прежняя метка была терминологически неверна.
+    expect(resReasons.some((r: string) => /выпуск пара \(blow-off\).*после ралли.*сопротивление/i.test(r))).toBe(true);
     // Пометка «проектная операционализация» обязательна: книги не говорят
     // «экстремум климакса = зона S/R».
     expect(resReasons.some((r: string) => /проект/i.test(r))).toBe(true);
@@ -81,7 +83,9 @@ describe('Задача 7: климакс объёма требует предш�
     const supMap = new Map(); const resMap = new Map();
     (ZoneVoter as any).addVolumeClimaxLevels(buyingClimaxHistory(), supMap, resMap, 0.005);
     const supReasons = [...supMap.values()].flatMap((d: any) => d.reasons);
-    expect(supReasons.some((r: string) => /климакс покупок/i.test(r))).toBe(true);
+    // F5 (Глоссарий Б ЯС): разворот вверх на спаде — «кульминация продаж»
+    // (selling climax), а не «климакс покупок»; прежняя метка была неверна.
+    expect(supReasons.some((r: string) => /кульминация продаж \(selling climax\).*после спада.*поддержка/i.test(r))).toBe(true);
     expect([...resMap.values()].flatMap((d: any) => d.reasons)
       .some((r: string) => /климакс/i.test(r))).toBe(false);
   });

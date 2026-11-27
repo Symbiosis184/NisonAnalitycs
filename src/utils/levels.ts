@@ -99,6 +99,16 @@ export interface ZoneClusterOptions {
   bookBand?: BookBandGeom;
   /** Не сливать с другими уровнями (см. ZoneClusterData.keepSeparate). */
   keepSeparate?: boolean;
+  /**
+   * Разрешить слияние ТОЛЬКО с книжной полосой, чей центр совпадает с уровнем
+   * данного бара «в точку» (с точностью до float-округления). Используется
+   * источником long-body: одна и та же свеча даёт в корзину одну полосу, но
+   * несколько источников (например, касания из addTouchBasedLevels) могут
+   * добавить тот же самый уровень повторно — такие дубли должны объединяться
+   * в один кластер, иначе финальный splitMultiBand теряет halfWidth=(hi−lo)/2.
+   * Проектное решение о представлении, не из книг.
+   */
+  mergeIntoExact?: boolean;
   /** ЗАДАЧА 9: суммарный относительный объём касаний (формула — проектная). */
   touchVolumeSum?: number;
 }
@@ -120,7 +130,25 @@ export function addLevelToMap(
   touchesCount?: number,
   options: ZoneClusterOptions = {},
 ): boolean {
-  const hit = findClusterZone(map, level, tolerance);
+  // F6 (аудит): keepSeparate защищает книжную геометрию В ОБЕ СТОРОНЫ.
+  // Раньше findClusterZone пропускал кластеры-цели с keepSeparate, но входящий
+  // книжный уровень всё равно сливался в уже существующий (например, свинг-)
+  // кластер: центр смещался, halfWidth разбухала до покрывающей — отображаемая
+  // полоса становилась шире книжной. Теперь уровень с keepSeparate никогда не
+  // вливается в чужой кластер и всегда создаёт собственный (точное соответствие
+  // геометрии источника; проектное решение о кластеризации, не из книг).
+  const hit = options.keepSeparate
+    ? (options.mergeIntoExact
+        // mergeIntoExact: разрешено слиться только с кластером-полосой, чей
+        // ЦЕНТР совпадает с уровнем «в точку» (тот же самый бар-источник).
+        // Любая другая keepSeparate-полоса остаётся отдельной — книжная
+        // геометрия не размывается (F6, проектное решение о представлении).
+        ? [...map.keys()].find((k) => {
+            const d = map.get(k)!;
+            return d.keepSeparate === true && d.bookBand !== undefined && k === level;
+          })
+        : undefined)
+    : findClusterZone(map, level, tolerance);
   if (hit !== undefined) {
     const data = map.get(hit)!;
     data.reasons.push(reason);
@@ -292,7 +320,30 @@ export function dedupeZones<T extends ZoneClusterData>(
     }
   }
   map.clear();
-  for (const cluster of clusters) {
+  // F6 (аудит): книжные полосы (bookBand) никогда не сливаются между собой —
+  // каждая сохраняет СВОЮ точную геометрию [lo … hi] и halfWidth=(hi−lo)/2.
+  // Если в один кластер попали несколько разных полос, они разделяются на
+  // отдельные кластеры по исходным уровням (проектное решение о кластеризации;
+  // приоритет — точная книжная геометрия, confluence-голосование при этом может
+  // уменьшиться — это приемлемо).
+  const splitMultiBand = (cluster: (typeof clusters)[number]): Array<(typeof clusters)[number]> => {
+    if (cluster.bands.length <= 1) return [cluster];
+    return cluster.levels.map((lv) => {
+      const band = cluster.bands.find((b) => b.level === lv);
+      const data: T = { ...cluster.data };
+      if (band) {
+        data.bookBand = band.band as T['bookBand'];
+        data.halfWidth = (band.band.hi - band.band.lo) / 2;
+      } else {
+        data.bookBand = undefined as T['bookBand'];
+        const w = cluster.widths.find((x) => x.level === lv);
+        data.halfWidth = w ? w.halfWidth : undefined as T['halfWidth'];
+      }
+      return { levels: [lv], widths: [{ level: lv, halfWidth: data.halfWidth }], bands: band ? [band] : [], data };
+    });
+  };
+  const finalClusters = clusters.flatMap(splitMultiBand);
+  for (const cluster of finalClusters) {
     const avg = cluster.levels.reduce((s, lv) => s + lv, 0) / cluster.levels.length;
     // После смещения центра зона обязана по-прежнему покрывать исходные
     // диапазоны (особенно фактические границы окна), а не только max(width).
